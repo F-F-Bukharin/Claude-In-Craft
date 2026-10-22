@@ -1,0 +1,296 @@
+package com.example.claudeplayer;
+
+import com.example.claudeplayer.body.ActionExecutor;
+import com.example.claudeplayer.body.AgentBody;
+import com.example.claudeplayer.body.AgentData;
+import com.example.claudeplayer.body.SnapshotBuilder;
+import com.example.claudeplayer.core.Settings;
+import com.example.claudeplayer.core.StateSnapshot;
+import com.example.claudeplayer.core.act.ActionQueue;
+import com.example.claudeplayer.core.brain.AgentLoop;
+import com.example.claudeplayer.core.brain.ApiBrain;
+import com.example.claudeplayer.core.brain.BrainException;
+import com.example.claudeplayer.core.brain.DemoBrain;
+import com.example.claudeplayer.core.brain.PromptBuilder;
+import com.example.claudeplayer.core.brain.ToolSchemas;
+import com.example.claudeplayer.core.chat.ChatIntake;
+import com.example.claudeplayer.core.chat.Conversation;
+import com.example.claudeplayer.core.memory.JsonMemoryFile;
+import com.example.claudeplayer.core.memory.Memory;
+import com.example.claudeplayer.core.memory.MemoryActions;
+import com.example.claudeplayer.core.safety.CautionLevel;
+import com.example.claudeplayer.core.safety.Guardrails;
+import com.example.claudeplayer.core.safety.WorldText;
+import com.example.claudeplayer.event.DamageWatcher;
+import com.example.claudeplayer.nav.EscapePlanner;
+import com.example.claudeplayer.nav.Navigator;
+import com.mojang.logging.LogUtils;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.function.Consumer;
+import javax.annotation.Nullable;
+import net.minecraft.ChatFormatting;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.TickTask;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.storage.LevelResource;
+import net.minecraftforge.fml.loading.FMLPaths;
+import org.slf4j.Logger;
+
+/**
+ * Everything that lives for one running server: settings, guardrails, memory, body, queue, brain and loop.
+ * Created on ServerStartedEvent and torn down on ServerStoppingEvent. Server thread only, apart from the brain
+ * executor, whose results come back through {@link #onMainThread}.
+ */
+public final class AgentRuntime {
+    private static final Logger LOG = LogUtils.getLogger();
+    private static AgentRuntime current;
+
+    private final MinecraftServer server;
+    private final Settings settings;
+    private final Guardrails guardrails;
+    private final Conversation conversation = new Conversation(10);
+    private final Memory memory;
+    private final AgentData data;
+    private final AgentBody body;
+    private final Navigator navigator = new Navigator();
+    private final EscapePlanner escape;
+    private final ActionQueue queue;
+    private final DamageWatcher damage;
+    private final ExecutorService brainThread;
+    private final ApiBrain brain;
+    private final AgentLoop loop;
+    private volatile boolean closed;
+    private long ticks;
+
+    private AgentRuntime(MinecraftServer server) {
+        this.server = server;
+        this.settings = Config.settings();
+        this.guardrails = new Guardrails(settings, System::currentTimeMillis);
+        this.memory = new Memory(settings,
+                new JsonMemoryFile(server.getWorldPath(LevelResource.ROOT).resolve(ClaudePlayerMod.MODID).resolve("memory.json")),
+                System::currentTimeMillis);
+        this.data = AgentData.get(server);
+        this.body = new AgentBody(this);
+        this.escape = new EscapePlanner(navigator, settings);
+        this.queue = new ActionQueue(settings.actionsPerSecond(), settings.actionTimeoutSeconds() * 20,
+                new MemoryActions(memory, new ActionExecutor(this)));
+        this.damage = new DamageWatcher(this);
+        this.brainThread = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "claudeplayer-brain");
+            t.setDaemon(true);
+            return t;
+        });
+        Path configDir = FMLPaths.CONFIGDIR.get();
+        this.brain = new ApiBrain(settings, () -> ApiBrain.resolveKey(settings.apiKeyEnv(), configDir.resolve("claudeplayer.key")));
+        PromptBuilder prompts = new PromptBuilder(settings,
+                PromptBuilder.loadTemplate(configDir.resolve("claudeplayer_system_prompt.md")));
+        this.loop = new AgentLoop(settings, new DemoBrain(brain), brainThread, this::onMainThread, queue, guardrails, prompts,
+                new ToolSchemas(settings.toolPhase()), memory, new LoopHost());
+        LOG.info("Claude Player ready: model {}, caution level {}, {} allowlisted, {} long-term memories",
+                settings.model(), level().number(), Config.allowlist().size(), memory.longTerm().size());
+    }
+
+    public static @Nullable AgentRuntime get() {
+        return current;
+    }
+
+    public static void start(MinecraftServer server) {
+        stop();
+        current = new AgentRuntime(server);
+        current.body.restore();
+    }
+
+    public static void stop() {
+        if (current == null) return;
+        current.shutdown();
+        current = null;
+    }
+
+    public void tick() {
+        ticks++;
+        body.tick();
+        queue.tick();
+        loop.tick();
+        damage.tick();
+    }
+
+    public void onChat(ServerPlayer player, String raw) {
+        if (body.is(player)) return;
+        String name = player.getGameProfile().getName();
+        List<String> allowlist = Config.allowlist();
+        if (ChatIntake.allowed(name, allowlist)) conversation.add(name, raw);
+        ChatIntake.Intake intake = ChatIntake.classify(name, raw, settings.trigger(), allowlist);
+        if (intake instanceof ChatIntake.Order order) {
+            order(order.player(), order.text());
+        } else if (intake instanceof ChatIntake.Stop) {
+            halt();
+        } else if (intake instanceof ChatIntake.Respawn) {
+            notice(body.respawn());
+        } else if (intake instanceof ChatIntake.SetLevel set) {
+            setLevel(set.level(), set.player());
+        }
+    }
+
+    /** Kill switch, from {@code claude: stop} or {@code /cp stop}. */
+    public void halt() {
+        loop.stop();
+        navigator.stop(body.player());
+        if (body.alive()) say("Stopping.");
+    }
+
+    public String setLevel(CautionLevel level, String by) {
+        data.setLevel(level.number());
+        String msg = "Caution level " + level.number() + " (" + level.title + "), set by " + by + ".";
+        notice(msg);
+        return msg;
+    }
+
+    public CautionLevel level() {
+        return CautionLevel.of(data.level() < 0 ? settings.defaultLevel() : data.level());
+    }
+
+    /** Chat as the body. */
+    public void say(String text) {
+        String clean = WorldText.clean(text, 256);
+        if (clean.isEmpty()) return;
+        conversation.add(settings.bodyName(), clean);
+        server.getPlayerList().broadcastSystemMessage(Component.literal("<" + settings.bodyName() + "> " + clean), false);
+    }
+
+    /** A gray system line in chat. */
+    public void notice(String text) {
+        if (text == null || text.isEmpty()) return;
+        server.getPlayerList().broadcastSystemMessage(
+                Component.literal("[Claude Player] " + text).withStyle(ChatFormatting.GRAY), false);
+    }
+
+    /** The body died: the loop stops and waits for a respawn order (death is accepted, D3). */
+    public void onBodyDied(String cause) {
+        loop.bodyGone();
+        say("I died (" + cause + "). Respawn me with " + settings.trigger() + " respawn or /cp respawn.");
+    }
+
+    /** /cp keycheck: one free count_tokens call on the brain thread. */
+    public void keycheck(Consumer<String> reply) {
+        brainThread.execute(() -> {
+            String msg;
+            try {
+                brain.checkKey();
+                msg = "The API key works with " + settings.model() + ".";
+            } catch (BrainException e) {
+                msg = e.chatMessage(settings.apiKeyEnv());
+            }
+            String result = msg;
+            onMainThread(() -> reply.accept(result));
+        });
+    }
+
+    public String status() {
+        String state = body.alive() ? "in the world" : body.dead() ? "dead" : "not spawned";
+        CautionLevel l = level();
+        return String.format(Locale.ROOT, "%s is %s | caution %d (%s) | %s | queue: %s, %d waiting | memory: %d short, %d long | %d calls, %d tokens this session",
+                settings.bodyName(), state, l.number(), l.title, loop.status(),
+                Objects.requireNonNullElse(queue.runningTool(), "idle"), queue.waitingCount(),
+                memory.shortTerm().size(), memory.longTerm().size(), guardrails.callsMade(), guardrails.tokensUsed());
+    }
+
+    public MinecraftServer server() {
+        return server;
+    }
+
+    public Settings settings() {
+        return settings;
+    }
+
+    public Guardrails guardrails() {
+        return guardrails;
+    }
+
+    public Memory memory() {
+        return memory;
+    }
+
+    public AgentData data() {
+        return data;
+    }
+
+    public AgentBody body() {
+        return body;
+    }
+
+    public Navigator navigator() {
+        return navigator;
+    }
+
+    public EscapePlanner escape() {
+        return escape;
+    }
+
+    public ActionQueue queue() {
+        return queue;
+    }
+
+    public DamageWatcher damage() {
+        return damage;
+    }
+
+    public AgentLoop loop() {
+        return loop;
+    }
+
+    public long ticks() {
+        return ticks;
+    }
+
+    private void order(String player, String text) {
+        if (!body.alive()) {
+            notice(body.dead()
+                    ? settings.bodyName() + " is dead. Respawn with " + settings.trigger() + " respawn or /cp respawn."
+                    : settings.bodyName() + " isn't spawned. Use /cp spawn.");
+            return;
+        }
+        loop.startOrder(player, text);
+    }
+
+    // server.tell always queues (execute would run inline on the server thread), and closed drops late results.
+    private void onMainThread(Runnable task) {
+        server.tell(new TickTask(server.getTickCount(), () -> {
+            if (!closed) task.run();
+        }));
+    }
+
+    private void shutdown() {
+        closed = true;
+        loop.stop();
+        body.despawnForShutdown();
+        brainThread.shutdownNow();
+    }
+
+    private final class LoopHost implements AgentLoop.Host {
+        @Override
+        public StateSnapshot snapshot() {
+            return SnapshotBuilder.build(AgentRuntime.this);
+        }
+
+        @Override
+        public List<Conversation.Line> recentChat() {
+            return conversation.recent();
+        }
+
+        @Override
+        public void say(String text) {
+            AgentRuntime.this.say(text);
+        }
+
+        @Override
+        public void notice(String text) {
+            AgentRuntime.this.notice(text);
+        }
+    }
+}

@@ -1,0 +1,30 @@
+# eclipse
+bin
+*.launch
+.settings
+.metadata
+.classpath
+.project
+
+# idea
+out
+*.ipr
+*.iws
+*.iml
+.idea
+
+# gradle
+build
+.gradle
+
+# minecraft dev runs (worlds, logs, configs) and ForgeGradle tool logs
+run
+run-data
+logs
+eclipse
+
+# secrets: the API key file must never be committed
+*.key
+.env
+
+forge*changelog.txt
