@@ -102,10 +102,12 @@ public final class DamageWatcher {
     private Pending react(AgentPlayer p, String what, @Nullable Entity threat) {
         CautionLevel level = rt.level();
         CautionPolicy.Situation s = situation(p, threat);
-        String stance = CautionPolicy.advise(level, s).name().toLowerCase(Locale.ROOT).replace('_', ' ');
+        boolean lit = SnapshotBuilder.litCreeper(threat); // false for no threat
+        String stance = lit ? "flee (fuse lit)" // matches the reflex, never "fight" a lit creeper
+                : CautionPolicy.advise(level, s).name().toLowerCase(Locale.ROOT).replace('_', ' ');
         String reason = what + " Caution level " + level.number() + " (" + level.title + ") says: " + stance + ".";
         if (threat == null) return new Pending(reason, List.of());
-        Reflexes.Move move = Reflexes.decide(level, s, SnapshotBuilder.litCreeper(threat), rt.settings().toolPhase() >= 4,
+        Reflexes.Move move = Reflexes.decide(level, s, lit, rt.settings().toolPhase() >= 4,
                 ActionExecutor.ATTACK_REACH);
         List<Action> actions = switch (move) {
             case FLEE -> List.of(new Action.Flee());

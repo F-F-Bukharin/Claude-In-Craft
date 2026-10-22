@@ -31,7 +31,7 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
 7. Piece 1 (priority list and reflexes) in game: `./gradlew runClient -Pquickstart="Claude Test"`, and paste the `reflex` log lines here.
    - M1. At caution level 4 or 5, spawn a zombie 10 blocks away. The body starts fleeing before Claude's chat reply, and the log shows `reflex FLEE`.
    - M2. At level 0, ignite a creeper near the body (flint and steel). It flees.
-   - M3. `claude: walk to <a spot past a lava pool>`. The body halts at the edge, and the move reports `failed:hazard_lava`.
+   - M3. Start a long `claude: walk to <x y z>`, then pour lava onto the path ahead of the body (vanilla paths route around existing lava). The body halts at the edge, and the move reports `failed:hazard_lava`.
    - M4. Give an order with routine steps, then spawn a zombie. The routine steps come back `scrapped`, and a prio-2 move resumes afterwards.
    - M5. `claude: stop` while it flees. It halts within a second.
    - Known: a hostile in a cave far below still counts (XZ distance), so the body may take a short flee. The 30 s re-arm per mob bounds it.
