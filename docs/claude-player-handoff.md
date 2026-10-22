@@ -35,6 +35,16 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
    - M4. Give an order with routine steps, then spawn a zombie. The routine steps come back `scrapped`, and a prio-2 move resumes afterwards.
    - M5. `claude: stop` while it flees. It halts within a second.
    - Known: a hostile in a cave far below still counts (XZ distance), so the body may take a short flee. The 30 s re-arm per mob bounds it.
+   - Watch in M2: a creeper whose fuse flickers (lost sight, or the body at the 3 to 7 block edge) now triggers a flee on each re-light.
+8. Piece 1 follow-ups, from the final review. None blocks the in-game checks.
+   - The model never hears a reflex's own outcome (`failed:no_escape`, `ok:no_threats`, `hazard_*`, a denied swing). Add a note when a `reflex-` entry ends in an error.
+   - `abandon()` spares every level-3 entry, including the model's prio-3 calls for a dropped order; a leftover prio-3 `stop` would cancel the next order's batch. Spare only `reflex-` entries.
+   - A second reflex during one model call overwrites the first in `interruptInFlight`. Append instead.
+   - `follow_player` has no hazard check. Share MoveHandle's probe.
+   - The prompt should say to give an approach and its attack the same prio, since higher levels run first.
+   - A slab, stair or carpet walkway over a drop can read as `hazard_drop` at low HP.
+   - A hit from beyond `hostile_range` (a ghast) builds a flee that scraps routine work, then returns `ok:no_threats`.
+   - `"prio": null` fails the call; it could count as absent.
 
 ## Risks to watch
 - API cost during busy play (plan §3 and §9). Watch the token count in `/cp status`.
