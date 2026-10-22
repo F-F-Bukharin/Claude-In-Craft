@@ -30,7 +30,7 @@ Paths are under `src/main/java/com/example/claudeplayer/` unless noted. Everythi
 | `core/act/Action.java` | Sealed interface, one record per tool |
 | `core/act/ActionResult.java` | `ok`, `denied:<why>`, `failed:<why>`, `cancelled`, `queued` |
 | `core/act/ActionRunner.java` | Execution contract: start → Handle (poll, cancel, timeout) |
-| `core/act/ActionQueue.java` | Tick pacing, quick vs timed actions, timeout, cancel, stop |
+| `core/act/ActionQueue.java` | Tick pacing, levels 1 to 3 (a level 3 entry preempts: it scraps level 1 and pauses a running level 2), quick vs timed actions, timeout, cancel, stop |
 | `core/brain/Brain.java` | Backend interface; lets Option B swap in later |
 | `core/brain/ApiBrain.java` | Messages API over java.net.http: retries, prompt caching, key lookup, keycheck |
 | `core/brain/BrainException.java` | Classified API failures and their chat messages |
@@ -48,6 +48,7 @@ Paths are under `src/main/java/com/example/claudeplayer/` unless noted. Everythi
 | `core/safety/Guardrails.java` | Kill switch, call rate, token cap, break radius |
 | `core/safety/WorldText.java` | Sanitizes and quotes names, signs and chat |
 | `core/safety/ThreatTracker.java` | Interrupt debounce: one per threat, at most one per 5 s |
+| `core/safety/Reflexes.java` | Pure: fight or flee by caution level, lit creepers, lava, fire and deadly drops |
 | `body/AgentPlayer.java` | The body: a server-driven ServerPlayer (Carpet-style), not Forge's FakePlayer |
 | `body/NullConnection.java` | Packet-dropping connection, wrapped in an EmbeddedChannel |
 | `body/AgentBody.java` | Spawn, despawn, death, respawn, restore after a restart |
@@ -55,14 +56,14 @@ Paths are under `src/main/java/com/example/claudeplayer/` unless noted. Everythi
 | `body/SnapshotBuilder.java` | Builds StateSnapshot; world lookups the rest of the game side shares |
 | `body/ActionExecutor.java` | Runs world actions; Guardrails and CautionPolicy before any effect |
 | `nav/Navigator.java` | Steers the body along paths planned by an off-world zombie |
-| `nav/MoveHandle.java`, `nav/FollowHandle.java` | move_to and follow_player |
-| `nav/EscapePlanner.java` | "Does a retreat path exist?" for the policy |
+| `nav/MoveHandle.java`, `nav/FollowHandle.java` | move_to (refuses lava, fire and deadly drops) and follow_player |
+| `nav/EscapePlanner.java` | "Does a retreat path exist?" for the policy, and where `flee` runs to: straight away from the nearest threat first |
 | `event/ServerEvents.java` | Forge event wiring |
-| `event/DamageWatcher.java` | Hit and threat interrupts; help calls at level 5 |
+| `event/DamageWatcher.java` | Threat scan every 2 ticks and hits: reflexes and interrupts; help calls at level 5 |
 | `command/CpCommands.java` | `/cp` subcommands |
 | `src/main/resources/claudeplayer/system_prompt.md` | System prompt; `config/claudeplayer_system_prompt.md` overrides it |
 
-Tests live in `src/test/java/com/example/claudeplayer/`: PurityTest; `core/act/ActionQueueTest`; `core/brain/` AgentLoopTest, ApiBrainTest, ToolParseTest; `core/chat/ChatIntakeTest`; `core/memory/MemoryTest`; `core/safety/` CautionPolicyTest and SafetyTest (Guardrails, WorldText, ThreatTracker).
+Tests live in `src/test/java/com/example/claudeplayer/`: PurityTest; `core/act/ActionQueueTest`; `core/brain/` AgentLoopTest, ApiBrainTest, ToolParseTest; `core/chat/ChatIntakeTest`; `core/memory/MemoryTest`; `core/safety/` CautionPolicyTest, ReflexesTest and SafetyTest (Guardrails, WorldText, ThreatTracker).
 
 ## SYSTEMS
 
@@ -130,10 +131,14 @@ public record Verdict(boolean allowed, String reason) {}
 ### 8. Navigation
 - v1: vanilla navigation toward a target. No path gives `failed:no_path`. 10 s without arriving gives `failed:timeout`.
 - EscapePlanner uses the same pathing. A custom search is added only if vanilla navigation can't answer the escape question (decided in Phase 4).
+- Each tick, move_to probes 0.8 blocks ahead of the body. Lava, fire, or a drop that would kill refuses the move: the body halts and the move fails with `failed:hazard_lava`, `hazard_fire` or `hazard_drop`. A drop onto water is safe.
 
 ### 9. Interrupts
-- Interrupts: a threat (a hostile inside `hostile_range`, or any hit on the body), a new order, or `stop`. An interrupt cancels the queue, sends results at once (unfinished actions report `cancelled`), and starts a new message.
-- Threat interrupts are debounced: one per threat, and no more than one every 5 seconds.
+- Interrupts: a threat (a hostile within `hostile_range` on XZ at any height, or any hit on the body), a new order, or `stop`.
+- With `reflexes` on, code acts first. `Reflexes.decide` turns the level's stance into `flee` or one `attack_entity` swing (only within 3 blocks, and only at `tool_phase` 4), queued at level 3. A lit creeper is always fled from. Players and non-hostile mobs never trigger a reflex. The interrupt then tells Claude what ran, what was paused and what was scrapped; otherwise the queue is left alone. HOLD, or FIGHT out of reach, is an interrupt with no reflex.
+- With `reflexes` off, a threat interrupt cancels everything below level 3, sends results at once (unfinished actions report `cancelled`), and starts a new message.
+- Threat interrupts are debounced: one per threat, and no more than one every 5 seconds. Lit creepers have their own tracker with no gap. The scan runs every 2 ticks.
+- Reflexes still run after `claude: stop`; no model call follows while the kill switch is on.
 - An interrupt during a model call: the reply's tool calls are answered `cancelled` and the interrupt goes out with them. With no order running, an interrupt starts a reaction turn (`idle_reactions`), unless the kill switch is on.
 - Each interrupt carries the caution policy's advice (fight, hold, flee, flee and call for help).
 
@@ -172,6 +177,7 @@ Config (`Config.java`). A file that holds a key stays out of version control.
 | `action_timeout_seconds` | `10` | Timed action timeout |
 | `tool_phase` | `2` | Highest plan phase whose tools Claude can call |
 | `idle_reactions` | `true` | React to threats with no order running |
+| `reflexes` | `true` | Code flees or fights at level 3 before the model is told |
 | `memory_short_capacity` | `24` | Short-term notes kept |
 | `memory_short_minutes` | `10` | Minutes before a note fades |
 | `memory_long_capacity` | `64` | Long-term memories per world |
@@ -198,11 +204,12 @@ Dev launch: `./gradlew runClient -Pquickstart="World"` passes `--quickPlaySingle
 
 ## TOOLS (what Claude can call)
 Gated by `tool_phase` (default 2).
-- Phases 1 and 2, on by default: `get_state`, `move_to(x, y, z)`, `say(text)`, `wait(seconds)`, `stop`; memory `note(subject, text)`, `remember(subject, text)`, `forget(subject)`; `inspect_container(x, y, z)` (phase 2, notes the contents in short-term memory).
+- Phases 1 and 2, on by default: `get_state`, `move_to(x, y, z)`, `flee` (phase 1; `ok` with `no_threats`, or `failed:no_escape`), `say(text)`, `wait(seconds)`, `stop`; memory `note(subject, text)`, `remember(subject, text)`, `forget(subject)`; `inspect_container(x, y, z)` (phase 2, notes the contents in short-term memory).
 - Phase 3: `follow_player(name, seconds)`. Phase 4: `attack_entity(entity_id)`, behind CautionPolicy.
 - Phase 6, stubs: `mine_block`, `place_block`, `equip`, `craft`. The work-area check is live; the edit itself returns `failed:not_implemented`.
 - Never tools: change caution level, edit the allowlist, run commands, touch config. ToolParseTest checks it.
-- Results are short codes: `ok`, `denied:<reason>`, `failed:<reason>`, `cancelled`, `queued`.
+- Every tool takes an optional `prio`: 1 routine (default), 2 important (paused and resumed after danger), 3 safety. Only `flee`, `stop` and `attack_entity` may ask for 3; anything else at 3 runs at 2, and a `prio_lowered` note goes out in the next turn.
+- Results are short codes: `ok`, `denied:<reason>`, `failed:<reason>`, `cancelled`, `scrapped` (level 1 work dropped by a level 3 entry), `queued`.
 
 ## GAME FACTS
 COMPILED means the code compiles against forge-1.20.1-47.4.28 with official mappings. In-game behavior still needs Phase 0; mark lines IN-GAME once F confirms them.
@@ -214,6 +221,7 @@ COMPILED means the code compiles against forge-1.20.1-47.4.28 with official mapp
 - Gson (2.10) ships with Minecraft, and java.net.http with Java 17. COMPILED, and the unit tests use both.
 - Server chat broadcast: `PlayerList#broadcastSystemMessage(Component, boolean)`. COMPILED.
 - Double chests: `ChestBlock.getContainer(block, state, level, pos, true)` returns both halves. COMPILED.
+- COMPILED: `Creeper#getSwellDir`, `Creeper#isIgnited`; hazard probe 0.8 blocks ahead.
 - `/forge tps`: not checked yet.
 - Anthropic Messages API (checked against the claude-api reference on 22 Oct 2026): `POST /v1/messages` with headers `x-api-key` and `anthropic-version: 2026-10-21`. Tool results come first in the user turn, with `is_error` on failures. Stop reasons include `end_turn`, `tool_use`, `max_tokens` and `refusal`. `claude-haiku-5-5` runs adaptive thinking by default (default effort medium), so assistant content is replayed unchanged and transcripts are append-only. Sampling parameters are rejected on 2026-10-21. The minimum cacheable prefix on Haiku 5.5 is 512 tokens. `/v1/messages/count_tokens` backs `/cp keycheck`.
 - Claude Code plugins (Phase 6 only): structure, and where commands and skills go. Check the Claude Code docs first.
@@ -221,4 +229,5 @@ COMPILED means the code compiles against forge-1.20.1-47.4.28 with official mapp
 ## STATUS
 - 22 Oct 2026: planning pass done (Haiku 5.5 Max).
 - 22 Oct 2026: skeleton, rules and brain built (Opus 5.5). Every LAYOUT file exists. Phase 1 and 2 code is in, plus memory; phase 3 and 4 code sits behind `tool_phase`. `./gradlew build` is green with 85 unit tests. Nothing has run in Minecraft yet.
+- 22 Oct 2026: piece 1 built (priority list and reflexes): queue levels 1 to 3, `prio` on every tool, the `flee` tool, code reflexes, and moves that refuse lava, fire and deadly drops. `./gradlew build` is green with 115 unit tests. In-game checks M1 to M5 are in the handoff.
 - Next: F runs the Phase 0 checks against this code. Spike A is `/cp spawn` plus `claude: come here`; Spike B is `/cp keycheck` with a bad key. Details in the handoff.

@@ -86,18 +86,23 @@ An idle session is stopped after `idle_stop_minutes` (10). A stopped order kills
 
 | Level | Examples | When a level 3 arrives |
 |---|---|---|
-| 3 | run from a creeper, stop before lava, fight back, eat at critical HP | goes to the front at once |
+| 3 | run from a creeper, fight back, `stop` | goes to the front at once |
 | 2 | "build a shelter before night", the order's key steps | **paused**. A running level-2 action is cancelled and put back at the head of level 2 to restart afterwards |
 | 1 | collect crops, tidy chests, follow | **scrapped**, reported `scrapped` |
 
 **Who sets it.**
 - Claude tags each tool call with an optional `prio`, 1 or 2 (default 1). It goes into every schema in `ToolSchemas`.
-- Level 3 is accepted only on safety tools: `flee`, `attack_entity` when CautionPolicy allows it, `stop`, and eating when HP or food is critical. Anything else asked at 3 runs at 2, and the result says `prio_lowered`.
+- Level 3 is accepted only on the safety tools `flee`, `stop` and `attack_entity` (CautionPolicy still checks every swing). No eat tool exists yet.
+- Anything else asked at 3 runs at 2. A `prio_lowered` note goes out in the next turn; the result code stays one code.
 - Code reflexes always enqueue at 3.
 
 **Reflexes** run on the server thread in the tick that sees the danger. No model call comes first:
 - **Hostile.** Within 16 blocks horizontally (XZ distance, Y ignored): `CautionPolicy.advise` picks FIGHT, HOLD, FLEE or FLEE_AND_CALL_FOR_HELP, and the reflex enqueues that at level 3. A creeper with a lit fuse is FLEE at every level. `ThreatTracker` still debounces.
-- **Hazard.** When a move's next step enters lava, fire or a drop that would kill, the step is refused and a level-3 `stop` runs.
+  - FIGHT is a single swing, and only when the threat is within attack reach (3 blocks). Farther away, Claude is told and plans the approach.
+  - FIGHT while attacks are off (`tool_phase` < 4) becomes FLEE.
+  - Players and non-hostile mobs never trigger a reflex.
+- **Hazard.** When a move's next step enters lava, fire or a drop that would kill, the move is refused: the body halts and the move fails with `failed:hazard_lava`, `hazard_fire` or `hazard_drop`. There is no separate level-3 `stop` entry, because a stop would also cancel paused level-2 work. Each later move runs the same check.
+- Reflexes still run after `claude: stop`. They protect the body and its items. No model call follows while the kill switch is on.
 - After either one, the loop sends Claude an `INTERRUPT` note listing what ran, what was paused and what was scrapped. When a call is already out, the existing `interruptInFlight` path applies. Claude plans its follow-up while the reflex is already running.
 
 **New pieces.**

@@ -28,6 +28,13 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
 4. Spike B: `/cp keycheck` with no key, then a bad key, then the real one (env var `ANTHROPIC_API_KEY`, or `run/config/claudeplayer.key` in dev). Expect clear messages, and the server keeps ticking.
 5. G2: `claude: say hi`, then `claude: come here`. Mark the modmap GAME FACTS IN-GAME, or correct them.
 6. Phases 3 to 5 as the plan says. Raise `tool_phase` to 3 after G3 and to 4 after G4.
+7. Piece 1 (priority list and reflexes) in game: `./gradlew runClient -Pquickstart="Claude Test"`, and paste the `reflex` log lines here.
+   - M1. At caution level 4 or 5, spawn a zombie 10 blocks away. The body starts fleeing before Claude's chat reply, and the log shows `reflex FLEE`.
+   - M2. At level 0, ignite a creeper near the body (flint and steel). It flees.
+   - M3. `claude: walk to <a spot past a lava pool>`. The body halts at the edge, and the move reports `failed:hazard_lava`.
+   - M4. Give an order with routine steps, then spawn a zombie. The routine steps come back `scrapped`, and a prio-2 move resumes afterwards.
+   - M5. `claude: stop` while it flees. It halts within a second.
+   - Known: a hostile in a cave far below still counts (XZ distance), so the body may take a short flee. The 30 s re-arm per mob bounds it.
 
 ## Risks to watch
 - API cost during busy play (plan §3 and §9). Watch the token count in `/cp status`.
