@@ -23,8 +23,8 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
 
 ## Still to do, in order
 1. F answers D1 to D8 ("yes to all" is fine).
-2. F runs `./gradlew runClient` and opens a single-player world with cheats on. Then `/cp allow <your name>`.
-3. Phase 0 and G1 without a key: `/cp spawn`, then `claude: demo`. The body should walk a 3-block square at about 3 actions per second, and `claude: stop` should halt it within a second. Check that the body is visible, falls, takes damage, dies, and that `claude: respawn` works. Paste the relevant `latest.log` lines here.
+2. F runs `./gradlew runClient` and opens a single-player world with cheats on. Once a world named "Claude Test" exists, `./gradlew runClient -Pquickstart="Claude Test"` does steps 2 and 3 in one go.
+3. Phase 0 and G1 without a key: `/cp quickstart` (it allows you, spawns the body and runs `claude: demo`). The body should walk a 3-block square at about 3 actions per second, and `claude: stop` should halt it within a second. Check that the body is visible, falls, takes damage, dies, and that `claude: respawn` works. Paste the relevant `latest.log` lines here.
 4. Spike B: `/cp keycheck` with no key, then a bad key, then the real one (env var `ANTHROPIC_API_KEY`, or `run/config/claudeplayer.key` in dev). Expect clear messages, and the server keeps ticking.
 5. G2: `claude: say hi`, then `claude: come here`. Mark the modmap GAME FACTS IN-GAME, or correct them.
 6. Phases 3 to 5 as the plan says. Raise `tool_phase` to 3 after G3 and to 4 after G4.

@@ -7,12 +7,16 @@ Status: skeleton, rules and brain are built and unit-tested. Nothing has run in 
 ## Setup
 1. JDK 17 or newer on the PATH. Gradle downloads the Java 17 toolchain and Minecraft itself.
 2. `./gradlew build` builds the jar (`build/libs/`) and runs the tests.
-3. `./gradlew runClient` starts a dev client. Open a single-player world with cheats on.
+3. `./gradlew runClient` starts a dev client. Open a single-player world with cheats on, then type `/cp quickstart`.
 4. API key: set `ANTHROPIC_API_KEY`, or put the key on the first line of `config/claudeplayer.key` (`run/config/` in dev). Never commit it; `.gitignore` covers `*.key`.
+
+One command for all of it: `./gradlew runClient -Pquickstart="Claude Test"` opens the saved world named "Claude Test" and runs `/cp quickstart` once you're in. Create that world once first. With `-Pquickstart` and no name, it runs in whichever world you open.
 
 ## In game
 | Command | Who | What |
 |---|---|---|
+| `/cp help` (or just `/cp`) | anyone | Instructions; click a line to put that command in chat |
+| `/cp quickstart` | ops, allowlisted | Allow yourself, bring Claude to you, run the demo, report whether a key is set |
 | `/cp allow <name>`, `/cp deny <name>` | ops | Edit the allowlist |
 | `/cp spawn` | ops, allowlisted | Spawn Claude here; this becomes home |
 | `/cp despawn`, `/cp respawn` | ops, allowlisted | Remove Claude, or bring it back at home after a death |

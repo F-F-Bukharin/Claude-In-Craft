@@ -189,8 +189,12 @@ Commands (`/cp`):
 | `/cp keycheck` | One free count_tokens call to confirm the key and model work |
 | `/cp memory` | Show short- and long-term memory |
 | `/cp allow <name>`, `/cp deny <name>` | Edit the allowlist (ops) |
+| `/cp quickstart` | Allow the caller, bring the body to them (spawn, or fetch it from over 16 blocks away), run `claude: demo`, report whether a key is set |
+| `/cp help`, `/cp` | Instructions with clickable commands |
 
-Ops and the single-player owner can run every `/cp` command. Allowlisted players can run all of them except `level`, `allow` and `deny`.
+Anyone can run `/cp help`. Ops and the single-player owner can run every `/cp` command. Allowlisted players can run all of them except `level`, `allow` and `deny`. Players who can command the body get a one-line `/cp help` hint when they join.
+
+Dev launch: `./gradlew runClient -Pquickstart="World"` passes `--quickPlaySingleplayer World` and sets `-Dclaudeplayer.quickstart=true`, which runs `/cp quickstart` 3 s after the first such player joins.
 
 ## TOOLS (what Claude can call)
 Gated by `tool_phase` (default 2).

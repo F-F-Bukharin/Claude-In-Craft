@@ -3,7 +3,9 @@ package com.example.claudeplayer;
 import com.example.claudeplayer.body.ActionExecutor;
 import com.example.claudeplayer.body.AgentBody;
 import com.example.claudeplayer.body.AgentData;
+import com.example.claudeplayer.body.AgentPlayer;
 import com.example.claudeplayer.body.SnapshotBuilder;
+import com.example.claudeplayer.command.CpCommands;
 import com.example.claudeplayer.core.Settings;
 import com.example.claudeplayer.core.StateSnapshot;
 import com.example.claudeplayer.core.act.ActionQueue;
@@ -26,6 +28,7 @@ import com.example.claudeplayer.nav.EscapePlanner;
 import com.example.claudeplayer.nav.Navigator;
 import com.mojang.logging.LogUtils;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -49,6 +52,9 @@ import org.slf4j.Logger;
  */
 public final class AgentRuntime {
     private static final Logger LOG = LogUtils.getLogger();
+    /** Set by {@code ./gradlew runClient -Pquickstart}: run /cp quickstart for the first player who joins. */
+    private static final String QUICKSTART_PROPERTY = "claudeplayer.quickstart";
+    private static final int QUICKSTART_DELAY_TICKS = 60; // let the client finish loading the world first
     private static AgentRuntime current;
 
     private final MinecraftServer server;
@@ -65,8 +71,12 @@ public final class AgentRuntime {
     private final ExecutorService brainThread;
     private final ApiBrain brain;
     private final AgentLoop loop;
+    private final Path keyFile;
     private volatile boolean closed;
     private long ticks;
+    private ServerPlayer quickstartFor;
+    private long quickstartAt;
+    private boolean quickstartRan;
 
     private AgentRuntime(MinecraftServer server) {
         this.server = server;
@@ -87,7 +97,8 @@ public final class AgentRuntime {
             return t;
         });
         Path configDir = FMLPaths.CONFIGDIR.get();
-        this.brain = new ApiBrain(settings, () -> ApiBrain.resolveKey(settings.apiKeyEnv(), configDir.resolve("claudeplayer.key")));
+        this.keyFile = configDir.resolve("claudeplayer.key");
+        this.brain = new ApiBrain(settings, () -> ApiBrain.resolveKey(settings.apiKeyEnv(), keyFile));
         PromptBuilder prompts = new PromptBuilder(settings,
                 PromptBuilder.loadTemplate(configDir.resolve("claudeplayer_system_prompt.md")));
         this.loop = new AgentLoop(settings, new DemoBrain(brain), brainThread, this::onMainThread, queue, guardrails, prompts,
@@ -104,6 +115,8 @@ public final class AgentRuntime {
         stop();
         current = new AgentRuntime(server);
         current.body.restore();
+        // Whoever is already online missed PlayerLoggedInEvent (single-player can log in before this runs).
+        for (ServerPlayer player : List.copyOf(server.getPlayerList().getPlayers())) current.onPlayerJoined(player);
     }
 
     public static void stop() {
@@ -118,6 +131,14 @@ public final class AgentRuntime {
         queue.tick();
         loop.tick();
         damage.tick();
+        if (quickstartFor != null && ticks >= quickstartAt) {
+            ServerPlayer player = quickstartFor;
+            quickstartFor = null;
+            if (!player.hasDisconnected()) {
+                String result = quickstart(player, CpCommands.isAdmin(player.createCommandSourceStack()));
+                player.sendSystemMessage(Component.literal(result).withStyle(ChatFormatting.GRAY));
+            }
+        }
     }
 
     public void onChat(ServerPlayer player, String raw) {
@@ -189,6 +210,62 @@ public final class AgentRuntime {
             String result = msg;
             onMainThread(() -> reply.accept(result));
         });
+    }
+
+    /**
+     * /cp quickstart, in one go: allow the caller, make sure the body is next to them (spawn, or fetch it if it's
+     * far away), and start the demo. Returns one line per step.
+     */
+    public String quickstart(ServerPlayer player, boolean admin) {
+        String name = player.getGameProfile().getName();
+        List<String> steps = new ArrayList<>();
+        if (ChatIntake.allowed(name, Config.allowlist())) {
+            steps.add("1. " + name + " can already give orders.");
+        } else if (admin) {
+            List<String> allowlist = new ArrayList<>(Config.allowlist());
+            allowlist.add(name);
+            Config.setAllowlist(allowlist);
+            server.getCommands().sendCommands(player); // refresh which /cp commands their client offers
+            steps.add("1. Allowed " + name + " to give orders.");
+        } else {
+            return "Only an op can add you to the allowlist.";
+        }
+        AgentPlayer existing = body.player();
+        if (existing == null) {
+            steps.add("2. " + body.spawnAt(player.serverLevel(), player.position(), player.getYRot()));
+        } else if (existing.level() != player.level() || existing.distanceTo(player) > 16) {
+            existing.teleportTo(player.serverLevel(), player.getX(), player.getY(), player.getZ(), player.getYRot(), 0f);
+            steps.add("2. Brought " + settings.bodyName() + " to you. Home is unchanged.");
+        } else {
+            steps.add("2. " + settings.bodyName() + " is already here.");
+        }
+        if (!body.alive()) return String.join("\n", steps); // spawning failed; its message says why
+        loop.startOrder(name, "demo");
+        steps.add("3. Demo running: " + settings.bodyName() + " walks a 3-block square. \""
+                + settings.trigger() + " stop\" halts it.");
+        steps.add(keyStatus());
+        steps.add("Next, try \"" + settings.trigger() + " come here\". /cp help lists everything.");
+        return String.join("\n", steps);
+    }
+
+    /** Whether a key is set up, without calling the API (/cp keycheck makes the real test). */
+    public String keyStatus() {
+        return ApiBrain.resolveKey(settings.apiKeyEnv(), keyFile) != null
+                ? "API key found; /cp keycheck tests it."
+                : "No API key yet. For real orders set " + settings.apiKeyEnv()
+                + " or put the key in config/claudeplayer.key, then run /cp keycheck.";
+    }
+
+    /** A real player joined: point them at /cp help, and run the quickstart if the dev launch asked for it. */
+    public void onPlayerJoined(ServerPlayer player) {
+        if (player instanceof AgentPlayer || !CpCommands.canControl(player.createCommandSourceStack())) return;
+        player.sendSystemMessage(Component.literal("[Claude Player] /cp help shows how to use " + settings.bodyName() + ".")
+                .withStyle(ChatFormatting.GRAY));
+        if (Boolean.getBoolean(QUICKSTART_PROPERTY) && !quickstartRan) {
+            quickstartRan = true;
+            quickstartFor = player;
+            quickstartAt = ticks + QUICKSTART_DELAY_TICKS;
+        }
     }
 
     public String status() {

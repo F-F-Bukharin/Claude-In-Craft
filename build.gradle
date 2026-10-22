@@ -28,7 +28,15 @@ minecraft {
                 }
             }
         }
-        client {}
+        client {
+            // ./gradlew runClient -Pquickstart="World Name" opens that saved world and runs /cp quickstart once you're in.
+            // -Pquickstart with no name runs it in whichever world you open.
+            if (project.hasProperty('quickstart')) {
+                property 'claudeplayer.quickstart', 'true'
+                String world = project.property('quickstart').toString()
+                if (!world.isBlank()) args '--quickPlaySingleplayer', world
+            }
+        }
         server {
             args '--nogui'
         }
