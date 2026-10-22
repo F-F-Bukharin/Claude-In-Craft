@@ -184,6 +184,18 @@ class ActionQueueTest {
     }
 
     @Test
+    void onlyTheFirstLevelThreeSkipsThePace() {
+        ActionQueue q = queue(3.0);
+        q.enqueue(says(1));
+        run(q, 1); // s0 used the banked start
+        q.enqueue(List.of(e("f1", "say", SAY, 3), e("f2", "say", SAY, 3)));
+        run(q, 1);
+        assertEquals(tick, (int) startTicks.get(1), "f1 started at once");
+        run(q, 20);
+        assertTrue(startTicks.get(2) - startTicks.get(1) >= 6, "f2 waited a full interval: " + startTicks);
+    }
+
+    @Test
     void levelThreeWaitsBehindARunningLevelThree() {
         ActionQueue q = queue(3.0);
         q.enqueue(List.of(e("m", "move_to", MOVE, 3)));

@@ -9,7 +9,8 @@ import org.slf4j.LoggerFactory;
 /**
  * Starts queued actions at a fixed rate, once per server tick. Pacing counts ticks, not wall time, so lag slows
  * the agent down instead of making it burst. A timed action (move, wait) holds the queue until it finishes.
- * Entries have a level, 1 (routine) to 3 (safety): higher levels start first, and a level 3 entry preempts.
+ * Entries have a level, 1 (routine) to 3 (safety): higher levels start first, and a level 3 entry preempts. The
+ * first start after a level 3 arrives skips the pacing credit; every start after it is paced as usual.
  */
 public final class ActionQueue {
     private static final Logger LOG = LoggerFactory.getLogger(ActionQueue.class);
@@ -52,6 +53,7 @@ public final class ActionQueue {
     private ActionRunner.Handle handle;
     private int runningTicks;
     private long credit = UNIT;
+    private boolean preempted; // a level 3 arrived and nothing has started since
 
     public ActionQueue(double actionsPerSecond, int defaultTimeoutTicks, ActionRunner runner) {
         this.creditPerTick = Math.max(1, Math.round(actionsPerSecond * UNIT / 20.0));
@@ -75,8 +77,9 @@ public final class ActionQueue {
         credit += creditPerTick;
         if (running != null) poll();
         Entry next = running == null ? peekNext() : null;
-        if (next != null && (credit >= UNIT || next.prio() == LEVELS)) {
+        if (next != null && (credit >= UNIT || (next.prio() == LEVELS && preempted))) {
             credit = Math.max(0, credit - UNIT);
+            preempted = false;
             level(next.prio()).poll();
             start(next);
         }
@@ -183,6 +186,7 @@ public final class ActionQueue {
     }
 
     private Preemption preempt() {
+        preempted = true;
         List<Entry> scrapped = new ArrayList<>();
         List<Entry> paused = new ArrayList<>();
         if (running != null && running.prio() < LEVELS) {
