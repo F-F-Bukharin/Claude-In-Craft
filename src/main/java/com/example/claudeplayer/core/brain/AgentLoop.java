@@ -2,6 +2,7 @@ package com.example.claudeplayer.core.brain;
 
 import com.example.claudeplayer.core.Settings;
 import com.example.claudeplayer.core.StateSnapshot;
+import com.example.claudeplayer.core.act.Action;
 import com.example.claudeplayer.core.act.ActionQueue;
 import com.example.claudeplayer.core.act.ActionResult;
 import com.example.claudeplayer.core.chat.Conversation;
@@ -15,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,6 +31,10 @@ import org.slf4j.LoggerFactory;
  * calls are still waiting to start, so the next reply usually lands before the queue runs dry. Calls still pending
  * at that point report {@code queued}, and their real outcome follows as a note in a later turn. If the reply is
  * late the agent waits; it never acts on a guess.
+ *
+ * <p>Priorities: each call runs at its {@code prio} level. A reflex is code acting first: its actions go in at
+ * level 3, which scraps routine work and pauses level 2, and the model then hears what the body did and what was
+ * displaced. A dropped order leaves level 3 running, so a flee outlives the order that was interrupted.
  */
 public final class AgentLoop implements ActionQueue.Listener {
     private static final Logger LOG = LoggerFactory.getLogger(AgentLoop.class);
@@ -100,6 +106,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     private String interruptInFlight;
     private String finalText;
     private int steps;
+    private int reflexCount; // numbers the reflex-<n> call ids
 
     public AgentLoop(Settings settings, Brain brain, Executor brainThread, Executor mainThread, ActionQueue queue,
                      Guardrails guardrails, PromptBuilder prompts, ToolSchemas tools, Memory memory, Host host) {
@@ -127,8 +134,9 @@ public final class AgentLoop implements ActionQueue.Listener {
     }
 
     /**
-     * A threat or a hit: cancel the queue and tell the model now. With no order running this starts a reaction,
-     * unless idle reactions are off or the kill switch is on.
+     * A threat or a hit: tell the model now. With reflexes on the queue is left alone (a reflex already acted);
+     * with them off everything below level 3 is cancelled. With no order running this starts a reaction, unless
+     * idle reactions are off or the kill switch is on.
      */
     public void interrupt(String reason) {
         if (orderFrom == null) {
@@ -136,25 +144,48 @@ public final class AgentLoop implements ActionQueue.Listener {
             return;
         }
         String note = "INTERRUPT: " + reason;
+        if (settings.reflexes()) {
+            report(note);
+            return;
+        }
         if (inFlight) {
             interruptInFlight = note; // the reply on its way was planned on stale state
         } else {
             notes.add(note);
             mustReport = true;
         }
-        cancelQueue();
+        quietly(() -> queue.cancelBelow(3));
         checkProgress();
+    }
+
+    /**
+     * Code acted before the model: queues {@code actions} at level 3, then tells the model what ran and what it
+     * displaced. With no order running this starts a reaction, unless idle reactions are off or the kill switch
+     * is on; the actions run either way.
+     */
+    public void reflex(String reason, List<Action> actions) {
+        List<ActionQueue.Entry> entries = new ArrayList<>();
+        for (Action a : actions) entries.add(new ActionQueue.Entry("reflex-" + ++reflexCount, reflexTool(a), a, 3));
+        ActionQueue.Preemption displaced = enqueue(entries);
+        String did = " Reflex: " + entries.stream().map(ActionQueue.Entry::tool).collect(Collectors.joining(", ")) + ".";
+        if (orderFrom == null) {
+            if (settings.idleReactions() && !guardrails.halted()) begin(new Opening("", reason + did, true));
+            return;
+        }
+        report("INTERRUPT: " + reason + did + listed(" Paused: ", displaced.paused()) + listed(" Scrapped: ", displaced.scrapped()));
     }
 
     /** Kill switch: cancel everything, drop the order, block model calls until the next order. */
     public void stop() {
         guardrails.halt();
         abandon();
+        quietly(queue::cancelAll);
     }
 
     /** The body died or was removed: drop the order without another model call. */
     public void bodyGone() {
         abandon();
+        quietly(queue::cancelAll);
     }
 
     /** Once per server tick: sends a call that was waiting for the call-rate window. */
@@ -178,7 +209,10 @@ public final class AgentLoop implements ActionQueue.Listener {
     @Override
     public void onFinished(ActionQueue.Entry entry, ActionResult result) {
         Call call = pending.remove(entry.callId());
-        if (call == null) return; // from an abandoned order
+        if (call == null) { // a reflex, or a call from an abandoned order
+            checkProgress(); // a final reply may be waiting for the queue to go idle
+            return;
+        }
         if (call.reportedEarly) {
             notes.add(call.name + " " + call.id + ": " + result.code());
             if (result.isError()) mustReport = true;
@@ -243,12 +277,30 @@ public final class AgentLoop implements ActionQueue.Listener {
                 call.result = parsed.error();
                 continue;
             }
+            if (parsed.prioLowered()) {
+                notes.add(tc.name() + " " + tc.id() + ": prio_lowered to 2 (prio 3 is only for flee, stop and attack_entity)");
+            }
             pending.put(tc.id(), call);
-            entries.add(new ActionQueue.Entry(tc.id(), tc.name(), parsed.action()));
+            entries.add(new ActionQueue.Entry(tc.id(), tc.name(), parsed.action(), parsed.prio()));
         }
         batch = next;
-        queue.enqueue(entries);
+        enqueue(entries);
         checkProgress(); // a batch with nothing runnable reports at once
+    }
+
+    /** Tells the model now: unfinished calls of the current batch report {@code queued}. */
+    private void report(String note) {
+        if (inFlight) {
+            interruptInFlight = note; // the reply on its way was planned on stale state
+            return;
+        }
+        notes.add(note);
+        mustReport = true;
+        if (batch != null && !batch.reported) {
+            reportBatch();
+        } else {
+            checkProgress();
+        }
     }
 
     /** Decides whether to send results, finish the order, or keep waiting. */
@@ -361,12 +413,15 @@ public final class AgentLoop implements ActionQueue.Listener {
         host.notice(notice);
     }
 
-    /** Drops the order quietly: cancels the queue and forgets the transcript. A reply still in flight is ignored. */
+    /**
+     * Drops the order quietly: cancels the queue below level 3 and forgets the transcript. A reply still in flight
+     * is ignored.
+     */
     private void abandon() {
         epoch++;
         orderFrom = null;
         opening = null;
-        cancelQueue();
+        quietly(() -> queue.cancelBelow(3));
         messages = new JsonArray();
         pending.clear();
         pendingResults = new JsonArray();
@@ -380,13 +435,43 @@ public final class AgentLoop implements ActionQueue.Listener {
         steps = 0;
     }
 
-    private void cancelQueue() {
+    /**
+     * Enqueues with progress checks held back: a level 3 entry scraps work before it is added, so the queue can
+     * read idle inside those callbacks. The caller checks progress once the queue is settled.
+     */
+    private ActionQueue.Preemption enqueue(List<ActionQueue.Entry> entries) {
+        boolean was = cancelling;
         cancelling = true;
         try {
-            queue.cancelAll();
+            return queue.enqueue(entries);
         } finally {
-            cancelling = false;
+            cancelling = was;
         }
+    }
+
+    /** Runs a queue cancel with progress checks held back. */
+    private void quietly(Runnable cancel) {
+        boolean was = cancelling;
+        cancelling = true;
+        try {
+            cancel.run();
+        } finally {
+            cancelling = was;
+        }
+    }
+
+    private static String listed(String label, List<ActionQueue.Entry> entries) {
+        if (entries.isEmpty()) return "";
+        return label + entries.stream().map(e -> e.tool() + " " + e.callId()).collect(Collectors.joining(", ")) + ".";
+    }
+
+    private static String reflexTool(Action action) {
+        if (action instanceof Action.Flee) return "flee";
+        if (action instanceof Action.AttackEntity) return "attack_entity";
+        if (action instanceof Action.Say) return "say";
+        if (action instanceof Action.Stop) return "stop";
+        if (action instanceof Action.MoveTo) return "move_to";
+        throw new IllegalArgumentException("not a reflex action: " + action);
     }
 
     private static JsonObject message(String role, JsonArray content) {

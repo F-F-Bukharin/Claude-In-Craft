@@ -134,9 +134,9 @@ public final class AgentRuntime {
     public void tick() {
         ticks++;
         body.tick();
+        damage.tick(); // reflexes enqueue before the queue ticks, so a level-3 action starts this tick
         queue.tick();
         loop.tick();
-        damage.tick();
         if (quickstartFor != null && ticks >= quickstartAt) {
             ServerPlayer player = quickstartFor;
             quickstartFor = null;

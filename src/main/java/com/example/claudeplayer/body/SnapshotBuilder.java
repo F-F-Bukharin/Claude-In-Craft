@@ -2,6 +2,7 @@ package com.example.claudeplayer.body;
 
 import com.example.claudeplayer.AgentRuntime;
 import com.example.claudeplayer.core.StateSnapshot;
+import com.example.claudeplayer.core.safety.Reflexes;
 import com.example.claudeplayer.core.safety.WorldText;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -19,6 +20,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.MobCategory;
+import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
@@ -71,6 +73,19 @@ public final class SnapshotBuilder {
         return mobs;
     }
 
+    /** Monster-category mobs within range of the body on the ground plane, at any height, nearest first. */
+    public static List<Mob> hostilesXZ(ServerPlayer body, double range) {
+        List<Mob> mobs = new ArrayList<>(body.serverLevel().getEntitiesOfClass(Mob.class, body.getBoundingBox().inflate(range, 384, range),
+                m -> m.isAlive() && isHostile(m) && horizontal(body, m) <= range));
+        mobs.sort(Comparator.comparingDouble(m -> horizontal(body, m)));
+        return mobs;
+    }
+
+    /** A creeper whose fuse is burning: swelling toward an explosion, or ignited by flint and steel. */
+    public static boolean litCreeper(Entity e) {
+        return e instanceof Creeper c && (c.getSwellDir() > 0 || c.isIgnited());
+    }
+
     public static boolean isHostile(Entity entity) {
         return entity.getType().getCategory() == MobCategory.MONSTER;
     }
@@ -112,6 +127,10 @@ public final class SnapshotBuilder {
 
     private static String shortId(ResourceLocation id) {
         return "minecraft".equals(id.getNamespace()) ? id.getPath() : id.toString();
+    }
+
+    private static double horizontal(Entity from, Entity to) {
+        return Reflexes.horizontal(to.getX() - from.getX(), to.getZ() - from.getZ());
     }
 
     private static StateSnapshot.Vec vec(Vec3 v) {

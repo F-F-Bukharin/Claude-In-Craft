@@ -7,6 +7,7 @@ import com.example.claudeplayer.core.act.ActionRunner;
 import com.example.claudeplayer.core.safety.CautionPolicy;
 import com.example.claudeplayer.core.safety.WorldText;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import net.minecraft.commands.arguments.EntityAnchorArgument;
@@ -16,6 +17,7 @@ import net.minecraft.world.Container;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.Nameable;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.ChestBlock;
@@ -29,7 +31,7 @@ import net.minecraft.world.phys.Vec3;
  * Memory tools never get here; MemoryActions handles them in the core.
  */
 public final class ActionExecutor implements ActionRunner {
-    private static final double ATTACK_REACH = 3.0;
+    public static final double ATTACK_REACH = 3.0;
     private static final double CONTAINER_REACH = 6.0;
 
     private final AgentRuntime rt;
@@ -53,6 +55,7 @@ public final class ActionExecutor implements ActionRunner {
             return Handle.done(ActionResult.ok());
         }
         if (action instanceof Action.MoveTo m) return rt.navigator().moveTo(p, new Vec3(m.x(), m.y(), m.z()));
+        if (action instanceof Action.Flee) return flee(p);
         if (action instanceof Action.InspectContainer c) return Handle.done(inspect(p, new BlockPos(c.x(), c.y(), c.z())));
         if (action instanceof Action.FollowPlayer f) return follow(p, f);
         if (action instanceof Action.AttackEntity a) return Handle.done(attack(p, a.entityId()));
@@ -82,6 +85,15 @@ public final class ActionExecutor implements ActionRunner {
         ServerPlayer target = rt.server().getPlayerList().getPlayerByName(f.name());
         if (target == null || target == p) return Handle.done(ActionResult.failed("no_such_player"));
         return rt.navigator().follow(p, target, (int) Math.round(f.seconds() * 20));
+    }
+
+    /** Runs to the first reachable spot on the side away from the nearest hostile. */
+    private Handle flee(AgentPlayer p) {
+        List<Mob> threats = SnapshotBuilder.hostilesXZ(p, rt.settings().hostileRange());
+        if (threats.isEmpty()) return Handle.done(ActionResult.ok("no_threats"));
+        Vec3 dest = rt.escape().destination(p, threats);
+        if (dest == null) return Handle.done(ActionResult.failed("no_escape"));
+        return rt.navigator().moveTo(p, dest);
     }
 
     /** Reads a container without opening it, and keeps the exact contents as a short-term note. */

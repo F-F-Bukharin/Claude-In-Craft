@@ -34,4 +34,9 @@ public final class ThreatTracker {
         lastInterrupt = tick;
         return true;
     }
+
+    /** Drops the key, so its next report counts as a new threat (the min gap still applies). */
+    public void forget(String key) {
+        keys.remove(key);
+    }
 }
