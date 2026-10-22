@@ -229,7 +229,7 @@ class AgentLoopTest {
 
     @Test
     void anInterruptCancelsTheQueueAndReportsAtOnce() {
-        build(b -> {});
+        build(b -> b.reflexes = false);
         script.add(tools(move("m"), say("s")));
         script.add(text("Backed off."));
         loop.startOrder("F", "walk");
@@ -260,7 +260,123 @@ class AgentLoopTest {
         assertEquals(3, requests.size());
         assertEquals(List.of("cancelled"), results(2), "g never ran");
         assertTrue(lastText(2).contains("INTERRUPT: hit by zombie #7"), lastText(2));
+        ticks(40); // interrupts keep the queue with reflexes on, so the final text waits for c..f
         assertEquals(List.of("ok"), said);
+    }
+
+    @Test
+    void aReflexRunsBeforeTheModelHearsAndScrapsRoutineWork() {
+        build(b -> {});
+        script.add(tools(move("m"), say("s")));
+        script.add(text("Safe now."));
+        loop.startOrder("F", "walk");
+        pump();
+        ticks(3); // m is running
+        loop.reflex("creeper #9 is 4.0 blocks away, fuse lit.", List.of(new Action.Flee()));
+        pump();
+        assertEquals(2, requests.size());
+        assertEquals(List.of("scrapped", "scrapped"), results(1));
+        assertTrue(lastText(1).contains("INTERRUPT: creeper #9 is 4.0 blocks away, fuse lit. Reflex: flee. Scrapped: move_to m, say s."), lastText(1));
+        ticks(2);
+        assertEquals(List.of("Safe now."), said);
+    }
+
+    @Test
+    void levelTwoWorkIsPausedAndResumes() {
+        build(b -> {});
+        script.add(tools(call("m", "move_to", "{\"x\":5,\"y\":64,\"z\":5,\"prio\":2}")));
+        script.add(text("Back to it."));
+        loop.startOrder("F", "walk");
+        pump();
+        ticks(3);
+        loop.reflex("zombie #7 is 2.0 blocks away.", List.of(new Action.Flee()));
+        pump();
+        assertEquals(List.of("queued"), results(1));
+        assertTrue(lastText(1).contains("Reflex: flee. Paused: move_to m."), lastText(1));
+        ticks(10);
+        assertEquals("move_to", queue.runningTool(), "m restarted after the flee");
+        assertEquals(List.of(), said, "the order waits for m");
+    }
+
+    @Test
+    void prioThreeOnANonSafetyToolRunsAtTwoAndSaysSo() {
+        build(b -> {});
+        script.add(tools(call("s", "say", "{\"text\":\"hi\",\"prio\":3}")));
+        script.add(text("done"));
+        loop.startOrder("F", "greet");
+        pump();
+        ticks(3);
+        assertTrue(lastText(1).contains("say s: prio_lowered to 2"), lastText(1));
+    }
+
+    @Test
+    void anInterruptWithReflexesOnKeepsTheQueue() {
+        build(b -> {});
+        script.add(tools(move("m"), say("s")));
+        script.add(text("noted"));
+        loop.startOrder("F", "walk");
+        pump();
+        ticks(3);
+        loop.interrupt("zombie #7 is 10.0 blocks away.");
+        pump();
+        assertEquals(2, requests.size());
+        assertEquals(List.of("queued", "queued"), results(1));
+        assertTrue(lastText(1).contains("INTERRUPT: zombie #7 is 10.0 blocks away."), lastText(1));
+        assertEquals("move_to", queue.runningTool());
+    }
+
+    @Test
+    void aReflexDuringACallVoidsTheRepliesPlan() {
+        build(b -> {});
+        script.add(tools(say("a"), say("b"), say("c"), say("d"), say("e"), say("f")));
+        script.add(tools(say("g"))); // planned before the hit
+        script.add(text("ok"));
+        loop.startOrder("F", "chatter");
+        pump();
+        for (int i = 0; i < 100 && brainThread.isEmpty(); i++) {
+            queue.tick(); // run the queue without delivering the early-report call
+            loop.tick();
+        }
+        loop.reflex("hit by zombie #7.", List.of(new Action.Flee()));
+        pump();
+        assertEquals(3, requests.size());
+        assertEquals(List.of("cancelled"), results(2), "g never ran");
+        assertTrue(lastText(2).contains("INTERRUPT: hit by zombie #7. Reflex: flee."), lastText(2));
+    }
+
+    @Test
+    void aReflexWhileIdleStartsAReactionThatSaysWhatTheBodyDid() {
+        build(b -> {});
+        script.add(text("Ran."));
+        loop.reflex("creeper #9 is 3.0 blocks away, fuse lit.", List.of(new Action.Flee()));
+        pump();
+        assertEquals(1, requests.size());
+        assertTrue(lastText(0).contains("fuse lit. Reflex: flee."), lastText(0));
+    }
+
+    @Test
+    void aNewOrderKeepsARunningReflexAndStopEndsIt() {
+        build(b -> b.idleReactions = false);
+        loop.reflex("zombie #7 is 2.0 blocks away.", List.of(new Action.MoveTo(9, 64, 9)));
+        ticks(2);
+        assertEquals(0, requests.size());
+        script.add(text("hello"));
+        loop.startOrder("F", "say hi");
+        pump();
+        assertEquals("move_to", queue.runningTool(), "the new order didn't cancel the reflex");
+        loop.stop();
+        assertTrue(queue.idle());
+    }
+
+    @Test
+    void aReflexAfterStopStillRunsButCallsNoModel() {
+        build(b -> {});
+        loop.stop();
+        loop.reflex("creeper #9 is 3.0 blocks away, fuse lit.", List.of(new Action.MoveTo(9, 64, 9)));
+        pump();
+        ticks(2);
+        assertEquals("move_to", queue.runningTool());
+        assertEquals(0, requests.size());
     }
 
     @Test

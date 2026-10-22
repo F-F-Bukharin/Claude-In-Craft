@@ -74,6 +74,9 @@ public final class Config {
     private static final ForgeConfigSpec.BooleanValue IDLE_REACTIONS = B
             .comment("Let Claude react to threats when no order is running. Costs model calls.")
             .define("idle_reactions", D.idleReactions());
+    private static final ForgeConfigSpec.BooleanValue REFLEXES = B
+            .comment("Code reflexes: flee or fight by caution level, and refuse moves into lava, fire or deadly drops, before the model hears about it.")
+            .define("reflexes", D.reflexes());
     private static final ForgeConfigSpec.IntValue MEMORY_SHORT_CAPACITY = B
             .comment("Short-term notes kept at once; the oldest goes first.")
             .defineInRange("memory_short_capacity", D.shortTermCapacity(), 1, 256);
@@ -114,6 +117,7 @@ public final class Config {
             b.escapeMaxSteps = ESCAPE_MAX_STEPS.get();
             b.toolPhase = TOOL_PHASE.get();
             b.idleReactions = IDLE_REACTIONS.get();
+            b.reflexes = REFLEXES.get();
             b.shortTermCapacity = MEMORY_SHORT_CAPACITY.get();
             b.shortTermMinutes = MEMORY_SHORT_MINUTES.get();
             b.longTermCapacity = MEMORY_LONG_CAPACITY.get();
