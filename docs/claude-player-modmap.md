@@ -76,7 +76,7 @@ Tests live in `src/test/java/com/example/claudeplayer/`: PurityTest; `core/act/A
 - On death, the loop stops, the agent says so in chat, and waits for `claude: respawn` or `/cp respawn`.
 
 ### 3. State snapshot
-- Built on the server thread at each message to the model and for each `get_state` call. Immutable. Sent as compact JSON, target under 2 KB. Threat scans run separately, every 10 ticks, in DamageWatcher.
+- Built on the server thread at each message to the model and for each `get_state` call. Immutable. Sent as compact JSON, target under 2 KB. Threat scans run separately, every 2 ticks, in DamageWatcher.
 - Contents: position, dimension, facing; HP and food; held item and armor; top inventory slots; up to 10 nearest hostiles (type, distance, HP); up to 10 nearby players (name, distance); block summary within 3 tiles (counts by type); time of day and weather; caution level; queue state (running action, actions still waiting).
 
 ### 4. Brain loop (background thread)
@@ -229,5 +229,5 @@ COMPILED means the code compiles against forge-1.20.1-47.4.28 with official mapp
 ## STATUS
 - 22 Oct 2026: planning pass done (Haiku 5.5 Max).
 - 22 Oct 2026: skeleton, rules and brain built (Opus 5.5). Every LAYOUT file exists. Phase 1 and 2 code is in, plus memory; phase 3 and 4 code sits behind `tool_phase`. `./gradlew build` is green with 85 unit tests. Nothing has run in Minecraft yet.
-- 22 Oct 2026: piece 1 built (priority list and reflexes): queue levels 1 to 3, `prio` on every tool, the `flee` tool, code reflexes, and moves that refuse lava, fire and deadly drops. `./gradlew build` is green with 115 unit tests. In-game checks M1 to M5 are in the handoff.
+- 22 Oct 2026: piece 1 built (priority list and reflexes): queue levels 1 to 3, `prio` on every tool, the `flee` tool, code reflexes, and moves that refuse lava, fire and deadly drops. `./gradlew build` is green with 118 unit tests. In-game checks M1 to M5 are in the handoff.
 - Next: F runs the Phase 0 checks against this code. Spike A is `/cp spawn` plus `claude: come here`; Spike B is `/cp keycheck` with a bad key. Details in the handoff.
