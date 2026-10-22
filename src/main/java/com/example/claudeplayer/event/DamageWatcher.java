@@ -16,6 +16,7 @@ import java.util.Locale;
 import javax.annotation.Nullable;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.player.Player;
 import net.minecraftforge.event.entity.living.LivingHurtEvent;
 import org.slf4j.Logger;
@@ -76,6 +77,7 @@ public final class DamageWatcher {
         if (pending == null && now % SCAN_TICKS == 0) {
             for (Mob mob : SnapshotBuilder.hostilesXZ(p, rt.settings().hostileRange())) {
                 boolean lit = SnapshotBuilder.litCreeper(mob);
+                if (!lit && mob instanceof Creeper) fuses.forget("lit:" + mob.getId()); // a re-lit fuse is a new one
                 if (lit ? fuses.report("lit:" + mob.getId(), now) : threats.report("near:" + mob.getId(), now)) {
                     pending = react(p, String.format(Locale.ROOT, "%s is %.1f blocks away%s.",
                             describe(mob), p.distanceTo(mob), lit ? ", fuse lit" : ""), mob);

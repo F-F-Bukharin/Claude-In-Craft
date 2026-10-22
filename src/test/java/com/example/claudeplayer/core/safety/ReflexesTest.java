@@ -79,4 +79,13 @@ class ReflexesTest {
         assertTrue(fuses.report("lit:2", 101), "a second creeper a tick later still counts");
         assertFalse(fuses.report("lit:1", 102), "one report per fuse");
     }
+
+    @Test
+    void aForgottenFuseReportsAgainAtOnce() {
+        ThreatTracker fuses = new ThreatTracker(0, 60);
+        assertTrue(fuses.report("lit:1", 100));
+        assertFalse(fuses.report("lit:1", 102), "same fuse, still lit");
+        fuses.forget("lit:1"); // seen unlit
+        assertTrue(fuses.report("lit:1", 104), "lit again counts as a new fuse");
+    }
 }
