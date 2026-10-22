@@ -30,7 +30,7 @@ Paths are under `src/main/java/com/example/claudeplayer/` unless noted. Everythi
 | `core/act/Action.java` | Sealed interface, one record per tool |
 | `core/act/ActionResult.java` | `ok`, `denied:<why>`, `failed:<why>`, `cancelled`, `queued` |
 | `core/act/ActionRunner.java` | Execution contract: start → Handle (poll, cancel, timeout) |
-| `core/act/ActionQueue.java` | Tick pacing, levels 1 to 3 (a level 3 entry preempts: it scraps level 1 and pauses a running level 2), quick vs timed actions, timeout, cancel, stop |
+| `core/act/ActionQueue.java` | Tick pacing, levels 1 to 3 (a level 3 entry preempts: it scraps level 1 and pauses a running level 2), quick vs timed actions, timeout, cancel, stop, `snapshot()` for the Brain screen |
 | `core/brain/Brain.java` | Backend interface: `ApiBrain` or `ClaudeCodeBrain`, picked by `brain` |
 | `core/brain/ClaudeCodeBrain.java` | Option B: runs the player's `claude -p` (subscription login) with no tools, a replaced system prompt and a JSON schema for tool calls |
 | `core/brain/ApiBrain.java` | Messages API over java.net.http: retries, prompt caching, key lookup, keycheck |
@@ -59,9 +59,10 @@ Paths are under `src/main/java/com/example/claudeplayer/` unless noted. Everythi
 | `nav/Navigator.java` | Steers the body along paths planned by an off-world zombie |
 | `nav/MoveHandle.java`, `nav/FollowHandle.java` | move_to (refuses lava, fire and deadly drops) and follow_player |
 | `nav/EscapePlanner.java` | "Does a retreat path exist?" for the policy, and where `flee` runs to: straight away from the nearest threat first |
-| `event/ServerEvents.java` | Forge event wiring |
+| `event/ServerEvents.java` | Forge event wiring; right-click on the body opens the Brain screen |
 | `event/DamageWatcher.java` | Threat scan every 2 ticks and hits: reflexes and interrupts; help calls at level 5 |
 | `command/CpCommands.java` | `/cp` subcommands |
+| `gui/BrainMenu.java` | Claude Brain screen: a read-only chest of the queue (running, then waiting; paused marked), opened by right-clicking the body. Server side only |
 | `src/main/resources/claudeplayer/system_prompt.md` | System prompt; `config/claudeplayer_system_prompt.md` overrides it |
 
 Tests live in `src/test/java/com/example/claudeplayer/`: PurityTest; `core/act/ActionQueueTest`; `core/brain/` AgentLoopTest, ApiBrainTest, ToolParseTest; `core/chat/ChatIntakeTest`; `core/memory/MemoryTest`; `core/safety/` CautionPolicyTest, ReflexesTest and SafetyTest (Guardrails, WorldText, ThreatTracker).
@@ -235,4 +236,5 @@ COMPILED means the code compiles against forge-1.20.1-47.4.28 with official mapp
 - 22 Oct 2026: skeleton, rules and brain built (Opus 5.5). Every LAYOUT file exists. Phase 1 and 2 code is in, plus memory; phase 3 and 4 code sits behind `tool_phase`. `./gradlew build` is green with 85 unit tests. Nothing has run in Minecraft yet.
 - 22 Oct 2026: piece 1 built (priority list and reflexes): queue levels 1 to 3, `prio` on every tool, the `flee` tool, code reflexes, and moves that refuse lava, fire and deadly drops. `./gradlew build` is green with 118 unit tests. In-game checks M1 to M5 are in the handoff.
 - 22 Oct 2026: piece 1 merged into dev with the Claude Code brain (`brain = "claude_code"`). `./gradlew build` is green with 125 unit tests.
+- 22 Oct 2026: Claude Brain screen built and merged into dev: right-click the body for a read-only chest of the queue, for the players who may use `/cp`. `./gradlew build` is green with 127 unit tests. Not in game yet.
 - Next: F runs the Phase 0 checks against this code. Spike A is `/cp spawn` plus `claude: come here`; Spike B is `/cp keycheck` with a bad key. Details in the handoff.

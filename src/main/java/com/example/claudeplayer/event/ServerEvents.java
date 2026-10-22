@@ -2,13 +2,17 @@ package com.example.claudeplayer.event;
 
 import com.example.claudeplayer.AgentRuntime;
 import com.example.claudeplayer.ClaudePlayerMod;
+import com.example.claudeplayer.body.AgentPlayer;
 import com.example.claudeplayer.command.CpCommands;
+import com.example.claudeplayer.gui.BrainMenu;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionHand;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.ServerChatEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.living.LivingHurtEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
+import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.event.server.ServerStartedEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -56,5 +60,16 @@ public final class ServerEvents {
     public static void onHurt(LivingHurtEvent event) {
         AgentRuntime rt = AgentRuntime.get();
         if (rt != null) rt.damage().onHurt(event);
+    }
+
+    /** Right-clicking the body opens the Brain screen, for the same players who may use /cp. Anyone else gets nothing. */
+    @SubscribeEvent
+    public static void onEntityInteract(PlayerInteractEvent.EntityInteract event) {
+        AgentRuntime rt = AgentRuntime.get();
+        if (rt == null || event.getLevel().isClientSide() || event.getHand() != InteractionHand.MAIN_HAND) return;
+        if (!(event.getTarget() instanceof AgentPlayer) || !(event.getEntity() instanceof ServerPlayer player)) return;
+        if (!CpCommands.canControl(player.createCommandSourceStack())) return;
+        BrainMenu.open(player, rt);
+        event.setCanceled(true);
     }
 }

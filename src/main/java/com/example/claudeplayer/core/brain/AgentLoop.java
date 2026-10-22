@@ -93,6 +93,7 @@ public final class AgentLoop implements ActionQueue.Listener {
 
     private int epoch; // bumps whenever the order is dropped; replies from an older epoch are ignored
     private String orderFrom; // null when idle, "" for a reaction nobody ordered
+    private String orderText; // the current order's text; "" for a reaction, null when idle
     private Opening opening; // the first turn, built when its call actually goes out
     private JsonArray messages = new JsonArray();
     private final Map<String, Call> pending = new HashMap<>();
@@ -125,6 +126,16 @@ public final class AgentLoop implements ActionQueue.Listener {
 
     public boolean active() {
         return orderFrom != null;
+    }
+
+    /** Who the current order is from; "" for a reaction nobody ordered, null when idle. */
+    public String orderFrom() {
+        return orderFrom;
+    }
+
+    /** The current order's text; "" for a reaction, null when idle. */
+    public String orderText() {
+        return orderText;
     }
 
     /** A new order from an allowlisted player. Replaces whatever was running and lifts a kill-switch halt. */
@@ -226,6 +237,7 @@ public final class AgentLoop implements ActionQueue.Listener {
         abandon();
         opening = first;
         orderFrom = first.player();
+        orderText = first.event() ? "" : first.text();
         flush();
     }
 
@@ -420,6 +432,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     private void abandon() {
         epoch++;
         orderFrom = null;
+        orderText = null;
         opening = null;
         quietly(() -> queue.cancelBelow(3));
         messages = new JsonArray();
