@@ -28,7 +28,7 @@ Success: `claude: come here` runs on the subscription with no key set. A creeper
 - Priority: three levels. A level 3 always goes to the front, level 2 is paused, level 1 is scrapped.
 - Blockman: short replies, and a guardrail so Claude doesn't lose track of where it is and what it is doing.
 - Build on the Claudefox bridge pattern: a helper, a tool server Claude Code talks to with a per-session token, one warm `claude` per chat. Make it faster.
-  - **Revised 22 Oct (F to confirm):** what carries over from Claudefox is one warm `claude` per chat on stream-json, the idle stop, `--resume` and the lockdown. The tool server and the separate helper process don't. `ClaudeCodeBrain` already gets tool calls through `--json-schema`, so a helper process would only add a local channel to secure. F asked for pieces 3 and 4 to build on that brain.
+  - **Revised 22 Oct, confirmed by F:** what carries over from Claudefox is one warm `claude` per chat on stream-json, the idle stop, `--resume` and the lockdown. The tool server and the separate helper process don't. `ClaudeCodeBrain` already gets tool calls through `--json-schema`, so a helper process would only add a local channel to secure. F asked for pieces 3 and 4 to build on that brain.
 
 - Confirmed by F with the spec (22 Oct): `brain` defaults to `claude_code` (dev already does this); "16 blocks horizontally" is XZ distance with no vertical cap; the bridge is written in Java (it is now Java inside the mod).
 
@@ -148,7 +148,7 @@ Not kept from the first version: dispatching each tool call as it streams. With 
 - Loading the skill as a plugin would mean dropping `ClaudeCodeBrain`'s `--disable-slash-commands`, adding `--plugin-dir`, and sending `/caveman`. Instead, the brain reads F's installed `caveman/SKILL.md` and uses its body (after the front matter) as the rules. It looks under `~/.claude/skills/` (newest match), or at `caveman_skill_path` if set. The text is capped at 8 KB. Its SHA-256 is logged and shown in `/cp status`. No skill file found means no caveman, and one log line says so.
 - **On at 80%.** For orders that start past 80%, the rules are a section at the end of the system prompt file (the spare is rebuilt with it). For an order already running, they go in as one appended user note at the next turn boundary, so the transcript stays append-only.
 - **Off again** for the next order once both windows are back below 80% (a window resets).
-- **F to confirm:** this is the real skill's rules, not the plugin mechanism. If F wants the plugin itself, the change is dropping `--disable-slash-commands`, adding `--plugin-dir`, and a spike that `/caveman` runs in a stream-json session.
+- **Confirmed by F (22 Oct):** the real skill's rules, not the plugin mechanism. Switching to the plugin later would mean dropping `--disable-slash-commands`, adding `--plugin-dir`, and a spike that `/caveman` runs in a stream-json session.
 
 ## 8. Usage ledger and think-harder
 
@@ -239,7 +239,7 @@ Each one is a short script against the real CLI, with `ClaudeCodeBrain`'s own fl
 
 Each piece has its own plan and gate: `./gradlew build` green, then F's in-game checks for that piece. Piece 2 (Blockman) can land before or after piece 3; they touch different files except `PromptBuilder`, which only Blockman changes.
 
-**Confirmed by F (22 Oct):** `brain` defaults to `claude_code`; the 16-block XZ radius has no vertical cap (a mob deep in a cave below counts); the bridge is Java, not Node. **To confirm with this revision:** the bridge lives inside the mod (no helper process, no MCP), and caveman is the installed skill's text in the prompt (no plugin loading).
+**Confirmed by F (22 Oct):** `brain` defaults to `claude_code`; the 16-block XZ radius has no vertical cap (a mob deep in a cave below counts); the bridge is Java, not Node. **Confirmed with this revision (22 Oct):** the bridge lives inside the mod (no helper process, no MCP), and caveman is the installed skill's text in the prompt (no plugin loading).
 
 ## 14. Not in this work
 
