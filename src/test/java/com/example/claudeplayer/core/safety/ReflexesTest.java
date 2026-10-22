@@ -60,6 +60,14 @@ class ReflexesTest {
     }
 
     @Test
+    void aPlayerFlaggedHostileStillGetsNoReflex() {
+        CautionPolicy.Situation player = new CautionPolicy.Situation(true, true, 1.5, true, 1.0, true, false);
+        for (CautionLevel level : CautionLevel.values()) {
+            assertEquals(Reflexes.Move.NONE, Reflexes.decide(level, player, false, true, 3.0), level.name());
+        }
+    }
+
+    @Test
     void hazards() {
         assertEquals("lava", Reflexes.hazard("minecraft:lava", "minecraft:stone", 0, false, 20));
         assertEquals("lava", Reflexes.hazard("minecraft:air", "minecraft:lava", 0, false, 20));
