@@ -7,6 +7,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * The tools the model can call: each entry keeps its JSON schema and its parser side by side. Tools from later
@@ -14,8 +15,14 @@ import java.util.List;
  * level, the allowlist or the config, or that runs commands.
  */
 public final class ToolSchemas {
-    /** Either an action to queue, or the result to send back without running anything. */
-    public record Parsed(Action action, ActionResult error) {}
+    /** Tools allowed to ask for priority 3; anywhere else a 3 is lowered to 2. */
+    public static final Set<String> SAFETY_TOOLS = Set.of("flee", "stop", "attack_entity");
+
+    private static final String PRIO = "Priority 1 to 3, default 1. 1: routine, dropped if danger interrupts. "
+            + "2: important, paused and resumed after danger. 3: only flee, stop and attack_entity; runs before everything else.";
+
+    /** Either an action to queue (with its priority), or the result to send back without running anything. */
+    public record Parsed(Action action, ActionResult error, int prio, boolean prioLowered) {}
 
     @FunctionalInterface
     private interface Parser {
@@ -46,6 +53,8 @@ public final class ToolSchemas {
                 number("seconds", "How long, 0.1 to 10."));
         add("stop", 1, "Stop moving and cancel every action queued after this one.",
                 in -> new Action.Stop());
+        add("flee", 1, "Run from the hostiles around you to a spot well away from all of them. Holds the queue until you get there; failed:no_escape if there is no way out, ok with no_threats if nothing is near.",
+                in -> new Action.Flee());
         // memory
         add("note", 1, "Short-term memory: jot down an exact, recent detail (counts, positions). Replaces the note with the same subject; notes fade after a few minutes.",
                 in -> new Action.Note(in.text("subject", 48), in.text("text", 240)),
@@ -90,12 +99,16 @@ public final class ToolSchemas {
             if (!tool.name().equals(name)) continue;
             if (tool.phase() > phase) break;
             try {
-                return new Parsed(tool.parser().parse(new Input(input == null ? new JsonObject() : input)), null);
+                Input in = new Input(input == null ? new JsonObject() : input);
+                Action action = tool.parser().parse(in);
+                int prio = in.has("prio") ? in.integer("prio", 1, 3) : 1;
+                boolean lowered = prio == 3 && !SAFETY_TOOLS.contains(name);
+                return new Parsed(action, null, lowered ? 2 : prio, lowered);
             } catch (BadInput e) {
-                return new Parsed(null, ActionResult.failed("bad_input:" + e.getMessage()));
+                return new Parsed(null, ActionResult.failed("bad_input:" + e.getMessage()), 1, false);
             }
         }
-        return new Parsed(null, ActionResult.denied("unknown_tool"));
+        return new Parsed(null, ActionResult.denied("unknown_tool"), 1, false);
     }
 
     private void add(String name, int toolPhase, String description, Parser parser, Prop... props) {
@@ -105,6 +118,7 @@ public final class ToolSchemas {
             properties.add(p.name(), p.schema());
             required.add(p.name());
         }
+        properties.add("prio", integer("prio", PRIO).schema());
         JsonObject schema = new JsonObject();
         schema.addProperty("type", "object");
         schema.add("properties", properties);
@@ -140,6 +154,10 @@ public final class ToolSchemas {
 
     /** Validates one tool_use input. Numbers may arrive as JSON numbers or numeric strings. */
     private record Input(JsonObject json) {
+        boolean has(String key) {
+            return json.has(key);
+        }
+
         double number(String key, double min, double max) {
             double v = numeric(key);
             if (!Double.isFinite(v) || v < min || v > max) throw new BadInput(key);

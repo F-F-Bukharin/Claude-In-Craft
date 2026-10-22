@@ -17,6 +17,9 @@ public sealed interface Action {
     /** Stops movement and cancels everything queued after it (the queue handles the cancelling). */
     record Stop() implements Action {}
 
+    /** Runs from the hostiles nearby to a spot well away from all of them (executed in the game). */
+    record Flee() implements Action {}
+
     // memory: run in the core by MemoryActions, never reach the world
     record Note(String subject, String text) implements Action {}
 

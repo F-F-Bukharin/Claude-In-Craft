@@ -3,11 +3,13 @@ package com.example.claudeplayer.core.brain;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.example.claudeplayer.core.act.Action;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonPrimitive;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -65,7 +67,7 @@ class ToolParseTest {
             assertEquals("object", def.getAsJsonObject("input_schema").get("type").getAsString());
             names.add(def.get("name").getAsString());
         }
-        assertEquals(List.of("get_state", "move_to", "say", "wait", "stop", "note", "remember", "forget", "inspect_container"), names);
+        assertEquals(List.of("get_state", "move_to", "say", "wait", "stop", "flee", "note", "remember", "forget", "inspect_container"), names);
     }
 
     @Test
@@ -74,6 +76,45 @@ class ToolParseTest {
         for (JsonElement el : new ToolSchemas(6).definitions()) {
             String name = el.getAsJsonObject().get("name").getAsString();
             for (String part : name.split("_")) assertFalse(banned.contains(part), name);
+        }
+    }
+
+    @Test
+    void prioDefaultsToOneAndTwoIsKept() {
+        ToolSchemas.Parsed p = v1.parse("move_to", json("{\"x\":1,\"y\":64,\"z\":1}"));
+        assertEquals(1, p.prio());
+        assertFalse(p.prioLowered());
+        assertEquals(2, v1.parse("move_to", json("{\"x\":1,\"y\":64,\"z\":1,\"prio\":2}")).prio());
+    }
+
+    @Test
+    void prioThreeIsOnlyForSafetyTools() {
+        assertEquals(3, v1.parse("flee", json("{\"prio\":3}")).prio());
+        assertEquals(3, v1.parse("stop", json("{\"prio\":3}")).prio());
+        assertEquals(3, new ToolSchemas(4).parse("attack_entity", json("{\"entity_id\":7,\"prio\":3}")).prio());
+        ToolSchemas.Parsed lowered = v1.parse("say", json("{\"text\":\"hi\",\"prio\":3}"));
+        assertEquals(2, lowered.prio());
+        assertTrue(lowered.prioLowered());
+    }
+
+    @Test
+    void badPrioFailsWithTheField() {
+        for (String bad : List.of("0", "4", "1.5", "\"high\"")) {
+            assertEquals("failed:bad_input:prio", error(v1, "stop", "{\"prio\":" + bad + "}"), bad);
+        }
+    }
+
+    @Test
+    void fleeIsAPhaseOneTool() {
+        assertEquals(new Action.Flee(), new ToolSchemas(1).parse("flee", json("{}")).action());
+    }
+
+    @Test
+    void everyToolOffersAnOptionalPrio() {
+        for (JsonElement d : new ToolSchemas(6).definitions()) {
+            JsonObject schema = d.getAsJsonObject().getAsJsonObject("input_schema");
+            assertTrue(schema.getAsJsonObject("properties").has("prio"), d.toString());
+            assertFalse(schema.getAsJsonArray("required").contains(new JsonPrimitive("prio")), d.toString());
         }
     }
 }
