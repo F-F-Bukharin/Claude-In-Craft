@@ -1,0 +1,304 @@
+package com.example.claudeplayer.core.brain;
+
+import com.example.claudeplayer.core.Settings;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
+import com.google.gson.JsonParser;
+import java.io.File;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Plan option B: the model runs through the player's own Claude Code CLI ({@code claude -p}), so calls use their
+ * Claude subscription instead of an API key. Claude Code gets no tools of its own (no Bash, no files, no MCP,
+ * no user settings) and a replaced system prompt; it only answers with a JSON object of tool calls, which this
+ * class turns back into an ordinary {@link Reply}. Each call is a fresh, unsaved session that re-reads the
+ * rendered transcript, so the loop's append-only Messages transcript stays the single source of truth.
+ */
+public final class ClaudeCodeBrain implements Brain {
+    private static final Logger LOG = LoggerFactory.getLogger(ClaudeCodeBrain.class);
+    private static final boolean WINDOWS = System.getProperty("os.name", "").startsWith("Windows");
+    static final String SCHEMA = "{\"type\":\"object\",\"properties\":{"
+            + "\"say\":{\"type\":\"string\",\"description\":\"Your chat report. Shown to players only when calls is empty.\"},"
+            + "\"calls\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{"
+            + "\"name\":{\"type\":\"string\"},\"input\":{\"type\":\"object\"}},\"required\":[\"name\",\"input\"]}}},"
+            + "\"required\":[\"say\",\"calls\"]}";
+    private static final String HOW_TO_ACT = """
+
+
+            # How you act
+            You act only through the JSON reply. Put the tool calls for your next step in `calls`, in order, each as \
+            {"name": ..., "input": {...}} with input following that tool's schema below. Their results come back in \
+            the next turn. When the order is finished, or you can't go on, leave `calls` empty and put your report \
+            in `say`.
+
+            # Tools
+            """;
+
+    private final Settings settings;
+    private final Path workDir;
+    private final AtomicLong replies = new AtomicLong();
+
+    /** {@code workDir} must sit outside any project, so Claude Code finds no CLAUDE.md to load. */
+    public ClaudeCodeBrain(Settings settings, Path workDir) {
+        this.settings = settings;
+        this.workDir = workDir;
+    }
+
+    @Override
+    public Reply send(Request request) throws BrainException {
+        Path systemFile = writeWork("system.md", renderSystem(request.system(), request.tools()));
+        String out = run(systemFile, renderTranscript(request.messages()));
+        Reply reply = parseResult(out, "cc" + replies.incrementAndGet() + "_");
+        Usage u = reply.usage();
+        LOG.info("claude code reply {}: stop={} calls={} tokens in={} out={} cache_write={} cache_read={}", reply.id(),
+                reply.stopReason(), reply.toolCalls().size(), u.input(), u.output(), u.cacheWrite(), u.cacheRead());
+        return reply;
+    }
+
+    /** For /cp keycheck: one tiny call that proves the CLI is found and logged in. */
+    public String check() throws BrainException {
+        Path systemFile = writeWork("check.md", "Reply with say set to OK and calls empty.");
+        parseResult(run(systemFile, "ping"), "check_");
+        return "Claude Code works with " + settings.model() + " (" + executable() + ").";
+    }
+
+    /** The configured path, else claude.exe / claude on PATH, else the native installer's ~/.local/bin. */
+    public String executable() {
+        String configured = settings.claudeCodePath();
+        if (configured != null && !configured.isBlank()) return configured.strip();
+        List<String> names = WINDOWS ? List.of("claude.exe", "claude") : List.of("claude");
+        for (String dir : System.getenv().getOrDefault("PATH", "").split(File.pathSeparator)) {
+            for (String name : names) {
+                if (dir.isBlank()) continue;
+                Path p = Path.of(dir.strip(), name);
+                if (Files.isRegularFile(p)) return p.toString();
+            }
+        }
+        Path local = Path.of(System.getProperty("user.home"), ".local", "bin", WINDOWS ? "claude.exe" : "claude");
+        return Files.isRegularFile(local) ? local.toString() : null;
+    }
+
+    static List<String> command(String exe, Settings s, Path systemFile, boolean windows) {
+        List<String> cmd = new ArrayList<>(List.of(exe, "-p", "--output-format", "json",
+                "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence",
+                "--disable-slash-commands", "--system-prompt-file", systemFile.toString(),
+                // Windows rebuilds one command line from these; without \" the JSON loses its quotes.
+                "--json-schema", windows ? SCHEMA.replace("\"", "\\\"") : SCHEMA));
+        if (s.model() != null && !s.model().isBlank()) cmd.addAll(List.of("--model", s.model()));
+        if (s.effort() != null && !s.effort().isBlank()) cmd.addAll(List.of("--effort", s.effort()));
+        return cmd;
+    }
+
+    static String renderSystem(String system, JsonArray tools) {
+        StringBuilder sb = new StringBuilder(system).append(HOW_TO_ACT);
+        for (JsonElement e : tools) {
+            if (!e.isJsonObject()) continue;
+            JsonObject tool = e.getAsJsonObject();
+            sb.append("\n## ").append(string(tool, "name")).append('\n')
+                    .append(string(tool, "description")).append('\n')
+                    .append("input schema: ").append(tool.has("input_schema") ? tool.get("input_schema") : "{}").append('\n');
+        }
+        return sb.toString();
+    }
+
+    /** The Messages transcript as plain text: game turns, your earlier replies, and tool results by name. */
+    static String renderTranscript(JsonArray messages) {
+        Map<String, String> toolNames = new HashMap<>();
+        StringBuilder sb = new StringBuilder();
+        for (JsonElement m : messages) {
+            if (!m.isJsonObject()) continue;
+            JsonObject message = m.getAsJsonObject();
+            boolean assistant = string(message, "role").equals("assistant");
+            sb.append(assistant ? "[you]\n" : "[game]\n");
+            JsonElement content = message.get("content");
+            if (content != null && content.isJsonPrimitive()) {
+                sb.append(content.getAsString()).append('\n');
+            } else if (content != null && content.isJsonArray()) {
+                for (JsonElement b : content.getAsJsonArray()) {
+                    if (b.isJsonObject()) renderBlock(b.getAsJsonObject(), toolNames, sb);
+                }
+            }
+            sb.append('\n');
+        }
+        return sb.append("Answer with your next step as JSON.").toString();
+    }
+
+    private static void renderBlock(JsonObject block, Map<String, String> toolNames, StringBuilder sb) {
+        switch (string(block, "type")) {
+            case "text" -> sb.append(string(block, "text")).append('\n');
+            case "tool_use" -> {
+                toolNames.put(string(block, "id"), string(block, "name"));
+                sb.append("call ").append(string(block, "name")).append(' ')
+                        .append(block.has("input") ? block.get("input") : "{}").append('\n');
+            }
+            case "tool_result" -> {
+                String name = toolNames.getOrDefault(string(block, "tool_use_id"), "tool");
+                sb.append("result of ").append(name).append(block.has("is_error") ? " (error)" : "").append(": ")
+                        .append(resultText(block.get("content"))).append('\n');
+            }
+            default -> { } // thinking and other blocks don't exist on this path
+        }
+    }
+
+    /** Turns the CLI's {@code --output-format json} result into a Reply, or the right BrainException. */
+    static Reply parseResult(String out, String idPrefix) throws BrainException {
+        JsonObject json;
+        try {
+            json = JsonParser.parseString(out.strip()).getAsJsonObject();
+        } catch (JsonParseException | IllegalStateException e) {
+            String first = out.strip().lines().findFirst().orElse("no output");
+            throw new BrainException(BrainException.Kind.CLI, "unreadable Claude Code output: " + clip(first));
+        }
+        JsonElement structured = json.get("structured_output");
+        boolean failed = bool(json, "is_error") || !string(json, "subtype").equals("success")
+                || structured == null || !structured.isJsonObject();
+        if (failed) {
+            int status = integer(json, "api_error_status");
+            String message = clip(string(json, "result").isBlank() ? string(json, "subtype") : string(json, "result"));
+            BrainException.Kind kind = switch (status) {
+                case 429 -> BrainException.Kind.RATE_LIMITED;
+                case 529 -> BrainException.Kind.OVERLOADED;
+                default -> status >= 500 ? BrainException.Kind.SERVER : BrainException.Kind.CLI;
+            };
+            throw new BrainException(kind, status, message, string(json, "session_id"));
+        }
+        JsonObject answer = structured.getAsJsonObject();
+        JsonArray content = new JsonArray();
+        List<ToolCall> calls = new ArrayList<>();
+        String say = string(answer, "say").strip();
+        if (!say.isEmpty()) content.add(textBlock(say));
+        JsonElement rawCalls = answer.get("calls");
+        if (rawCalls != null && rawCalls.isJsonArray()) {
+            for (JsonElement e : rawCalls.getAsJsonArray()) {
+                if (!e.isJsonObject()) continue;
+                JsonObject c = e.getAsJsonObject();
+                JsonElement input = c.get("input");
+                ToolCall call = new ToolCall(idPrefix + calls.size(), string(c, "name"),
+                        input != null && input.isJsonObject() ? input.getAsJsonObject() : new JsonObject());
+                calls.add(call);
+                JsonObject block = new JsonObject();
+                block.addProperty("type", "tool_use");
+                block.addProperty("id", call.id());
+                block.addProperty("name", call.name());
+                block.add("input", call.input());
+                content.add(block);
+            }
+        }
+        JsonElement rawUsage = json.get("usage");
+        JsonObject usage = rawUsage != null && rawUsage.isJsonObject() ? rawUsage.getAsJsonObject() : new JsonObject();
+        return new Reply(string(json, "session_id"), content, List.copyOf(calls), say,
+                calls.isEmpty() ? "end_turn" : "tool_use", new Usage(integer(usage, "input_tokens"),
+                integer(usage, "output_tokens"), integer(usage, "cache_creation_input_tokens"),
+                integer(usage, "cache_read_input_tokens")));
+    }
+
+    private String run(Path systemFile, String prompt) throws BrainException {
+        String exe = executable();
+        if (exe == null) {
+            throw new BrainException(BrainException.Kind.NO_CLI, "claude not found");
+        }
+        // Both streams go to files, so waitFor's timeout holds even if the CLI hangs mid-output.
+        Path stdout = workDir.resolve("reply.json");
+        Path stderr = workDir.resolve("stderr.txt");
+        Process process;
+        try {
+            process = new ProcessBuilder(command(exe, settings, systemFile, WINDOWS))
+                    .directory(workDir.toFile())
+                    .redirectOutput(stdout.toFile())
+                    .redirectError(stderr.toFile())
+                    .start();
+        } catch (IOException e) {
+            throw new BrainException(BrainException.Kind.NO_CLI, exe + ": " + e.getMessage());
+        }
+        try (OutputStream in = process.getOutputStream()) {
+            in.write(prompt.getBytes(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            process.destroyForcibly();
+            throw new BrainException(BrainException.Kind.CLI, "couldn't write the prompt: " + e.getMessage());
+        }
+        try {
+            if (!process.waitFor(settings.claudeCodeTimeoutSeconds(), TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                throw new BrainException(BrainException.Kind.TIMEOUT, "timed out");
+            }
+            String out = Files.readString(stdout, StandardCharsets.UTF_8);
+            if (out.isBlank()) {
+                String err = Files.exists(stderr) ? Files.readString(stderr, StandardCharsets.UTF_8).strip() : "";
+                throw new BrainException(BrainException.Kind.CLI,
+                        "exit " + process.exitValue() + (err.isEmpty() ? "" : ": " + clip(err.lines().findFirst().orElse(""))));
+            }
+            return out;
+        } catch (IOException e) {
+            process.destroyForcibly();
+            throw new BrainException(BrainException.Kind.CLI, e.getClass().getSimpleName() + ": " + e.getMessage());
+        } catch (InterruptedException e) {
+            process.destroyForcibly();
+            Thread.currentThread().interrupt();
+            throw new BrainException(BrainException.Kind.INTERRUPTED, "interrupted");
+        }
+    }
+
+    private Path writeWork(String name, String text) throws BrainException {
+        try {
+            Files.createDirectories(workDir);
+            Path file = workDir.resolve(name);
+            Files.writeString(file, text, StandardCharsets.UTF_8);
+            return file;
+        } catch (IOException e) {
+            throw new BrainException(BrainException.Kind.INTERNAL, "couldn't write " + name + ": " + e.getMessage());
+        }
+    }
+
+    private static String resultText(JsonElement content) {
+        if (content == null || content.isJsonNull()) return "";
+        if (content.isJsonPrimitive()) return content.getAsString();
+        StringBuilder sb = new StringBuilder();
+        if (content.isJsonArray()) {
+            for (JsonElement e : content.getAsJsonArray()) {
+                if (e.isJsonObject()) sb.append(string(e.getAsJsonObject(), "text"));
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String clip(String s) {
+        String one = s.replaceAll("\\s+", " ").strip();
+        return one.length() > 200 ? one.substring(0, 200) + "..." : one;
+    }
+
+    private static JsonObject textBlock(String text) {
+        JsonObject o = new JsonObject();
+        o.addProperty("type", "text");
+        o.addProperty("text", text);
+        return o;
+    }
+
+    private static String string(JsonObject o, String key) {
+        JsonElement e = o.get(key);
+        return e != null && e.isJsonPrimitive() ? e.getAsString() : "";
+    }
+
+    private static int integer(JsonObject o, String key) {
+        JsonElement e = o.get(key);
+        return e != null && e.isJsonPrimitive() && e.getAsJsonPrimitive().isNumber() ? e.getAsInt() : 0;
+    }
+
+    private static boolean bool(JsonObject o, String key) {
+        JsonElement e = o.get(key);
+        return e != null && e.isJsonPrimitive() && e.getAsBoolean();
+    }
+}

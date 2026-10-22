@@ -97,7 +97,7 @@ public final class CpCommands {
     private static int keycheck(CommandSourceStack source) {
         return reply(source, rt -> {
             rt.keycheck(result -> source.sendSuccess(() -> Component.literal(result), false));
-            return "Checking the API key...";
+            return rt.settings().usesApi() ? "Checking the API key..." : "Checking Claude Code...";
         });
     }
 
@@ -146,10 +146,12 @@ public final class CpCommands {
         entry(help, "/cp stop", "/cp stop", "kill switch: cancel and block model calls");
         entry(help, "/cp status", "/cp status", "body, caution level, queue, calls, tokens");
         entry(help, "/cp memory", "/cp memory", "what " + name + " remembers");
-        entry(help, "/cp keycheck", "/cp keycheck", "test the API key (free)");
+        entry(help, "/cp keycheck", "/cp keycheck", s.usesApi() ? "test the API key (free)" : "test the Claude Code connection");
         entry(help, "/cp level <0-5>", "/cp level ", "set the caution level (ops)");
         entry(help, "/cp allow <player>", "/cp allow ", "let a player give orders; /cp deny takes it back (ops)");
-        help.append(Component.literal("\nAPI key: set " + s.apiKeyEnv() + ", or put it in config/claudeplayer.key.")
+        help.append(Component.literal(s.usesApi()
+                        ? "\nAPI key: set " + s.apiKeyEnv() + ", or put it in config/claudeplayer.key."
+                        : "\nBrain: your Claude Code login (subscription). brain = \"api\" in the config switches to an API key.")
                 .withStyle(ChatFormatting.GRAY));
         source.sendSuccess(() -> help, false);
         return 1;

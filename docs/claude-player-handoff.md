@@ -20,6 +20,8 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
   - `idle_reactions` is on: a threat while no order runs starts one reaction call.
   - Memory, added at F's request: short-term notes (in RAM, fading) and long-term memories (`<world>/claudeplayer/memory.json`), plus the `inspect_container` tool.
   - Extra commands: `/cp memory`, `/cp allow`, `/cp deny`. `claude: demo` runs the G1 canned list without the API.
+  - Option B is built, at F's request: `brain = "claude_code"` (the default) runs F's `claude -p` on their subscription. It runs with `--tools ""`, `--setting-sources ""`, `--strict-mcp-config`, a replaced system prompt (file), and a `--json-schema` for `{say, calls}`. `--bare` is avoided because it ignores the subscription login. It runs in `%TEMP%/claudeplayer-claude-code`, so no CLAUDE.md is loaded. A real two-turn order took 3 to 4 s per turn. `brain = "api"` restores the Messages API.
+  - The game ran in a CurseForge instance ("Claude-In-Craft 1.20.1"). Quickstart, the demo, stop, keycheck, death and respawn all worked.
 
 ## Still to do, in order
 1. F answers D1 to D8 ("yes to all" is fine).

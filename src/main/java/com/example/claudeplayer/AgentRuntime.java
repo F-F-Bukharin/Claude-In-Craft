@@ -11,7 +11,9 @@ import com.example.claudeplayer.core.StateSnapshot;
 import com.example.claudeplayer.core.act.ActionQueue;
 import com.example.claudeplayer.core.brain.AgentLoop;
 import com.example.claudeplayer.core.brain.ApiBrain;
+import com.example.claudeplayer.core.brain.Brain;
 import com.example.claudeplayer.core.brain.BrainException;
+import com.example.claudeplayer.core.brain.ClaudeCodeBrain;
 import com.example.claudeplayer.core.brain.DemoBrain;
 import com.example.claudeplayer.core.brain.PromptBuilder;
 import com.example.claudeplayer.core.brain.ToolSchemas;
@@ -70,6 +72,7 @@ public final class AgentRuntime {
     private final DamageWatcher damage;
     private final ExecutorService brainThread;
     private final ApiBrain brain;
+    private final ClaudeCodeBrain claudeCode;
     private final AgentLoop loop;
     private final Path keyFile;
     private volatile boolean closed;
@@ -99,12 +102,15 @@ public final class AgentRuntime {
         Path configDir = FMLPaths.CONFIGDIR.get();
         this.keyFile = configDir.resolve("claudeplayer.key");
         this.brain = new ApiBrain(settings, () -> ApiBrain.resolveKey(settings.apiKeyEnv(), keyFile));
+        // Under the system temp dir, outside any project, so Claude Code loads no CLAUDE.md.
+        this.claudeCode = new ClaudeCodeBrain(settings, Path.of(System.getProperty("java.io.tmpdir"), "claudeplayer-claude-code"));
         PromptBuilder prompts = new PromptBuilder(settings,
                 PromptBuilder.loadTemplate(configDir.resolve("claudeplayer_system_prompt.md")));
-        this.loop = new AgentLoop(settings, new DemoBrain(brain), brainThread, this::onMainThread, queue, guardrails, prompts,
+        Brain backend = settings.usesApi() ? brain : claudeCode;
+        this.loop = new AgentLoop(settings, new DemoBrain(backend), brainThread, this::onMainThread, queue, guardrails, prompts,
                 new ToolSchemas(settings.toolPhase()), memory, new LoopHost());
-        LOG.info("Claude Player ready: model {}, caution level {}, {} allowlisted, {} long-term memories",
-                settings.model(), level().number(), Config.allowlist().size(), memory.longTerm().size());
+        LOG.info("Claude Player ready: brain {}, model {}, caution level {}, {} allowlisted, {} long-term memories",
+                settings.brain(), settings.model(), level().number(), Config.allowlist().size(), memory.longTerm().size());
     }
 
     public static @Nullable AgentRuntime get() {
@@ -197,13 +203,17 @@ public final class AgentRuntime {
         say("I died (" + cause + "). Respawn me with " + settings.trigger() + " respawn or /cp respawn.");
     }
 
-    /** /cp keycheck: one free count_tokens call on the brain thread. */
+    /** /cp keycheck, on the brain thread: a free count_tokens call (api), or one tiny Claude Code call. */
     public void keycheck(Consumer<String> reply) {
         brainThread.execute(() -> {
             String msg;
             try {
-                brain.checkKey();
-                msg = "The API key works with " + settings.model() + ".";
+                if (settings.usesApi()) {
+                    brain.checkKey();
+                    msg = "The API key works with " + settings.model() + ".";
+                } else {
+                    msg = claudeCode.check();
+                }
             } catch (BrainException e) {
                 msg = e.chatMessage(settings.apiKeyEnv());
             }
@@ -248,8 +258,14 @@ public final class AgentRuntime {
         return String.join("\n", steps);
     }
 
-    /** Whether a key is set up, without calling the API (/cp keycheck makes the real test). */
+    /** Whether the brain is set up, without calling it (/cp keycheck makes the real test). */
     public String keyStatus() {
+        if (!settings.usesApi()) {
+            String exe = claudeCode.executable();
+            return exe != null
+                    ? "Brain: your Claude Code login (" + exe + "); /cp keycheck tests it."
+                    : "Claude Code wasn't found. Install it and log in once, or set claude_code_path in the config.";
+        }
         return ApiBrain.resolveKey(settings.apiKeyEnv(), keyFile) != null
                 ? "API key found; /cp keycheck tests it."
                 : "No API key yet. For real orders set " + settings.apiKeyEnv()

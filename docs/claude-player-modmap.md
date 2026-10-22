@@ -31,7 +31,8 @@ Paths are under `src/main/java/com/example/claudeplayer/` unless noted. Everythi
 | `core/act/ActionResult.java` | `ok`, `denied:<why>`, `failed:<why>`, `cancelled`, `queued` |
 | `core/act/ActionRunner.java` | Execution contract: start → Handle (poll, cancel, timeout) |
 | `core/act/ActionQueue.java` | Tick pacing, quick vs timed actions, timeout, cancel, stop |
-| `core/brain/Brain.java` | Backend interface; lets Option B swap in later |
+| `core/brain/Brain.java` | Backend interface: `ApiBrain` or `ClaudeCodeBrain`, picked by `brain` |
+| `core/brain/ClaudeCodeBrain.java` | Option B: runs the player's `claude -p` (subscription login) with no tools, a replaced system prompt and a JSON schema for tool calls |
 | `core/brain/ApiBrain.java` | Messages API over java.net.http: retries, prompt caching, key lookup, keycheck |
 | `core/brain/BrainException.java` | Classified API failures and their chat messages |
 | `core/brain/DemoBrain.java` | G1 stub: `claude: demo` walks a square without the API; other orders pass through |
@@ -148,7 +149,10 @@ Config (`Config.java`). A file that holds a key stays out of version control.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `model` | `claude-haiku-5-5` | Messages API model |
+| `brain` | `claude_code` | `claude_code` (Claude Code CLI, subscription) or `api` (Messages API, key) |
+| `claude_code_path` | empty | Path to `claude.exe`; empty searches PATH, then `~/.local/bin` |
+| `claude_code_timeout_seconds` | `90` | One CLI call, startup included |
+| `model` | `claude-haiku-5-5` | Model for either brain |
 | `api_key_env` | `ANTHROPIC_API_KEY` | Env var holding the key |
 | `body_name` | `Claude` | Fake player display name |
 | `trigger` | `claude:` | Order prefix |

@@ -8,7 +8,9 @@ public final class BrainException extends Exception {
     public enum Kind {
         NO_KEY(false), AUTH(false), PERMISSION(false), BAD_REQUEST(false), NOT_FOUND(false), TOO_LARGE(false),
         RATE_LIMITED(true), OVERLOADED(true), SERVER(true), TIMEOUT(true), NETWORK(true),
-        INTERRUPTED(false), INTERNAL(false);
+        INTERRUPTED(false), INTERNAL(false),
+        // The Claude Code backend: the CLI is missing, or it ran and failed.
+        NO_CLI(false), CLI(false);
 
         public final boolean retryable;
 
@@ -69,6 +71,8 @@ public final class BrainException extends Exception {
             case RATE_LIMITED, OVERLOADED, SERVER, TIMEOUT, NETWORK ->
                     "The API isn't answering (" + getMessage() + "). Try again in a moment.";
             case INTERRUPTED, INTERNAL -> "Internal error talking to the API: " + getMessage();
+            case NO_CLI -> "Claude Code wasn't found (" + getMessage() + "). Install it and log in once, or set claude_code_path.";
+            case CLI -> "Claude Code failed: " + getMessage();
         };
     }
 

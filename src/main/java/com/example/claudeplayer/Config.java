@@ -13,8 +13,18 @@ public final class Config {
     private static final ForgeConfigSpec.Builder B = new ForgeConfigSpec.Builder();
     private static final Settings D = Settings.DEFAULTS;
 
+    private static final ForgeConfigSpec.ConfigValue<String> BRAIN = B
+            .comment("claude_code: run your own Claude Code CLI, so calls use your Claude subscription (no API key).",
+                    "api: call the Messages API with a key (billed per token).")
+            .define("brain", D.brain(), o -> Settings.BRAIN_CLAUDE_CODE.equals(o) || Settings.BRAIN_API.equals(o));
+    private static final ForgeConfigSpec.ConfigValue<String> CLAUDE_CODE_PATH = B
+            .comment("Path to claude.exe (or claude). Empty finds it on PATH or in ~/.local/bin.")
+            .define("claude_code_path", D.claudeCodePath());
+    private static final ForgeConfigSpec.IntValue CLAUDE_CODE_TIMEOUT = B
+            .comment("Seconds one Claude Code call may take, startup included.")
+            .defineInRange("claude_code_timeout_seconds", D.claudeCodeTimeoutSeconds(), 10, 600);
     private static final ForgeConfigSpec.ConfigValue<String> MODEL = B
-            .comment("Messages API model id.").define("model", D.model());
+            .comment("Model id, for either brain.").define("model", D.model());
     private static final ForgeConfigSpec.ConfigValue<String> API_KEY_ENV = B
             .comment("Environment variable that holds the API key. Fallback: the file config/claudeplayer.key (never commit it).")
             .define("api_key_env", D.apiKeyEnv());
@@ -90,6 +100,9 @@ public final class Config {
 
     public static Settings settings() {
         return Settings.of(b -> {
+            b.brain = BRAIN.get();
+            b.claudeCodePath = CLAUDE_CODE_PATH.get();
+            b.claudeCodeTimeoutSeconds = CLAUDE_CODE_TIMEOUT.get();
             b.model = MODEL.get();
             b.apiKeyEnv = API_KEY_ENV.get();
             b.effort = EFFORT.get();

@@ -8,7 +8,7 @@ Status: skeleton, rules and brain are built and unit-tested. Nothing has run in 
 1. JDK 17 or newer on the PATH. Gradle downloads the Java 17 toolchain and Minecraft itself.
 2. `./gradlew build` builds the jar (`build/libs/`) and runs the tests.
 3. `./gradlew runClient` starts a dev client. Open a single-player world with cheats on, then type `/cp quickstart`.
-4. API key: set `ANTHROPIC_API_KEY`, or put the key on the first line of `config/claudeplayer.key` (`run/config/` in dev). Never commit it; `.gitignore` covers `*.key`.
+4. Brain. The default, `brain = "claude_code"`, runs your own Claude Code CLI, so calls count against your Claude subscription and need no API key. Install Claude Code and log in once. Each call takes about 3 to 5 seconds. Claude Code runs with all its own tools, settings and MCP servers turned off. To pay per token instead, set `brain = "api"` and set `ANTHROPIC_API_KEY`, or put the key on the first line of `config/claudeplayer.key` (`run/config/` in dev). Never commit a key; `.gitignore` covers `*.key`. `/cp keycheck` tests whichever brain is set.
 
 One command for all of it: `./gradlew runClient -Pquickstart="Claude Test"` opens the saved world named "Claude Test" and runs `/cp quickstart` once you're in. Create that world once first. With `-Pquickstart` and no name, it runs in whichever world you open.
 
