@@ -227,6 +227,40 @@ class ActionQueueTest {
         assertEquals("move_to", q.runningTool());
     }
 
+    private static List<String> snapshotIds(List<ActionQueue.Item> items) {
+        return items.stream().map(i -> i.entry().callId()).toList();
+    }
+
+    private static List<ActionQueue.State> snapshotStates(List<ActionQueue.Item> items) {
+        return items.stream().map(ActionQueue.Item::state).toList();
+    }
+
+    @Test
+    void snapshotListsTheRunningActionThenTheWaitingOnesInStartOrder() {
+        ActionQueue q = queue(3.0);
+        q.enqueue(List.of(e("m", "move_to", MOVE, 2), e("r1", "say", SAY, 1), e("t", "say", SAY, 2), e("r2", "say", SAY, 1)));
+        run(q, 1); // m runs; t starts before r1 and r2
+        List<ActionQueue.Item> items = q.snapshot();
+        assertEquals(List.of("m", "t", "r1", "r2"), snapshotIds(items));
+        assertEquals(List.of(ActionQueue.State.RUNNING, ActionQueue.State.WAITING, ActionQueue.State.WAITING, ActionQueue.State.WAITING),
+                snapshotStates(items));
+        assertEquals(3, q.waitingCount(), "taking a snapshot changes nothing");
+    }
+
+    @Test
+    void snapshotMarksAPausedLevelTwoUntilItRestarts() {
+        ActionQueue q = queue(3.0);
+        q.enqueue(List.of(e("m", "move_to", MOVE, 2), e("t", "say", SAY, 2)));
+        run(q, 1); // m is running
+        q.enqueue(List.of(e("f", "say", SAY, 3)));
+        assertEquals(List.of("f", "m", "t"), snapshotIds(q.snapshot()));
+        assertEquals(List.of(ActionQueue.State.WAITING, ActionQueue.State.PAUSED, ActionQueue.State.WAITING), snapshotStates(q.snapshot()));
+        run(q, 40); // f finishes at once, then m restarts from scratch
+        assertEquals("move_to", q.runningTool());
+        assertEquals(List.of("m", "t"), snapshotIds(q.snapshot()));
+        assertEquals(List.of(ActionQueue.State.RUNNING, ActionQueue.State.WAITING), snapshotStates(q.snapshot()));
+    }
+
     @Test
     void priorityMustBeOneToThree() {
         assertThrows(IllegalArgumentException.class, () -> e("x", "say", SAY, 0));

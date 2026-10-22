@@ -38,6 +38,12 @@ public final class ActionQueue {
         }
     }
 
+    /** Where an entry sits: running now, waiting, or paused by a level 3 and waiting to restart. */
+    public enum State { RUNNING, WAITING, PAUSED }
+
+    /** One entry in a snapshot. */
+    public record Item(Entry entry, State state) {}
+
     public interface Listener {
         default void onStarted(Entry entry) {}
 
@@ -54,6 +60,7 @@ public final class ActionQueue {
     private int runningTicks;
     private long credit = UNIT;
     private boolean preempted; // a level 3 arrived and nothing has started since
+    private Entry pausedEntry; // the level 2 entry a level 3 paused; it waits at the head of level 2 until it restarts
 
     public ActionQueue(double actionsPerSecond, int defaultTimeoutTicks, ActionRunner runner) {
         this.creditPerTick = Math.max(1, Math.round(actionsPerSecond * UNIT / 20.0));
@@ -117,9 +124,20 @@ public final class ActionQueue {
         return running == null ? null : running.tool();
     }
 
+    /** For the brain screen: the running entry first, then the waiting ones in the order they will start. */
+    public List<Item> snapshot() {
+        List<Item> items = new ArrayList<>();
+        if (running != null) items.add(new Item(running, State.RUNNING));
+        for (int l = LEVELS; l >= 1; l--) {
+            for (Entry e : level(l)) items.add(new Item(e, e == pausedEntry ? State.PAUSED : State.WAITING));
+        }
+        return List.copyOf(items);
+    }
+
     private void start(Entry entry) {
         running = entry;
         runningTicks = 0;
+        if (entry == pausedEntry) pausedEntry = null;
         listener.onStarted(entry);
         try {
             handle = runner.start(entry.action());
@@ -170,7 +188,10 @@ public final class ActionQueue {
     private void drain(ArrayDeque<Entry> queue, ActionResult result) {
         List<Entry> dropped = new ArrayList<>(queue);
         queue.clear();
-        for (Entry e : dropped) listener.onFinished(e, result);
+        for (Entry e : dropped) {
+            if (e == pausedEntry) pausedEntry = null;
+            listener.onFinished(e, result);
+        }
     }
 
     private ArrayDeque<Entry> level(int prio) {
@@ -196,6 +217,7 @@ public final class ActionQueue {
             handle = null;
             if (r.prio() == 2) {
                 level(2).addFirst(r); // restarts from scratch once level 3 is done
+                pausedEntry = r;
                 paused.add(r);
             } else {
                 scrapped.add(r);

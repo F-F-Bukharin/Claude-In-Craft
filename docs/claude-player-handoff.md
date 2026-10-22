@@ -47,6 +47,11 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
    - A slab, stair or carpet walkway over a drop can read as `hazard_drop` at low HP.
    - A hit from beyond `hostile_range` (a ghast) builds a flee that scraps routine work, then returns `ok:no_threats`.
    - `"prio": null` fails the call; it could count as absent.
+9. Claude Brain screen, in game (merged into dev). Right-click the body.
+   - B1. As an allowlisted player or an op, right-click Claude. A chest opens, titled `Claude Brain: order from <you>: "..."`. The running action comes first (lime dye), then the waiting ones (paper), each named by its tool and with its priority.
+   - B2. As anyone else, right-click Claude. Nothing happens.
+   - B3. While a level 3 flee runs, open the chest. The flee shows as running, and any paused level 2 action shows as paused (clock, "resumes after a reflex"). Clicks in the chest move nothing.
+   - Watch in B1: the title can run past the chest's edge; the order text is cut at 30 characters.
 
 ## Risks to watch
 - API cost during busy play (plan §3 and §9). Watch the token count in `/cp status`.
