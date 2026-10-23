@@ -153,6 +153,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     private boolean cavemanFromStart; // the running order began with the rules in its system prompt
     private boolean cavemanNoted; // the running order already got the one note
     private boolean thinkHarder; // the running order asks the brain for claude_think_effort
+    private boolean capNoticed; // autonomy already said the token cap is holding it back
 
     public AgentLoop(Settings settings, Brain brain, Executor brainThread, Executor mainThread, ActionQueue queue,
                      Guardrails guardrails, PromptBuilder prompts, ToolSchemas tools, Memory memory, Host host,
@@ -338,10 +339,12 @@ public final class AgentLoop implements ActionQueue.Listener {
     private void startGoal() {
         nextGoalAt = clockMillis.getAsLong() + settings.autonomyIntervalSeconds() * 1000L;
         switch (guardrails.allowCall()) {
-            case OK -> {}
-            case TOKEN_CAP -> {
-                autonomyOff();
-                host.notice("Token cap reached (" + settings.sessionTokenCap() + " per hour). Autonomy off.");
+            case OK -> capNoticed = false;
+            case TOKEN_CAP -> { // the cap is a rolling hour: wait it out, and say so once
+                if (!capNoticed) {
+                    host.notice("Token cap reached (" + settings.sessionTokenCap() + " per hour). Autonomy waits until it frees.");
+                }
+                capNoticed = true;
                 return;
             }
             default -> {

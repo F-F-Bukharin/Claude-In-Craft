@@ -897,7 +897,7 @@ class AgentLoopTest {
     }
 
     @Test
-    void theTokenCapEndsAutonomyAndSaysSoOnce() {
+    void theTokenCapPausesAutonomyUntilTheHourFrees() {
         build(b -> b.sessionTokenCap = 1_000);
         guardrails.recordTokens(1_000);
         loop.startAutonomy("F");
@@ -905,8 +905,12 @@ class AgentLoopTest {
         now += 120_000;
         ticks(3);
         assertEquals(0, requests.size());
-        assertFalse(loop.autonomous());
-        assertEquals(List.of("Token cap reached (1000 per hour). Autonomy off."), notices);
+        assertTrue(loop.autonomous(), "a rolling cap frees itself, so autonomy waits instead of ending");
+        assertEquals(List.of("Token cap reached (1000 per hour). Autonomy waits until it frees."), notices);
+        script.add(text("Resting."));
+        now += 60 * 60_000; // the capped tokens age out
+        ticks(3);
+        assertEquals(1, requests.size(), "the next goal runs once the hour frees");
     }
 
     @Test
