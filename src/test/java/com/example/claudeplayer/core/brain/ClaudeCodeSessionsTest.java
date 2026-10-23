@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.example.claudeplayer.core.Settings;
@@ -11,10 +12,13 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -23,6 +27,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
@@ -38,6 +43,9 @@ class ClaudeCodeSessionsTest {
     private final List<FakeProc> procs = Collections.synchronizedList(new ArrayList<>());
     private final Deque<List<String>> script = new ArrayDeque<>(); // the events answering each written line
     private final AtomicLong now = new AtomicLong(1_000_000);
+    private volatile boolean stallStdin; // the children never read their stdin
+    private final CountDownLatch writing = new CountDownLatch(1); // a write to a stalled child has begun
+    private final CountDownLatch lineRead = new CountDownLatch(1); // a child has read a whole line
 
     private ClaudeCodeBrain brain(int timeoutSeconds) {
         Settings s = Settings.of(b -> {
@@ -133,6 +141,17 @@ class ClaudeCodeSessionsTest {
         BrainException e = assertThrows(BrainException.class, () -> brain.send(request(opening())));
         assertEquals(BrainException.Kind.TIMEOUT, e.kind());
         assertFalse(procs.get(0).alive);
+    }
+
+    @Test
+    void aChildThatNeverReadsItsPromptTimesOut() {
+        ClaudeCodeBrain brain = brain(1);
+        stallStdin = true;
+        BrainException e = assertTimeoutPreemptively(Duration.ofSeconds(10),
+                () -> assertThrows(BrainException.class, () -> brain.send(request(opening()))),
+                "the timeout covers the write too");
+        assertEquals(BrainException.Kind.TIMEOUT, e.kind());
+        assertFalse(procs.get(0).alive, "the stalled child is killed");
     }
 
     @Test
@@ -256,12 +275,16 @@ class ClaudeCodeSessionsTest {
         }
     }
 
-    /** Answers each stdin line with the next scripted events. */
+    /**
+     * Answers each stdin line with the next scripted events. Like a real pipe, a write after {@link #kill} fails;
+     * with {@link #stallStdin} the child never reads, so a write blocks until the process is killed.
+     */
     private final class FakeProc implements ClaudeCodeSessions.Proc {
         static final String EXIT_WITH_ERROR = "exit";
         final List<String> written = Collections.synchronizedList(new ArrayList<>());
         final Pipe out = new Pipe();
         final Pipe err = new Pipe();
+        final CountDownLatch killed = new CountDownLatch(1);
         volatile boolean alive = true;
 
         @Override
@@ -270,13 +293,23 @@ class ClaudeCodeSessionsTest {
                 private final ByteArrayOutputStream line = new ByteArrayOutputStream();
 
                 @Override
-                public void write(int b) {
+                public void write(int b) throws IOException {
+                    if (stallStdin) {
+                        writing.countDown();
+                        try {
+                            killed.await();
+                        } catch (InterruptedException e) {
+                            throw new InterruptedIOException();
+                        }
+                    }
+                    if (!alive) throw new IOException("The pipe is being closed");
                     if (b != '\n') {
                         line.write(b);
                         return;
                     }
                     written.add(line.toString(StandardCharsets.UTF_8));
                     line.reset();
+                    lineRead.countDown();
                     List<String> events = script.poll();
                     if (events == null) return;
                     for (String e : events) {
@@ -313,6 +346,7 @@ class ClaudeCodeSessionsTest {
             alive = false;
             out.close0();
             err.close0();
+            killed.countDown();
         }
     }
 }

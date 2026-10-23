@@ -35,6 +35,8 @@ final class ClaudeCodeSessions {
     private static final Logger LOG = LoggerFactory.getLogger(ClaudeCodeSessions.class);
     @SuppressWarnings("StringOperationCanBeSimplified")
     private static final String EOF = new String("eof"); // compared by identity: no stdout line is this object
+    @SuppressWarnings("StringOperationCanBeSimplified")
+    private static final String WRITE_FAILED = new String("write failed");
 
     /** Starts one process. The real one is {@link ClaudeCodeEnv}; tests script a fake. */
     interface Launcher {
@@ -62,6 +64,7 @@ final class ClaudeCodeSessions {
         private final BlockingQueue<String> lines = new LinkedBlockingQueue<>();
         private final StringBuilder err = new StringBuilder();
         private Thread errPump;
+        private volatile String writeError;
         private volatile long lastUsed;
         private volatile boolean busy;
 
@@ -71,24 +74,32 @@ final class ClaudeCodeSessions {
             this.lastUsed = clock.getAsLong();
         }
 
-        /** Sends one stream-json line. */
-        void write(String line) throws BrainException {
+        /**
+         * Sends one stream-json line from a writer thread, so a child that never reads its stdin (a cold start that
+         * stalls, a full pipe) can't block the caller: {@link #await}'s deadline covers the write, and killing the
+         * process frees the writer.
+         */
+        void write(String line) {
             busy = true;
             lastUsed = clock.getAsLong();
-            try {
-                OutputStream in = proc.stdin();
-                in.write((line + "\n").getBytes(StandardCharsets.UTF_8));
-                in.flush();
-            } catch (IOException e) {
-                busy = false;
-                end(this);
-                throw new BrainException(BrainException.Kind.CLI, "couldn't write the prompt: " + e.getMessage());
-            }
+            byte[] bytes = (line + "\n").getBytes(StandardCharsets.UTF_8);
+            daemon("claudeplayer-cc-in", () -> {
+                try {
+                    OutputStream in = proc.stdin();
+                    in.write(bytes);
+                    in.flush();
+                } catch (IOException e) {
+                    writeError = e.getMessage();
+                    lines.add(WRITE_FAILED);
+                }
+            });
         }
 
-        /** Reads events until the turn's {@code result} event and returns it; any failure kills the session. */
-        String await(long timeoutMillis) throws BrainException {
-            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        /**
+         * Reads events until the turn's {@code result} event and returns it; any failure kills the session.
+         * {@code deadline} is a {@link System#nanoTime} instant, set when the turn began.
+         */
+        String await(long deadline) throws BrainException {
             try {
                 while (true) {
                     String line = lines.poll(deadline - System.nanoTime(), TimeUnit.NANOSECONDS);
@@ -99,6 +110,10 @@ final class ClaudeCodeSessions {
                     if (line == EOF) {
                         end(this);
                         throw new BrainException(BrainException.Kind.CLI, firstErrorLine());
+                    }
+                    if (line == WRITE_FAILED) {
+                        end(this);
+                        throw new BrainException(BrainException.Kind.CLI, "couldn't write the prompt: " + writeError);
                     }
                     String type = type(line);
                     if (type.equals("result")) return line;

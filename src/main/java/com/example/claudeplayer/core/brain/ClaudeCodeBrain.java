@@ -88,6 +88,7 @@ public final class ClaudeCodeBrain implements Brain {
         List<String> command = streamCommand(request.system(), request.tools());
         JsonArray messages = request.messages();
         long started = System.nanoTime();
+        long deadline = started + settings.claudeCodeTimeoutSeconds() * 1_000_000_000L; // the whole turn, write included
         ClaudeCodeSessions.Session session = sessions.current();
         int from = session == null ? -1 : continues(session.seen, messages);
         if (from < 0) {
@@ -101,7 +102,7 @@ public final class ClaudeCodeBrain implements Brain {
         sessions.refill(command); // the next spare starts while the model thinks
         Reply reply;
         try {
-            reply = parseResult(session.await(settings.claudeCodeTimeoutSeconds() * 1000L), "cc" + replies.incrementAndGet() + "_");
+            reply = parseResult(session.await(deadline), "cc" + replies.incrementAndGet() + "_");
         } catch (BrainException e) {
             sessions.end(session);
             throw e;
