@@ -37,7 +37,7 @@ Combat follow-ups:
 - In-game checks: a zombie at each caution level 0 to 5 (0 chases up to 16, 2 holds within 6, 3 and 4 fight only adjacent with no way out, 5 never fights); gear swaps (a sword from the bag, a better chestplate, a shield into an empty off-hand); a player beside a zombie is never hit.
 - Watch: at levels 3 and 4, a mob stepping back past 2 blocks ends the fight, and the chase rule may loop flee and fight. An elytra or carved pumpkin gets swapped for real armor.
 
-Glance part 1 is merged. Part 2 plugs in at `ActionExecutor` (the `Glance` branch): return `ActionResult.picture(png)` in place of `failed:no_client`, sized by `settings().visionWidth()`/`visionHeight()`. AgentLoop already admits at most one glance per turn and applies the cooldown (`VisionGate`), so the executor makes no gate calls. Both add entries to `Action`, `ToolSchemas`, `ActionExecutor`, the prompt, the per-phase tool lists in `ToolParseTest` and the tool count in `ApiBrainTest`; resolve those by keeping both. Build green, then install.
+Glance part 1 is merged. Part 2 plugs in at `ActionExecutor` (the `Glance` branch): return `ActionResult.picture(png)` in place of `failed:no_client`, sized by `settings().visionWidth()`/`visionHeight()`. AgentLoop already admits at most one glance per turn and applies the cooldown (`VisionGate`), so the executor makes no gate calls.
 
 Proven: Claude Code with the brain's lockdown flags takes a base64 PNG image block over stream-json mid-session, and Haiku 5.5 reads it. Image tokens are about w×h/750, so 320×180 is about 80 tokens.
 
