@@ -51,11 +51,12 @@ class AgentLoopTest {
 
     private final List<String> ran = new ArrayList<>(); // the action classes the runner started, in order
     private ActionResult fleeResult = ActionResult.ok();
+    private boolean movesFinish; // move_to finishes ok at once instead of running until cancelled
 
-    /** move_to runs until cancelled; flee ends with {@code fleeResult}; everything else finishes at once. */
+    /** move_to runs until cancelled, or finishes if {@code movesFinish}; flee ends with {@code fleeResult}; the rest finish. */
     private final ActionRunner runner = action -> {
         ran.add(action.getClass().getSimpleName());
-        if (action instanceof Action.MoveTo) return () -> null;
+        if (action instanceof Action.MoveTo) return movesFinish ? ActionRunner.Handle.done(ActionResult.ok()) : () -> null;
         if (action instanceof Action.Flee) return ActionRunner.Handle.done(fleeResult);
         return ActionRunner.Handle.done(ActionResult.ok());
     };
@@ -139,6 +140,12 @@ class AgentLoopTest {
         return new Brain.Reply("msg", content, List.of(calls), "", "tool_use", new Brain.Usage(100, 20, 0, 0));
     }
 
+    /** A reply whose calls finish the order: the model sets done, so no results need to go back. */
+    private static Brain.Reply doneTools(String text, Brain.ToolCall... calls) {
+        Brain.Reply r = tools(calls);
+        return new Brain.Reply(r.id(), r.content(), r.toolCalls(), text, r.stopReason(), r.usage(), true);
+    }
+
     private static Brain.Reply text(String text) {
         JsonObject block = new JsonObject();
         block.addProperty("type", "text");
@@ -182,6 +189,66 @@ class AgentLoopTest {
         assertEquals(3, requests.get(1).messages().size(), "user, assistant, user");
         assertEquals(List.of("Done!"), said);
         assertFalse(loop.active());
+    }
+
+    @Test
+    void aDoneReplyWhoseCallsFinishOkEndsTheOrderWithoutAReportTurn() {
+        build(b -> {});
+        movesFinish = true;
+        script.add(doneTools("On my way.", move("m")));
+        loop.startOrder("F", "come here");
+        pump();
+        ticks(3);
+        assertEquals(1, requests.size(), "the call finished ok, so no results go back");
+        assertEquals(List.of("On my way."), said);
+        assertFalse(loop.active());
+    }
+
+    @Test
+    void aDoneReplyWhoseCallFailsGoesBackToTheModel() {
+        build(b -> {});
+        fleeResult = ActionResult.failed("no_escape");
+        script.add(doneTools("Running!", call("f", "flee", "{}")));
+        script.add(text("Could not get away."));
+        loop.startOrder("F", "run");
+        pump();
+        ticks(3);
+        assertEquals(2, requests.size());
+        assertEquals(List.of("failed:no_escape"), results(1));
+        assertEquals(List.of("Could not get away."), said);
+    }
+
+    @Test
+    void aReflexBeforeADoneReplysCallsFinishSendsResultsBackAndForgetsDone() {
+        build(b -> {});
+        script.add(doneTools("On my way.", move("m")));
+        script.add(tools(say("s"))); // not done: its results must go back, not end the order
+        script.add(text("Noted."));
+        loop.startOrder("F", "come here");
+        pump();
+        ticks(3); // m is running
+        loop.reflex("creeper #9 is 4.0 blocks away, fuse lit.", List.of(new Action.Flee()));
+        pump();
+        assertEquals(2, requests.size());
+        assertEquals(List.of("scrapped"), results(1));
+        assertTrue(said.isEmpty(), "the done text is not said after an interrupt");
+        ticks(40);
+        assertEquals(3, requests.size(), "the next batch reports to the model");
+        assertEquals(List.of("ok"), results(2));
+        assertEquals(List.of("Noted."), said);
+    }
+
+    @Test
+    void aReplyWithoutDoneKeepsTheReportTurn() {
+        build(b -> {});
+        script.add(tools(say("s")));
+        script.add(text("On my way."));
+        loop.startOrder("F", "come here");
+        pump();
+        ticks(3);
+        assertEquals(2, requests.size());
+        assertEquals(List.of("ok"), results(1));
+        assertEquals(List.of("On my way."), said);
     }
 
     @Test

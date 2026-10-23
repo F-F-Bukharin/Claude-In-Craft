@@ -26,6 +26,14 @@ public interface Brain {
         }
     }
 
-    /** {@code content} is the raw assistant content; it goes back into the transcript unchanged (thinking included). */
-    record Reply(String id, JsonArray content, List<ToolCall> toolCalls, String text, String stopReason, Usage usage) {}
+    /**
+     * {@code content} is the raw assistant content; it goes back into the transcript unchanged (thinking included).
+     * {@code done} means the model says these calls finish the order, so no results need to go back.
+     */
+    record Reply(String id, JsonArray content, List<ToolCall> toolCalls, String text, String stopReason, Usage usage,
+                 boolean done) {
+        public Reply(String id, JsonArray content, List<ToolCall> toolCalls, String text, String stopReason, Usage usage) {
+            this(id, content, toolCalls, text, stopReason, usage, false);
+        }
+    }
 }

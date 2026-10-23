@@ -40,7 +40,8 @@ public final class ClaudeCodeBrain implements Brain {
     private static final Logger LOG = LoggerFactory.getLogger(ClaudeCodeBrain.class);
     private static final boolean WINDOWS = System.getProperty("os.name", "").startsWith("Windows");
     static final String SCHEMA = "{\"type\":\"object\",\"properties\":{"
-            + "\"say\":{\"type\":\"string\",\"description\":\"Your chat report. Shown to players only when calls is empty.\"},"
+            + "\"say\":{\"type\":\"string\",\"description\":\"Your chat report. Shown to players when calls is empty, or when done is true and every call succeeds.\"},"
+            + "\"done\":{\"type\":\"boolean\",\"description\":\"True when these calls finish the order and no results need to come back.\"},"
             + "\"calls\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{"
             + "\"name\":{\"type\":\"string\"},\"input\":{\"type\":\"object\"}},\"required\":[\"name\",\"input\"]}}},"
             + "\"required\":[\"say\",\"calls\"]}";
@@ -55,7 +56,9 @@ public final class ClaudeCodeBrain implements Brain {
             # How you act
             Answer with {"say": ..., "calls": [...]}. Each entry in calls is {"name": <action>, "input": {...}}, with \
             input as shown below; add "prio": 1, 2 or 3 to input when it matters. The results come back in the next \
-            turn. When the order is finished, or you can't go on, leave calls empty and put your report in say.
+            turn. Set done to true when these calls finish the order and you need no results back (a short move, a say); \
+            then say is your final chat line, and if any call fails you still get the results. When the order is finished, \
+            or you can't go on, leave calls empty and put your report in say.
 
             # Actions (list them in calls; never call them directly)
             """;
@@ -324,6 +327,9 @@ public final class ClaudeCodeBrain implements Brain {
         List<ToolCall> calls = new ArrayList<>();
         String say = string(answer, "say").strip();
         if (!say.isEmpty()) content.add(textBlock(say));
+        JsonElement doneFlag = answer.get("done");
+        boolean done = doneFlag != null && doneFlag.isJsonPrimitive() && doneFlag.getAsJsonPrimitive().isBoolean()
+                && doneFlag.getAsBoolean();
         JsonElement rawCalls = answer.get("calls");
         if (rawCalls != null && rawCalls.isJsonArray()) {
             for (JsonElement e : rawCalls.getAsJsonArray()) {
@@ -346,7 +352,7 @@ public final class ClaudeCodeBrain implements Brain {
         return new Reply(string(json, "session_id"), content, List.copyOf(calls), say,
                 calls.isEmpty() ? "end_turn" : "tool_use", new Usage(integer(usage, "input_tokens"),
                 integer(usage, "output_tokens"), integer(usage, "cache_creation_input_tokens"),
-                integer(usage, "cache_read_input_tokens")));
+                integer(usage, "cache_read_input_tokens")), done);
     }
 
     private String run(Path systemFile, String prompt) throws BrainException {

@@ -33,7 +33,8 @@ import org.slf4j.LoggerFactory;
  * <p>Pipelining: a batch's results go out when the batch is done, or early once only {@code prefetch_at} of its
  * calls are still waiting to start, so the next reply usually lands before the queue runs dry. Calls still pending
  * at that point report {@code queued}, and their real outcome follows as a note in a later turn. If the reply is
- * late the agent waits; it never acts on a guess.
+ * late the agent waits; it never acts on a guess. A reply marked done ends its order without a report turn once its
+ * calls all succeed; any other outcome goes back to the model as usual.
  *
  * <p>Priorities: each call runs at its {@code prio} level. A reflex is code acting first: its actions go in at
  * level 3, which scraps routine work and pauses level 2, and the model then hears what the body did and what was
@@ -87,6 +88,10 @@ public final class AgentLoop implements ActionQueue.Listener {
             return calls.stream().allMatch(c -> c.result != null);
         }
 
+        boolean allOk() {
+            return calls.stream().allMatch(c -> c.result.status() == ActionResult.Status.OK);
+        }
+
         long notStarted() {
             return calls.stream().filter(c -> c.result == null && !c.started).count();
         }
@@ -119,6 +124,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     private boolean mustReport;
     private final List<String> interruptInFlight = new ArrayList<>(); // notes for the reply on its way; it was planned on stale state
     private String finalText;
+    private String doneText; // a done reply's text while its batch runs; said if the batch succeeds, null otherwise
     private int steps;
     private int reflexCount; // numbers the reflex-<n> call ids
     private boolean goal; // the running order is an autonomous goal turn
@@ -352,6 +358,7 @@ public final class AgentLoop implements ActionQueue.Listener {
             return;
         }
         if (!reply.text().isEmpty()) LOG.debug("model text alongside tool calls: {}", reply.text());
+        if (reply.done()) doneText = reply.text();
         startBatch(reply.toolCalls());
     }
 
@@ -405,9 +412,20 @@ public final class AgentLoop implements ActionQueue.Listener {
             return;
         }
         if (batch != null && !batch.reported) {
-            boolean prefetch = batch.calls.size() > settings.prefetchAt() && batch.notStarted() <= settings.prefetchAt();
-            if (batch.done() || prefetch) reportBatch();
-            return;
+            if (doneText != null) { // a done batch never prefetches: it either ends the order or reports in full
+                if (!batch.done()) return;
+                if (!batch.allOk() || !notes.isEmpty() || mustReport) {
+                    reportBatch();
+                    return;
+                }
+                batch.reported = true;
+                finalText = doneText;
+                doneText = null;
+            } else {
+                boolean prefetch = batch.calls.size() > settings.prefetchAt() && batch.notStarted() <= settings.prefetchAt();
+                if (batch.done() || prefetch) reportBatch();
+                return;
+            }
         }
         if (mustReport || !pendingResults.isEmpty()) {
             flush();
@@ -418,6 +436,7 @@ public final class AgentLoop implements ActionQueue.Listener {
 
     private void reportBatch() {
         batch.reported = true;
+        doneText = null;
         for (Call c : batch.calls) {
             if (c.result == null) c.reportedEarly = true;
             pendingResults.add(toolResult(c.id, c.result != null ? c.result : ActionResult.queued()));
@@ -569,6 +588,7 @@ public final class AgentLoop implements ActionQueue.Listener {
         mustReport = false;
         interruptInFlight.clear();
         finalText = null;
+        doneText = null;
         steps = 0;
     }
 

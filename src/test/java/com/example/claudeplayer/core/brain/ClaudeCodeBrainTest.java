@@ -68,6 +68,15 @@ class ClaudeCodeBrainTest {
     }
 
     @Test
+    void doneMarksTheReplyAndOnlyATrueBooleanCounts() throws BrainException {
+        String done = SUCCESS.replace("\"calls\":[", "\"done\":true,\"calls\":[");
+        assertTrue(ClaudeCodeBrain.parseResult(done, "cc2_").done());
+        assertFalse(ClaudeCodeBrain.parseResult(SUCCESS, "cc2_").done(), "absent means not done");
+        String notBoolean = SUCCESS.replace("\"calls\":[", "\"done\":\"true\",\"calls\":[");
+        assertFalse(ClaudeCodeBrain.parseResult(notBoolean, "cc2_").done(), "only a JSON boolean counts");
+    }
+
+    @Test
     void failuresAreClassified() {
         BrainException limit = assertThrows(BrainException.class, () -> ClaudeCodeBrain.parseResult(
                 "{\"subtype\":\"success\",\"is_error\":true,\"api_error_status\":429,\"result\":\"usage limit reached\"}", "x"));
