@@ -117,6 +117,33 @@ public final class PromptBuilder {
         return finish(b, notes, state);
     }
 
+    /**
+     * The one turn that replaces a long order's transcript (autocompact), built in code: the order again, one line per
+     * earlier model turn ({@code omitted} older ones were dropped), the results the model was about to get as text,
+     * then what an update turn carries. A blank {@code order} is a reaction nobody ordered.
+     */
+    public String compactTurn(String player, String order, List<String> earlier, int omitted, List<String> results,
+                              String memory, List<String> notes, String state) {
+        StringBuilder b = new StringBuilder();
+        if (order.isEmpty()) {
+            b.append("<event>\nNo one gave an order. You are reacting to a threat or a hit.\n</event>\n");
+        } else {
+            b.append("<order from=\"").append(WorldText.clean(player, WorldText.NAME_MAX)).append("\">\n")
+                    .append(order).append("\n</order>\n");
+        }
+        b.append("<earlier>\nYour turns in this order so far, oldest first, each call as name\u2192result:\n");
+        if (omitted > 0) b.append("- (").append(omitted).append(" earlier turns left out)\n");
+        for (String line : earlier) b.append(line).append('\n');
+        b.append("</earlier>\n");
+        if (!results.isEmpty()) {
+            b.append("<results>\n");
+            for (String line : results) b.append(line).append('\n');
+            b.append("</results>\n");
+        }
+        if (!memory.isEmpty()) b.append(memory).append('\n');
+        return finish(b, notes, state);
+    }
+
     /** Later turns: late results and interrupts, then fresh state. Follows the tool_result blocks. */
     public String updateTurn(List<String> notes, String state) {
         return finish(new StringBuilder(), notes, state);

@@ -128,6 +128,9 @@ public final class Config {
     private static final ForgeConfigSpec.ConfigValue<String> CAVEMAN_SKILL_PATH = B
             .comment("The caveman SKILL.md to read. Empty looks under ~/.claude/skills/ for the newest caveman skill.")
             .define("caveman_skill_path", D.cavemanSkillPath());
+    private static final ForgeConfigSpec.IntValue COMPACT_AT_TOKENS = B
+            .comment("When one model call's prompt reaches this many tokens, the order's earlier turns collapse into a short summary (no extra call) before the next turn.")
+            .defineInRange("compact_at_tokens", D.compactAtTokens(), 2_000, 1_000_000);
 
     static final ForgeConfigSpec SPEC = B.build();
 
@@ -175,6 +178,7 @@ public final class Config {
             b.usageWarnAt = List.copyOf(USAGE_WARN_AT.get());
             b.cavemanAt = CAVEMAN_AT.get();
             b.cavemanSkillPath = CAVEMAN_SKILL_PATH.get();
+            b.compactAtTokens = COMPACT_AT_TOKENS.get();
         });
     }
 

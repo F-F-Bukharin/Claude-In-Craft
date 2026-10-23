@@ -176,6 +176,138 @@ class AgentLoopTest {
         return turn.get(turn.size() - 1).getAsJsonObject().get("text").getAsString();
     }
 
+    /** The same reply, but its call's prompt was {@code prompt} tokens long. */
+    private static Brain.Reply promptOf(int prompt, Brain.Reply r) {
+        return new Brain.Reply(r.id(), r.content(), r.toolCalls(), r.text(), r.stopReason(),
+                new Brain.Usage(prompt - 500, 20, 300, 200), r.done());
+    }
+
+    /** Every tool_result in the request answers a tool_use that an earlier assistant turn of the same request made. */
+    private void assertNoOrphans(int request) {
+        java.util.Set<String> uses = new java.util.HashSet<>();
+        for (JsonElement m : requests.get(request).messages()) {
+            JsonObject msg = m.getAsJsonObject();
+            for (JsonElement el : msg.getAsJsonArray("content")) {
+                JsonObject b = el.getAsJsonObject();
+                if (b.get("type").getAsString().equals("tool_use")) uses.add(b.get("id").getAsString());
+                if (b.get("type").getAsString().equals("tool_result")) {
+                    assertTrue(uses.contains(b.get("tool_use_id").getAsString()), "orphan tool_result in request " + request);
+                }
+            }
+        }
+    }
+
+    private String firstText(int request) {
+        JsonObject first = requests.get(request).messages().get(0).getAsJsonObject();
+        assertEquals("user", first.get("role").getAsString());
+        JsonArray content = first.getAsJsonArray("content");
+        return content.get(content.size() - 1).getAsJsonObject().get("text").getAsString();
+    }
+
+    @Test
+    void aLongPromptCollapsesTheNextTurnIntoOneSummaryTurn() {
+        build(b -> b.compactAtTokens = 2000);
+        movesFinish = true;
+        script.add(promptOf(2000, tools(say("s1"), move("m1"))));
+        script.add(text("All done."));
+        loop.startOrder("F", "go to the tree");
+        pump();
+        ticks(40);
+        assertEquals(2, requests.size());
+        assertEquals(1, requests.get(1).messages().size(), "one fresh user turn");
+        assertEquals(0, results(1).size(), "results are text now, not tool_result blocks");
+        String turn = lastText(1);
+        assertTrue(turn.startsWith("<order from=\"F\">\ngo to the tree\n</order>"), turn);
+        assertTrue(turn.contains("<earlier>\n"), turn);
+        assertTrue(turn.contains("say\u2192ok, move_to\u2192ok"), turn);
+        assertTrue(turn.contains("<results>\n- say s1: ok\n- move_to m1: ok\n</results>"), turn);
+        assertTrue(turn.contains("<world_state>"), turn);
+        assertTrue(turn.contains("<status>"), turn);
+        assertNoOrphans(1);
+        assertEquals(List.of("All done."), said);
+    }
+
+    @Test
+    void belowTheThresholdTheTranscriptStaysAppendOnly() {
+        build(b -> b.compactAtTokens = 2000);
+        script.add(promptOf(1999, tools(say("s1"))));
+        script.add(tools(say("s2")));
+        script.add(text("Done."));
+        loop.startOrder("F", "say hi twice");
+        pump();
+        ticks(40);
+        assertEquals(3, requests.size());
+        assertEquals(3, requests.get(1).messages().size(), "user, assistant, user");
+        assertEquals(5, requests.get(2).messages().size());
+        assertEquals(List.of("ok"), results(2));
+        assertFalse(firstText(2).contains("<earlier>"));
+    }
+
+    @Test
+    void aCallStillRunningWhenTheOrderCompactsReportsItsResultAsANote() {
+        build(b -> b.compactAtTokens = 2000);
+        script.add(promptOf(5000, tools(say("a"), say("b"), say("c"), say("d"), say("e"), say("f"), say("g"), say("h"))));
+        script.add(tools(say("x")));
+        script.add(text("All done."));
+        loop.startOrder("F", "chatter");
+        pump();
+        for (int i = 0; i < 100 && requests.size() < 2; i++) ticks(1);
+        assertEquals(1, requests.get(1).messages().size());
+        assertTrue(lastText(1).contains("say\u2192ok, say\u2192ok, say\u2192ok, say\u2192ok, say\u2192queued"), lastText(1));
+        assertTrue(lastText(1).contains("- say e: queued"), lastText(1));
+        ticks(100);
+        assertEquals(3, requests.size());
+        assertEquals(3, requests.get(2).messages().size(), "the order went on from the fresh turn");
+        for (String late : List.of("say e: ok", "say f: ok", "say g: ok", "say h: ok")) {
+            assertTrue(lastText(2).contains(late), lastText(2));
+        }
+        for (int i = 0; i < requests.size(); i++) assertNoOrphans(i);
+        assertEquals(List.of("All done."), said);
+    }
+
+    @Test
+    void anOrderCanCompactTwiceAndKeepsTheEarlierLines() {
+        build(b -> b.compactAtTokens = 2000);
+        movesFinish = true;
+        script.add(promptOf(3000, tools(move("m1"))));
+        script.add(promptOf(3000, tools(call("f", "flee", "{}"))));
+        script.add(text("Safe."));
+        fleeResult = ActionResult.failed("no_escape");
+        loop.startOrder("F", "wander");
+        pump();
+        ticks(10);
+        assertEquals(3, requests.size());
+        assertEquals(1, requests.get(2).messages().size());
+        String turn = lastText(2);
+        assertTrue(turn.contains("move_to\u2192ok"), turn);
+        assertTrue(turn.contains("flee\u2192failed:no_escape"), turn);
+        assertTrue(turn.indexOf("move_to\u2192ok") < turn.indexOf("flee\u2192failed"), "oldest first");
+        assertEquals(List.of("Safe."), said);
+        assertFalse(loop.active());
+    }
+
+    @Test
+    void theSummaryKeepsTheNewestFortyLines() {
+        build(b -> {
+            b.compactAtTokens = 2000;
+            b.maxSteps = 100;
+            b.maxCallsPerMinute = 120;
+        });
+        for (int i = 0; i < 44; i++) script.add(tools(say("t" + i)));
+        script.add(promptOf(9000, tools(say("last"))));
+        script.add(text("Done."));
+        loop.startOrder("F", "talk a lot");
+        pump();
+        ticks(600);
+        assertEquals(46, requests.size());
+        String turn = lastText(45);
+        assertEquals(1, requests.get(45).messages().size());
+        long lines = turn.lines().filter(l -> l.matches("- \\d+: .*")).count();
+        assertEquals(40, lines, turn);
+        assertTrue(turn.contains("(5 earlier turns left out)"), turn);
+        assertTrue(turn.contains("- 45: \"hi\" say\u2192ok"), turn);
+    }
+
     @Test
     void aCavemanNoteJoinsARunningOrderOnceAtTheNextTurn() {
         build(b -> b.maxCallsPerMinute = 100);

@@ -19,7 +19,7 @@ public record Settings(
         int shortTermCapacity, int shortTermMinutes, int longTermCapacity,
         int claudeCodeIdleMinutes, int autonomyIntervalSeconds,
         String claudeEffort, String claudeThinkEffort, List<String> thinkHarderPhrases, int thinkHarderTimeoutSeconds,
-        List<Double> usageWarnAt, double cavemanAt, String cavemanSkillPath) {
+        List<Double> usageWarnAt, double cavemanAt, String cavemanSkillPath, int compactAtTokens) {
 
     /** {@code brain}: the player's Claude Code CLI (their subscription), or the Messages API with a key. */
     public static final String BRAIN_CLAUDE_CODE = "claude_code";
@@ -90,6 +90,7 @@ public record Settings(
         public List<Double> usageWarnAt = List.of(0.80, 0.90);
         public double cavemanAt = 0.80;
         public String cavemanSkillPath = "";
+        public int compactAtTokens = 16_000;
 
         public Settings build() {
             return new Settings(brain, claudeCodePath, claudeCodeTimeoutSeconds, model, apiKeyEnv, effort, maxTokens, requestTimeoutSeconds, promptCaching, logPrompts,
@@ -99,7 +100,7 @@ public record Settings(
                     shortTermCapacity, shortTermMinutes, longTermCapacity,
                     claudeCodeIdleMinutes, autonomyIntervalSeconds,
                     claudeEffort, claudeThinkEffort, thinkHarderPhrases, thinkHarderTimeoutSeconds,
-                    usageWarnAt, cavemanAt, cavemanSkillPath);
+                    usageWarnAt, cavemanAt, cavemanSkillPath, compactAtTokens);
         }
     }
 }

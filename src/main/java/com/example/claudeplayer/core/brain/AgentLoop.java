@@ -8,7 +8,9 @@ import com.example.claudeplayer.core.act.ActionResult;
 import com.example.claudeplayer.core.chat.Conversation;
 import com.example.claudeplayer.core.memory.Memory;
 import com.example.claudeplayer.core.safety.Guardrails;
+import com.example.claudeplayer.core.safety.WorldText;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -21,6 +23,8 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,7 +34,9 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Threading: every method runs on the server thread. Only {@link Brain#send} runs on {@code brainThread}, and
  * its reply comes back through {@code mainThread}. Each order is one append-only transcript, which keeps prompt
- * caching and thinking blocks valid; a new order starts a new transcript.
+ * caching and thinking blocks valid; a new order starts a new transcript. The one exception is autocompact: once a
+ * reply's prompt reaches {@code compact_at_tokens}, the next turn replaces the transcript with a single turn that
+ * summarizes it (built in code, no extra model call).
  *
  * <p>Pipelining: a batch's results go out when the batch is done, or early once only {@code prefetch_at} of its
  * calls are still waiting to start, so the next reply usually lands before the queue runs dry. Calls still pending
@@ -68,6 +74,9 @@ public final class AgentLoop implements ActionQueue.Listener {
     private record Opening(String player, String text, Kind kind) {}
 
     private static final int OUTCOMES_KEPT = 5;
+    private static final int EARLIER_LINES = 40; // turns a compacted summary keeps, newest last
+    private static final int LINE_TEXT_MAX = 200;
+    private static final Pattern NOTE_LINE = Pattern.compile("^- (\\S+) (\\S+): (\\S+)$", Pattern.MULTILINE);
 
     private static final class Call {
         final String id;
@@ -128,6 +137,9 @@ public final class AgentLoop implements ActionQueue.Listener {
     private String finalText;
     private String doneText; // a done reply's text while its batch runs; said if the batch succeeds, null otherwise
     private int steps;
+    private long lastPrompt; // the last reply's prompt size in tokens; 0 until the next reply
+    private final List<String> earlier = new ArrayList<>(); // summary lines of turns compacted away, oldest first
+    private int summarized; // turns summarized so far, numbering the lines
     private int reflexCount; // numbers the reflex-<n> call ids
     private boolean goal; // the running order is an autonomous goal turn
     private String goalText; // the goal reply's text, said when the goal ends unless blank
@@ -361,6 +373,8 @@ public final class AgentLoop implements ActionQueue.Listener {
         JsonArray content = reply.content();
         if (content.isEmpty()) content = single(textBlock("(no reply)")); // the API rejects empty assistant turns
         messages.add(message("assistant", content));
+        Brain.Usage usage = reply.usage();
+        lastPrompt = (long) usage.input() + usage.cacheRead() + usage.cacheWrite();
         if (!interruptInFlight.isEmpty()) {
             for (Brain.ToolCall call : reply.toolCalls()) pendingResults.add(toolResult(call.id(), ActionResult.cancelled()));
             notes.addAll(interruptInFlight);
@@ -503,8 +517,11 @@ public final class AgentLoop implements ActionQueue.Listener {
             notes.add(cavemanNote.get());
             cavemanNoted = true;
         }
+        boolean compact = opening == null && !goal && !messages.isEmpty() && lastPrompt >= settings.compactAtTokens();
         String text;
-        if (opening == null) {
+        if (compact) {
+            text = compactTurn(state);
+        } else if (opening == null) {
             text = prompts.updateTurn(notes, state);
         } else if (opening.kind() == Kind.GOAL) {
             text = prompts.autonomyTurn(opening.player(), List.copyOf(outcomes), memory.render(), notes, state);
@@ -514,15 +531,84 @@ public final class AgentLoop implements ActionQueue.Listener {
             text = prompts.orderTurn(opening.player(), opening.text(), host.recentChat(), memory.render(), notes, state);
         }
         text += "\n" + PromptBuilder.status(goal ? "own goal" : orderText, orderFrom, step(), snapshot, queue.snapshot());
-        JsonArray content = pendingResults; // tool_result blocks must come first in the turn
+        JsonArray content = compact ? new JsonArray() : pendingResults; // tool_result blocks must come first in the turn
         content.add(textBlock(text));
+        if (compact) { // the results are text now: a tool_result needs its tool_use, which is gone
+            LOG.info("compacted order transcript: {} messages -> 1 (prompt was {} tokens)", messages.size(), lastPrompt);
+            messages = new JsonArray();
+        }
         messages.add(message("user", content));
         pendingResults = new JsonArray();
+        lastPrompt = 0;
         notes.clear();
         opening = null;
         finalText = null;
         mustReport = false;
         send();
+    }
+
+    /**
+     * The text of the single turn that replaces the transcript: the order, a line per model turn so far, this turn's
+     * results as text, then the usual notes and state. Calls still running keep their pending entry; they were
+     * answered {@code queued} when their batch reported, so their outcome comes later as a note.
+     */
+    private String compactTurn(String state) {
+        Map<String, String> names = new HashMap<>(); // call id -> tool name
+        Map<String, String> codes = new HashMap<>(); // call id -> result code; a later note replaces "queued"
+        for (JsonElement m : messages) {
+            for (JsonElement el : m.getAsJsonObject().getAsJsonArray("content")) {
+                JsonObject b = el.getAsJsonObject();
+                switch (b.get("type").getAsString()) {
+                    case "tool_use" -> names.put(b.get("id").getAsString(), b.get("name").getAsString());
+                    case "tool_result" -> codes.put(b.get("tool_use_id").getAsString(), firstLine(b.get("content").getAsString()));
+                    case "text" -> noteCodes(b.get("text").getAsString(), codes);
+                    default -> {}
+                }
+            }
+        }
+        noteCodes(notes.stream().map(n -> "- " + n).collect(Collectors.joining("\n")), codes);
+        List<String> results = new ArrayList<>();
+        for (JsonElement el : pendingResults) {
+            JsonObject b = el.getAsJsonObject();
+            String id = b.get("tool_use_id").getAsString();
+            String content = b.get("content").getAsString();
+            codes.put(id, firstLine(content));
+            results.add("- " + names.getOrDefault(id, "?") + " " + id + ": " + content);
+        }
+        for (JsonElement m : messages) {
+            JsonObject msg = m.getAsJsonObject();
+            if (!msg.get("role").getAsString().equals("assistant")) continue;
+            List<String> said = new ArrayList<>();
+            List<String> calls = new ArrayList<>();
+            for (JsonElement el : msg.getAsJsonArray("content")) {
+                JsonObject b = el.getAsJsonObject();
+                String type = b.get("type").getAsString();
+                if (type.equals("text")) {
+                    said.add(b.get("text").getAsString());
+                } else if (type.equals("tool_use")) {
+                    String name = b.get("name").getAsString();
+                    JsonElement spoken = name.equals("say") ? b.getAsJsonObject("input").get("text") : null;
+                    if (spoken != null && spoken.isJsonPrimitive()) said.add(spoken.getAsString());
+                    calls.add(name + "\u2192" + codes.getOrDefault(b.get("id").getAsString(), "queued"));
+                }
+            }
+            String spoken = said.isEmpty() ? "" : WorldText.quote(String.join(" / ", said), LINE_TEXT_MAX) + " ";
+            earlier.add("- " + ++summarized + ": " + spoken + (calls.isEmpty() ? "(no calls)" : String.join(", ", calls)));
+        }
+        while (earlier.size() > EARLIER_LINES) earlier.remove(0);
+        return prompts.compactTurn(orderFrom, orderText, List.copyOf(earlier), summarized - earlier.size(), results,
+                memory.render(), notes, state);
+    }
+
+    /** Late results from earlier update turns read "- tool id: code"; they replace the {@code queued} the model got. */
+    private static void noteCodes(String text, Map<String, String> codes) {
+        Matcher m = NOTE_LINE.matcher(text);
+        while (m.find()) codes.put(m.group(2), m.group(3));
+    }
+
+    private static String firstLine(String content) {
+        int nl = content.indexOf('\n');
+        return nl < 0 ? content : content.substring(0, nl);
     }
 
     /** The model's own progress line for the status block: its short-term note with subject step, or null. */
@@ -616,6 +702,9 @@ public final class AgentLoop implements ActionQueue.Listener {
     private void abandon() {
         epoch++;
         brain.reset();
+        earlier.clear();
+        summarized = 0;
+        lastPrompt = 0;
         orderFrom = null;
         orderText = null;
         opening = null;
