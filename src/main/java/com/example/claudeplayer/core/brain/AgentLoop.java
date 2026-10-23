@@ -247,6 +247,7 @@ public final class AgentLoop implements ActionQueue.Listener {
             if (settings.idleReactions() && !guardrails.halted()) begin(new Opening("", reason, Kind.EVENT), false);
             return;
         }
+        thinkHarder = false; // any threat ends max effort, reflex or not
         String note = "INTERRUPT: " + reason;
         if (settings.reflexes()) {
             report(note);

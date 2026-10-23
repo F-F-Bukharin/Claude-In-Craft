@@ -380,6 +380,20 @@ class AgentLoopTest {
     }
 
     @Test
+    void anInterruptWithoutAReflexAlsoEndsThinkHarder() {
+        build(b -> b.maxCallsPerMinute = 100);
+        script.add(tools(move("m")));
+        script.add(text("Done."));
+        loop.startOrder("F", "think harder and walk", true);
+        pump();
+        ticks(3); // m is running
+        loop.interrupt("zombie #7 is 10.0 blocks away. Caution level 4 (ready) says: fight."); // out of reach: no reflex
+        pump();
+        assertEquals(2, requests.size());
+        assertNull(requests.get(1).effort(), "any threat drops the next turn back to the configured effort");
+    }
+
+    @Test
     void thinkHarderEndsWithItsOrder() {
         build(b -> b.claudeThinkEffort = "max");
         script.add(text("One."));
