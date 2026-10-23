@@ -44,16 +44,20 @@ public final class ClaudeCodeBrain implements Brain {
             + "\"calls\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{"
             + "\"name\":{\"type\":\"string\"},\"input\":{\"type\":\"object\"}},\"required\":[\"name\",\"input\"]}}},"
             + "\"required\":[\"say\",\"calls\"]}";
+    // Without this, Haiku tried a game action as a native tool on 4 of 4 opening turns (measured 23 Oct): a wasted
+    // round trip, and often an "I can't move" reply with no actions. With it and the compact list: 0 of 16.
+    private static final String ONLY_TOOL = "Your only callable tool is StructuredOutput: every reply is exactly one "
+            + "StructuredOutput call. The game actions below (move_to, say, look and the rest) are not tools. You request "
+            + "them by listing them in the calls array of that answer, and the game runs them.\n\n";
     private static final String HOW_TO_ACT = """
 
 
             # How you act
-            You act only through the JSON reply. Put the tool calls for your next step in `calls`, in order, each as \
-            {"name": ..., "input": {...}} with input following that tool's schema below. Their results come back in \
-            the next turn. When the order is finished, or you can't go on, leave `calls` empty and put your report \
-            in `say`.
+            Answer with {"say": ..., "calls": [...]}. Each entry in calls is {"name": <action>, "input": {...}}, with \
+            input as shown below; add "prio": 1, 2 or 3 to input when it matters. The results come back in the next \
+            turn. When the order is finished, or you can't go on, leave calls empty and put your report in say.
 
-            # Tools
+            # Actions (list them in calls; never call them directly)
             """;
 
     private final Settings settings;
@@ -191,16 +195,38 @@ public final class ClaudeCodeBrain implements Brain {
         return cmd;
     }
 
+    /**
+     * The game's prompt plus one line per action, e.g. {@code - move_to {"x": number, "y": number, "z": number}: Walk...}.
+     * Full JSON schemas read like native tools and doubled the prompt; the shared optional prio is explained once.
+     */
     static String renderSystem(String system, JsonArray tools) {
-        StringBuilder sb = new StringBuilder(system).append(HOW_TO_ACT);
+        StringBuilder sb = new StringBuilder(ONLY_TOOL).append(system).append(HOW_TO_ACT);
         for (JsonElement e : tools) {
             if (!e.isJsonObject()) continue;
             JsonObject tool = e.getAsJsonObject();
-            sb.append("\n## ").append(string(tool, "name")).append('\n')
-                    .append(string(tool, "description")).append('\n')
-                    .append("input schema: ").append(tool.has("input_schema") ? tool.get("input_schema") : "{}").append('\n');
+            sb.append("- ").append(string(tool, "name")).append(' ').append(signature(tool)).append(": ")
+                    .append(string(tool, "description")).append('\n');
         }
         return sb.toString();
+    }
+
+    /** The required inputs and their types, as a JSON-like object: {@code {"x": number, "item": string}}. */
+    static String signature(JsonObject tool) {
+        JsonElement rawSchema = tool.get("input_schema");
+        if (rawSchema == null || !rawSchema.isJsonObject()) return "{}";
+        JsonObject schema = rawSchema.getAsJsonObject();
+        JsonObject props = schema.has("properties") && schema.get("properties").isJsonObject()
+                ? schema.getAsJsonObject("properties") : new JsonObject();
+        List<String> parts = new ArrayList<>();
+        if (schema.has("required") && schema.get("required").isJsonArray()) {
+            for (JsonElement r : schema.getAsJsonArray("required")) {
+                String name = r.getAsString();
+                JsonElement prop = props.get(name);
+                String type = prop != null && prop.isJsonObject() ? string(prop.getAsJsonObject(), "type") : "";
+                parts.add("\"" + name + "\": " + (type.isEmpty() ? "any" : type));
+            }
+        }
+        return "{" + String.join(", ", parts) + "}";
     }
 
     /** The Messages transcript as plain text: game turns, your earlier replies, and tool results by name. */
