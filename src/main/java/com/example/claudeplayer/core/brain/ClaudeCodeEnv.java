@@ -32,9 +32,16 @@ public final class ClaudeCodeEnv implements ClaudeCodeSessions.Launcher {
         this.pidFile = workDir.resolve("claude-pids.txt");
     }
 
-    /** Removes ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL and every other ANTHROPIC_ variable. */
+    /** Variables that would send Claude Code's calls to a cloud provider's billing instead of the subscription. */
+    private static final List<String> OTHER_BILLING = List.of("CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
+            "CLAUDE_CODE_USE_FOUNDRY", "AWS_BEARER_TOKEN_BEDROCK");
+
+    /** Removes every ANTHROPIC_ variable (API key, auth token, base URL...) and the cloud-provider switches. */
     static void scrub(Map<String, String> env) {
-        env.keySet().removeIf(k -> k.toUpperCase(Locale.ROOT).startsWith("ANTHROPIC_"));
+        env.keySet().removeIf(k -> {
+            String key = k.toUpperCase(Locale.ROOT);
+            return key.startsWith("ANTHROPIC_") || OTHER_BILLING.contains(key);
+        });
     }
 
     ProcessBuilder builder(List<String> command) throws IOException {

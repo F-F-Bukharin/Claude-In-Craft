@@ -168,6 +168,14 @@ class ClaudeCodeSessionsTest {
     }
 
     @Test
+    void scrubRemovesTheCloudProviderSwitches() {
+        Map<String, String> env = new HashMap<>(Map.of("CLAUDE_CODE_USE_BEDROCK", "1", "CLAUDE_CODE_USE_VERTEX", "1",
+                "claude_code_use_foundry", "1", "AWS_BEARER_TOKEN_BEDROCK", "b", "CLAUDE_CODE_PATH", "keep", "PATH", "p"));
+        ClaudeCodeEnv.scrub(env);
+        assertEquals(Map.of("CLAUDE_CODE_PATH", "keep", "PATH", "p"), env);
+    }
+
+    @Test
     void streamCommandKeepsTheLockdown() {
         List<String> cmd = ClaudeCodeBrain.command("claude.exe", Settings.DEFAULTS, Path.of("s.md"), false, true);
         assertEquals("stream-json", cmd.get(cmd.indexOf("--input-format") + 1));
