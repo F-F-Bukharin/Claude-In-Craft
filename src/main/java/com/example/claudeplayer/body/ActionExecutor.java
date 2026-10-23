@@ -20,6 +20,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -100,6 +101,7 @@ public final class ActionExecutor implements ActionRunner {
     private ActionResult inspect(AgentPlayer p, BlockPos pos) {
         if (p.position().distanceTo(Vec3.atCenterOf(pos)) > CONTAINER_REACH) return ActionResult.failed("too_far");
         BlockState state = p.serverLevel().getBlockState(pos);
+        if (state.is(Blocks.ENDER_CHEST)) return ActionResult.failed("ender_chest_personal"); // each player sees their own
         BlockEntity be = p.serverLevel().getBlockEntity(pos);
         Container container = state.getBlock() instanceof ChestBlock chest
                 ? ChestBlock.getContainer(chest, state, p.serverLevel(), pos, true) // both halves of a double chest
