@@ -5,12 +5,15 @@ import com.example.claudeplayer.core.act.Action;
 import com.example.claudeplayer.core.act.ActionResult;
 import com.example.claudeplayer.core.safety.Guardrails;
 import com.example.claudeplayer.core.work.Farming;
+import javax.annotation.Nullable;
 import net.minecraft.commands.arguments.EntityAnchorArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.tags.FluidTags;
+import net.minecraft.tags.TagKey;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Inventory;
@@ -25,6 +28,7 @@ import net.minecraft.world.level.block.CropBlock;
 import net.minecraft.world.level.block.NetherWartBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.gameevent.GameEvent;
+import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -105,10 +109,11 @@ final class FarmActions {
     }
 
     /**
-     * Fills an empty bucket from a source at the position, or pours a carried water or lava bucket there (water
-     * first when both are carried). Guardrails.checkPour runs before any pour.
+     * Fills an empty bucket from a source at the position, or pours a carried water or lava bucket there. With
+     * {@code fluid} ("water" or "lava") only that kind is poured, and a fill only takes that kind; without it, water
+     * first when both are carried. Guardrails.checkPour runs before any pour.
      */
-    ActionResult useBucket(AgentPlayer p, BlockPos pos) {
+    ActionResult useBucket(AgentPlayer p, BlockPos pos, @Nullable String fluid) {
         Inventory inv = p.getInventory();
         int empty = slotOf(inv, Items.BUCKET);
         int water = slotOf(inv, Items.WATER_BUCKET);
@@ -118,9 +123,10 @@ final class FarmActions {
         ServerLevel level = p.serverLevel();
         BlockState state = level.getBlockState(pos);
         boolean source = state.getFluidState().isSource() && state.getBlock() instanceof BucketPickup;
-        if (empty >= 0 && source) return fill(p, pos, state, empty);
-        int full = water >= 0 ? water : lava;
-        if (full < 0) return ActionResult.failed("no_source");
+        TagKey<Fluid> kind = fluid == null ? null : "lava".equals(fluid) ? FluidTags.LAVA : FluidTags.WATER;
+        if (empty >= 0 && source && (kind == null || state.getFluidState().is(kind))) return fill(p, pos, state, empty);
+        int full = fluid == null ? (water >= 0 ? water : lava) : "lava".equals(fluid) ? lava : water;
+        if (full < 0) return ActionResult.failed(fluid == null ? "no_source" : "no_bucket");
         return pour(p, pos, full, full == lava);
     }
 
