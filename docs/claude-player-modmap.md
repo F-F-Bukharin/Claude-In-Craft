@@ -33,6 +33,9 @@ Paths are under `src/main/java/com/example/claudeplayer/` unless noted. Everythi
 | `core/act/ActionQueue.java` | Tick pacing, levels 1 to 3 (a level 3 entry preempts: it scraps level 1 and pauses a running level 2), quick vs timed actions, timeout, cancel, stop, `snapshot()` for the Brain screen |
 | `core/brain/Brain.java` | Backend interface: `ApiBrain` or `ClaudeCodeBrain`, picked by `brain` |
 | `core/brain/ClaudeCodeBrain.java` | Option B: runs the player's `claude -p` (subscription login) with no tools, a replaced system prompt and a JSON schema for tool calls |
+| `core/brain/UsageLedger.java`, `core/brain/JsonUsageFile.java` | Claude Code usage windows, warnings once per threshold, tokens per order and day, kept in `config/claudeplayer_usage.json` |
+| `core/brain/CavemanSkill.java` | Loads the installed caveman skill's rules (8 KB cap, SHA-256) |
+| `core/chat/ThinkHarder.java` | The think-harder offer: phrase match, y/n from the ordering player, timeout, hostile gate |
 | `core/brain/ApiBrain.java` | Messages API over java.net.http: retries, prompt caching, key lookup, keycheck |
 | `core/brain/BrainException.java` | Classified API failures and their chat messages |
 | `core/brain/DemoBrain.java` | G1 stub: `C demo` walks a square without the API; other orders pass through |
@@ -243,4 +246,5 @@ COMPILED means the code compiles against forge-1.20.1-47.4.28 with official mapp
 - 22 Oct 2026: Claude Brain screen built and merged into dev: right-click the body for a read-only chest of the queue, for the players who may use `/cp`. `./gradlew build` is green with 127 unit tests. Not in game yet.
 - 23 Oct 2026: piece 1 follow-ups and warm-session bugs 1, 2, 4 and 5 fixed (handoff items 8 and 11). `./gradlew build` is green with 212 unit tests.
 - 23 Oct 2026: Blockman status block, done replies (one model call for simple orders), and the slab-ground fix. `./gradlew build` is green with 224 unit tests.
+- 23 Oct 2026: piece 4 built: usage ledger and warnings, caveman, think-harder, and `claude_effort` (high). `./gradlew build` is green with 286 unit tests. Not in game yet.
 - Next: F runs the Phase 0 checks against this code. Spike A is `/cp spawn` plus `C come here`; Spike B is `/cp keycheck` with a bad key. Details in the handoff.

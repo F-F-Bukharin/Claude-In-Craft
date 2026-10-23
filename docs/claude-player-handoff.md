@@ -1,6 +1,6 @@
 # Claude Player: handoff
 
-Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then the modmap RULES, then plan §6 and §7.
+Updated 23 Oct 2026 after piece 4 (usage, caveman, think-harder); first written 22 Oct after the skeleton pass (Opus 5.5). Read this first, then the modmap RULES, then plan §6 and §7.
 
 ## Where things stand
 - Every modmap LAYOUT file exists. `./gradlew build` is green: 85 unit tests on the pure core, and the jar lands in `build/libs/claudeplayer-0.1.0.jar`.
@@ -77,6 +77,14 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
    - Autonomy says a failed goal call once, not every interval, until a goal works again (23 Oct; test `aGoalFailureIsSaidOnceUntilAGoalWorksAgain`, checked to fail without the fix).
    - Gather no longer stops at once with `inventory_full` when no slot is empty but a partial stack of the target has room (23 Oct; game-side, no unit test).
    - Latency win: DONE 23 Oct. The Claude Code reply schema has `done`; when a done reply's calls all come back ok with no interrupt, the order ends on its `say` text, so "come here" or "say hi" costs one model call. Any failure or interrupt still reports (tests `aDoneReply*`, `doneMarksTheReplyAndOnlyATrueBooleanCounts`). The Messages API brain never sets it. In game, check that `C come here` logs one `claude code reply` line, not two.
+
+12. Piece 4: usage ledger, caveman and think-harder (23 Oct, on branch `claude/gifted-newton-nrhrer`; 286 unit tests green; nothing tried in game yet). F's choices: `claude_effort` defaults to `high` (the API brain keeps `effort = low`); think-harder restarts the Claude Code session at max effort from the whole transcript (no `--resume` spike).
+   - Usage: `config/claudeplayer_usage.json` holds the 5-hour and 7-day windows and token totals. Warnings at 80% and 90% go to online allowlisted players, once per window. A failed turn at the limit ends the order with `Claude Code limit reached, resets <time>`. `/cp status` shows the windows, tokens and caveman.
+   - Caveman: the newest caveman `SKILL.md` under `~/.claude/skills` (or `caveman_skill_path`). An order that starts at or above `caveman_at` gets the rules at the end of its system prompt; a running order gets them once as a note.
+   - Think-harder: an order with a `think_harder_phrases` phrase offers max effort to that player (`C y` / `C n`, 30 s, no answer = no), unless a hostile is within `hostile_range` ("Not now: zombie 9 blocks away."). A reflex drops the order back to normal effort.
+   - In game, try: `/cp status` (usage lines appear after the first Claude Code turn); `C think harder and build a hut`, then `C y` (one restart, `--effort max` in the log); the same with a zombie nearby; with a caveman skill installed and `caveman_at = 0`, check that orders get the rules.
+   - Unconfirmed: the exact `rate_limit_event` nesting and what the CLI sends at 100% (the parser searches for `five_hour`, `seven_day` and `status` anywhere in the event). Check `claudeplayer_usage.json` after a few orders.
+   - Known: `prewarm` builds the first spare without caveman, so the first order after a start at high usage pays one CLI startup.
 
 ## Claude Code facts (spikes from spec section 11, run 23 Oct with claude.exe 2.1.299, Haiku 5.5, effort low)
 - S1, yes: in one `--input-format stream-json --output-format stream-json --verbose --json-schema` session, every turn's `result` carries `structured_output`. The cache works across turns: cache_read went 1615, then 1725, then 2033.
