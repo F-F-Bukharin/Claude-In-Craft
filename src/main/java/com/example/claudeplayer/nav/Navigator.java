@@ -64,6 +64,7 @@ public final class Navigator {
         body.setYRot(yaw);
         body.setYHeadRot(yaw);
         body.yBodyRot = yaw;
+        body.setXRot(0f); // eyes level while walking, whatever the last lookAt left behind
         body.zza = 1f;
         boolean climb = point.y > body.getY() + 0.5 || body.horizontalCollision;
         body.setJumping(climb && (body.onGround() || body.isInWater()));
