@@ -59,6 +59,14 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
    - Trigger (23 Oct, F's choice): the default is now `C`, case-sensitive and followed by a space, ':' or ','. `Claude:` (the body name plus a colon) always works too. Existing config files keep their saved `trigger` until it is edited.
    - Not done: the Blockman status block pinned to each turn (spec section 7), and the flee issues, which wait on F's description of how flees failed.
 
+## Claude Code facts (spikes from spec section 11, run 23 Oct with claude.exe 2.1.299, Haiku 5.5, effort low)
+- S1, yes: in one `--input-format stream-json --output-format stream-json --verbose --json-schema` session, every turn's `result` carries `structured_output`. The cache works across turns: cache_read went 1615, then 1725, then 2033.
+- S2, yes: a spare started on stream-json input sits idle with no output until its first line. Its first turn took 4.1 s, against 7.7 s for a cold start. Warm later turns took 2.3 to 4.3 s, depending mostly on output length.
+- S5, partly: `rate_limit_event` came only on a session's first turn, not on every turn. It carries `utilization` and `resetsAt` per window, and `status` (`allowed_warning` past `surpassedThreshold` 0.75). The ledger gets one reading per session unless it asks again.
+- S6, no: an idle `claude.exe` (no tools) starts no child processes, so `destroyForcibly` is enough and the tree kill is cheap insurance.
+- Seen in passing: F's seven-day window read 0.77 on 23 Oct.
+- Seen in passing: with a system prompt that doesn't explain the JSON reply, Haiku tried a native tool call ("No such tool available: say") before answering. `ClaudeCodeBrain`'s HOW_TO_ACT section prevents that; keep it.
+
 ## Risks to watch
 - API cost during busy play (plan §3 and §9). Watch the token count in `/cp status`.
 - Spike A is the biggest unknown: the fake connection, server-side physics, and path following.
