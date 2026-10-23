@@ -61,6 +61,8 @@ public final class WorldMap {
 
     /** What standing at feet level in this column would be like. */
     static char cell(Sampler s, int x, int y, int z) {
+        char farm = farm(s, x, y, z);
+        if (farm != 0) return farm;
         Kind feet = s.at(x, y, z);
         Kind head = s.at(x, y + 1, z);
         Kind below = s.at(x, y - 1, z);
@@ -68,11 +70,7 @@ public final class WorldMap {
         if (feet == Kind.LAVA || below == Kind.LAVA) return 'L';
         if (feet == Kind.WATER || below == Kind.WATER) return '~';
         if (feet == Kind.CONTAINER || head == Kind.CONTAINER) return 'C';
-        if ((feet == Kind.CROP_RIPE || feet == Kind.CROP_GROWING) && head == Kind.OPEN) {
-            return feet == Kind.CROP_RIPE ? 'W' : 'w';
-        }
         if (feet == Kind.OPEN && head == Kind.OPEN) {
-            if (below == Kind.FARMLAND) return '=';
             if (solid(below)) return '.';
             Kind two = s.at(x, y - 2, z);
             if (two == Kind.LAVA) return 'L';
@@ -82,6 +80,20 @@ public final class WorldMap {
         boolean tree = feet == Kind.TREE || head == Kind.TREE;
         if (solid(feet) && head == Kind.OPEN && s.at(x, y + 2, z) == Kind.OPEN) return tree ? 'T' : '+';
         return tree ? 'T' : '#';
+    }
+
+    /** Vertical window searched for crops and farmland, nearest to feet level first (so a field one step down still shows). */
+    private static final int[] FARM_WINDOW = {0, -1, 1, -2};
+
+    /** W, w or = for the nearest crop or bare farmland within the window, with open air above it; 0 if none. */
+    static char farm(Sampler s, int x, int y, int z) {
+        for (int dy : FARM_WINDOW) {
+            Kind k = s.at(x, y + dy, z);
+            if (k != Kind.CROP_RIPE && k != Kind.CROP_GROWING && k != Kind.FARMLAND) continue;
+            if (s.at(x, y + dy + 1, z) != Kind.OPEN) continue;
+            return k == Kind.CROP_RIPE ? 'W' : k == Kind.CROP_GROWING ? 'w' : '=';
+        }
+        return 0;
     }
 
     private static boolean solid(Kind k) {

@@ -57,6 +57,26 @@ class WorldMapTest {
     }
 
     @Test
+    void cropsOneStepBelowOrAboveStillShow() {
+        put(0, 62, 0, Kind.FARMLAND);
+        put(0, 63, 0, Kind.CROP_RIPE);
+        assertEquals('W', at(0, 0), "field one block down is a crop, not a drop");
+        put(1, 61, 1, Kind.FARMLAND);
+        put(1, 62, 1, Kind.CROP_GROWING);
+        put(1, 63, 1, Kind.OPEN);
+        assertEquals('w', at(1, 1), "two down still in the window");
+        put(2, 65, 0, Kind.CROP_GROWING);
+        put(2, 64, 0, Kind.SOLID);
+        assertEquals('w', at(2, 0), "one up");
+        put(3, 64, 1, Kind.CROP_RIPE);
+        put(3, 63, 1, Kind.FARMLAND);
+        put(3, 62, 1, Kind.CROP_GROWING);
+        assertEquals('W', at(3, 1), "feet level wins over a deeper crop");
+        put(4, 60, 0, Kind.CROP_RIPE);
+        assertEquals('.', at(4, 0), "three down is outside the window");
+    }
+
+    @Test
     void ripeAtMaxAge() {
         assertEquals(Kind.CROP_GROWING, WorldMap.crop(0, 7));
         assertEquals(Kind.CROP_GROWING, WorldMap.crop(2, 3), "beetroot and nether wart top out at 3");
