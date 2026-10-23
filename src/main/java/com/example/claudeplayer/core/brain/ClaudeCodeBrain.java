@@ -68,11 +68,13 @@ public final class ClaudeCodeBrain implements Brain {
     private final ClaudeCodeEnv env;
     private final ClaudeCodeSessions sessions;
     private final AtomicLong replies = new AtomicLong();
+    private final UsageLedger ledger;
 
     /** {@code workDir} must sit outside any project, so Claude Code finds no CLAUDE.md to load. */
-    public ClaudeCodeBrain(Settings settings, Path workDir) {
+    public ClaudeCodeBrain(Settings settings, Path workDir, UsageLedger ledger) {
         this.settings = settings;
         this.workDir = workDir;
+        this.ledger = ledger;
         this.env = new ClaudeCodeEnv(workDir);
         env.killLeftovers();
         this.sessions = new ClaudeCodeSessions(env, settings.claudeCodeIdleMinutes() * 60_000L, System::currentTimeMillis, true);
@@ -80,8 +82,23 @@ public final class ClaudeCodeBrain implements Brain {
 
     /** Tests: scripted processes, a fake clock, idle stops only when the test sweeps, and kills run inline. */
     ClaudeCodeBrain(Settings settings, Path workDir, ClaudeCodeSessions.Launcher launcher, LongSupplier clock) {
+        this(settings, workDir, launcher, clock, new UsageLedger(settings.usageWarnAt(), new UsageLedger.Store() {
+            @Override
+            public JsonObject load() {
+                return new JsonObject();
+            }
+
+            @Override
+            public void save(JsonObject state) {}
+        }, clock));
+    }
+
+    /** As above, with the ledger the test reads back. */
+    ClaudeCodeBrain(Settings settings, Path workDir, ClaudeCodeSessions.Launcher launcher, LongSupplier clock,
+                    UsageLedger ledger) {
         this.settings = settings;
         this.workDir = workDir;
+        this.ledger = ledger;
         this.env = new ClaudeCodeEnv(workDir);
         this.sessions = new ClaudeCodeSessions(launcher, settings.claudeCodeIdleMinutes() * 60_000L, clock, false, Runnable::run);
     }
@@ -90,6 +107,7 @@ public final class ClaudeCodeBrain implements Brain {
     public Reply send(Request request) throws BrainException {
         List<String> command = streamCommand(request.system(), request.tools());
         JsonArray messages = request.messages();
+        if (messages.size() == 1) ledger.startOrder(); // a transcript's first turn is a new order
         long started = System.nanoTime();
         ClaudeCodeSessions.Session session = sessions.claimCurrent();
         int from = session == null ? -1 : continues(session.seen, messages);
@@ -104,11 +122,18 @@ public final class ClaudeCodeBrain implements Brain {
         sessions.refill(command); // the next spare starts while the model thinks
         Reply reply;
         try {
-            reply = parseResult(session.await(settings.claudeCodeTimeoutSeconds() * 1000L), "cc" + replies.incrementAndGet() + "_");
+            String result;
+            try {
+                result = session.await(settings.claudeCodeTimeoutSeconds() * 1000L);
+            } finally {
+                feedLedger(); // the event comes before the result, and matters most when the turn fails
+            }
+            reply = parseResult(result, "cc" + replies.incrementAndGet() + "_");
         } catch (BrainException e) {
             sessions.end(session);
-            throw e;
+            throw atLimit(e);
         }
+        ledger.onTokens(reply.usage().total());
         if (reply.toolCalls().isEmpty()) {
             sessions.end(session); // end_turn: the order is over
         } else {
@@ -124,6 +149,28 @@ public final class ClaudeCodeBrain implements Brain {
                 reply.stopReason(), reply.toolCalls().size(), (System.nanoTime() - started) / 1_000_000, u.input(),
                 u.output(), u.cacheWrite(), u.cacheRead());
         return reply;
+    }
+
+    /** Hands the ledger the rate limit event that arrived this turn, if one did. */
+    private void feedLedger() {
+        String event = sessions.takeRateLimitEvent();
+        if (event != null) ledger.onRateLimitEvent(event);
+    }
+
+    /**
+     * A failed turn while the subscription is used up says so, with the reset time. There is no fallback to an API
+     * key. Failures that aren't the model's (no CLI, a reset, a crash) keep their own message.
+     */
+    private BrainException atLimit(BrainException e) {
+        switch (e.kind()) {
+            case INTERRUPTED, NO_CLI, INTERNAL, LIMIT -> { return e; }
+            default -> { }
+        }
+        if (!ledger.limitReached()) return e;
+        String resets = ledger.resetsText();
+        LOG.info("claude code limit reached (turn failed with {})", e.kind());
+        return new BrainException(BrainException.Kind.LIMIT, e.status(),
+                "Claude Code limit reached" + (resets.isEmpty() ? "" : ", resets " + resets), e.requestId());
     }
 
     /** Kills the current order's session (the spare stays). Only destroys processes, so any thread may call it. */

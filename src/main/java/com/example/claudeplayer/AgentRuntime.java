@@ -15,8 +15,10 @@ import com.example.claudeplayer.core.brain.Brain;
 import com.example.claudeplayer.core.brain.BrainException;
 import com.example.claudeplayer.core.brain.ClaudeCodeBrain;
 import com.example.claudeplayer.core.brain.DemoBrain;
+import com.example.claudeplayer.core.brain.JsonUsageFile;
 import com.example.claudeplayer.core.brain.PromptBuilder;
 import com.example.claudeplayer.core.brain.ToolSchemas;
+import com.example.claudeplayer.core.brain.UsageLedger;
 import com.example.claudeplayer.core.chat.ChatIntake;
 import com.example.claudeplayer.core.chat.ChatLines;
 import com.example.claudeplayer.core.chat.Conversation;
@@ -76,6 +78,7 @@ public final class AgentRuntime {
     private final ExecutorService brainThread;
     private final ApiBrain brain;
     private final ClaudeCodeBrain claudeCode;
+    private final UsageLedger usage;
     private final AgentLoop loop;
     private final Path keyFile;
     private volatile boolean closed;
@@ -106,8 +109,10 @@ public final class AgentRuntime {
         Path configDir = FMLPaths.CONFIGDIR.get();
         this.keyFile = configDir.resolve("claudeplayer.key");
         this.brain = new ApiBrain(settings, () -> ApiBrain.resolveKey(settings.apiKeyEnv(), keyFile));
+        this.usage = new UsageLedger(settings.usageWarnAt(), new JsonUsageFile(configDir.resolve("claudeplayer_usage.json")),
+                System::currentTimeMillis);
         // Under the system temp dir, outside any project, so Claude Code loads no CLAUDE.md.
-        this.claudeCode = new ClaudeCodeBrain(settings, Path.of(System.getProperty("java.io.tmpdir"), "claudeplayer-claude-code"));
+        this.claudeCode = new ClaudeCodeBrain(settings, Path.of(System.getProperty("java.io.tmpdir"), "claudeplayer-claude-code"), usage);
         PromptBuilder prompts = new PromptBuilder(settings,
                 PromptBuilder.loadTemplate(configDir.resolve("claudeplayer_system_prompt.md")));
         Brain backend = settings.usesApi() ? brain : claudeCode;
@@ -144,6 +149,7 @@ public final class AgentRuntime {
         hunger.tick();
         queue.tick();
         loop.tick();
+        for (String warning : usage.drainWarnings()) noticeAllowlisted(warning);
         if (quickstartFor != null && ticks >= quickstartAt) {
             ServerPlayer player = quickstartFor;
             quickstartFor = null;
@@ -207,6 +213,15 @@ public final class AgentRuntime {
         if (text == null || text.isEmpty()) return;
         server.getPlayerList().broadcastSystemMessage(
                 Component.literal("[Claude Player] " + text).withStyle(ChatFormatting.GRAY), false);
+    }
+
+    /** A gray system line for the online players who can give orders; nobody else needs to hear about usage. */
+    private void noticeAllowlisted(String text) {
+        List<String> allowlist = Config.allowlist();
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            if (player instanceof AgentPlayer || !ChatIntake.allowed(player.getGameProfile().getName(), allowlist)) continue;
+            player.sendSystemMessage(Component.literal("[Claude Player] " + text).withStyle(ChatFormatting.GRAY));
+        }
     }
 
     /** The body died: the loop stops and waits for a respawn order (death is accepted, D3). */
@@ -301,10 +316,15 @@ public final class AgentRuntime {
     public String status() {
         String state = body.alive() ? "in the world" : body.dead() ? "dead" : "not spawned";
         CautionLevel l = level();
-        return String.format(Locale.ROOT, "%s is %s | caution %d (%s) | %s | %s | queue: %s, %d waiting | memory: %d short, %d long | %d calls, %d tokens this session",
+        String line = String.format(Locale.ROOT, "%s is %s | caution %d (%s) | %s | %s | queue: %s, %d waiting | memory: %d short, %d long | %d calls, %d tokens this session",
                 settings.bodyName(), state, l.number(), l.title, loop.status(), loop.autonomyStatus(),
                 Objects.requireNonNullElse(queue.runningTool(), "idle"), queue.waitingCount(),
                 memory.shortTerm().size(), memory.longTerm().size(), guardrails.callsMade(), guardrails.tokensUsed());
+        StringBuilder b = new StringBuilder(line);
+        if (!settings.usesApi()) {
+            for (String usageLine : usage.statusLines()) b.append("\nClaude Code ").append(usageLine);
+        }
+        return b.toString();
     }
 
     public MinecraftServer server() {

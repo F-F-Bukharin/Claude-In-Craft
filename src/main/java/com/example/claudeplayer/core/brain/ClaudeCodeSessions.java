@@ -125,7 +125,10 @@ final class ClaudeCodeSessions {
                     }
                     String type = type(line);
                     if (type.equals("result")) return line;
-                    if (type.equals("rate_limit_event")) rateLimitEvent = line;
+                    if (type.equals("rate_limit_event")) {
+                        rateLimitEvent = line;
+                        freshRateLimitEvent.set(line);
+                    }
                 }
             } catch (InterruptedException e) {
                 end(this);
@@ -158,6 +161,7 @@ final class ClaudeCodeSessions {
     private int resets; // bumped by every endCurrent(), so a take() that is still starting notices it
     private ScheduledExecutorService sweeper;
     private volatile String rateLimitEvent;
+    private final AtomicReference<String> freshRateLimitEvent = new AtomicReference<>();
 
     /** {@code sweepInBackground} false leaves idle stops to whoever calls {@link #sweep} (tests). Kills run on daemon threads. */
     ClaudeCodeSessions(Launcher launcher, long idleMillis, LongSupplier clock, boolean sweepInBackground) {
@@ -307,6 +311,11 @@ final class ClaudeCodeSessions {
     /** The last {@code rate_limit_event} line seen (Claude Code sends one on a session's first turn), or null. */
     String rateLimitEvent() {
         return rateLimitEvent;
+    }
+
+    /** The {@code rate_limit_event} line that arrived since the last call, or null. Taking it clears it. */
+    String takeRateLimitEvent() {
+        return freshRateLimitEvent.getAndSet(null);
     }
 
     private Session launch(List<String> command) throws IOException {

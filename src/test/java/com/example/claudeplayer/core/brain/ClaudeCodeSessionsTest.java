@@ -45,16 +45,44 @@ class ClaudeCodeSessionsTest {
     private final AtomicLong now = new AtomicLong(1_000_000);
 
     private ClaudeCodeBrain brain(int timeoutSeconds) {
+        return brain(timeoutSeconds, null);
+    }
+
+    private ClaudeCodeBrain brain(int timeoutSeconds, UsageLedger ledger) {
         Settings s = Settings.of(b -> {
             b.claudeCodePath = "claude-fake";
             b.claudeCodeTimeoutSeconds = timeoutSeconds;
         });
-        return new ClaudeCodeBrain(s, dir, command -> {
+        ClaudeCodeSessions.Launcher launcher = command -> {
             FakeProc p = new FakeProc();
             procs.add(p);
             return p;
+        };
+        return ledger == null ? new ClaudeCodeBrain(s, dir, launcher, now::get)
+                : new ClaudeCodeBrain(s, dir, launcher, now::get, ledger);
+    }
+
+    private UsageLedger ledger() {
+        return new UsageLedger(List.of(0.8, 0.9), new UsageLedger.Store() {
+            @Override
+            public JsonObject load() {
+                return new JsonObject();
+            }
+
+            @Override
+            public void save(JsonObject state) {}
         }, now::get);
     }
+
+    /** A rate_limit_event line; resets are epoch seconds, well after the fake clock. */
+    private static String limitLine(String status, double fiveHour, double sevenDay) {
+        return "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"" + status
+                + "\",\"unifiedWindows\":{\"five_hour\":{\"utilization\":" + fiveHour + ",\"resetsAt\":20000},"
+                + "\"seven_day\":{\"utilization\":" + sevenDay + ",\"resetsAt\":400000}}}}";
+    }
+
+    private static final String LIMIT_ERROR = "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true,"
+            + "\"api_error_status\":429,\"result\":\"usage limit reached\"}";
 
     @Test
     void openingTakesTheSpareAndStartsANewOne() throws BrainException {
@@ -71,6 +99,73 @@ class ClaudeCodeSessionsTest {
         assertEquals(2, procs.size(), "a new spare took its place");
         assertTrue(procs.get(1).written.isEmpty() && procs.get(1).alive);
         assertEquals(RATE, brain.rateLimitEvent());
+    }
+
+    @Test
+    void aTurnsRateLimitEventAndTokensFeedTheLedger() throws BrainException {
+        UsageLedger ledger = ledger();
+        ClaudeCodeBrain brain = brain(5, ledger);
+        script.add(List.of(limitLine("allowed_warning", 0.5, 0.85), result(1, "[" + MOVE + "]")));
+        JsonArray messages = opening();
+        Brain.Reply first = brain.send(request(messages));
+
+        assertEquals(0.85, ledger.utilization(), 1e-9);
+        assertEquals(1, ledger.drainWarnings().size(), "7-day crossed 80%");
+        assertTrue(ledger.statusLines().contains("tokens: order 44, today 44"), ledger.statusLines().toString());
+
+        // A later turn brings no new event: the old one is not fed twice, but its tokens are added.
+        script.add(List.of(result(1, "[" + MOVE + "]")));
+        brain.send(request(next(messages, first, "update two")));
+        assertTrue(ledger.drainWarnings().isEmpty());
+        assertTrue(ledger.statusLines().contains("tokens: order 88, today 88"), ledger.statusLines().toString());
+    }
+
+    @Test
+    void aNewOrdersTranscriptStartsItsTokenCountOver() throws BrainException {
+        UsageLedger ledger = ledger();
+        ClaudeCodeBrain brain = brain(5, ledger);
+        script.add(List.of(result(1, "[]")));
+        brain.send(request(opening()));
+        script.add(List.of(result(1, "[]")));
+        brain.send(request(opening()));
+        assertTrue(ledger.statusLines().contains("tokens: order 44, today 88"), ledger.statusLines().toString());
+    }
+
+    @Test
+    void aFailedTurnAtTheLimitSaysSoWithTheResetTime() {
+        UsageLedger ledger = ledger();
+        ClaudeCodeBrain brain = brain(5, ledger);
+        script.add(List.of(limitLine("rejected", 0.4, 1.0), LIMIT_ERROR));
+
+        BrainException e = assertThrows(BrainException.class, () -> brain.send(request(opening())));
+
+        assertEquals(BrainException.Kind.LIMIT, e.kind());
+        assertFalse(e.kind().retryable);
+        assertEquals("Claude Code limit reached, resets " + ledger.resetsText(), e.chatMessage("ANTHROPIC_API_KEY"));
+        assertFalse(ledger.resetsText().isEmpty());
+        assertFalse(procs.get(0).alive, "the failed session is ended");
+    }
+
+    @Test
+    void theLimitMessageDropsTheResetWhenNoneIsKnown() {
+        UsageLedger ledger = ledger();
+        ledger.onRateLimitEvent("{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"rejected\"}}");
+        ClaudeCodeBrain brain = brain(5, ledger);
+        script.add(List.of(LIMIT_ERROR));
+
+        BrainException e = assertThrows(BrainException.class, () -> brain.send(request(opening())));
+
+        assertEquals("Claude Code limit reached", e.chatMessage("x"));
+    }
+
+    @Test
+    void aFailureBelowTheLimitStaysItself() {
+        ClaudeCodeBrain brain = brain(5, ledger());
+        script.add(List.of(limitLine("allowed", 0.2, 0.3), LIMIT_ERROR));
+
+        BrainException e = assertThrows(BrainException.class, () -> brain.send(request(opening())));
+
+        assertEquals(BrainException.Kind.RATE_LIMITED, e.kind());
     }
 
     @Test
