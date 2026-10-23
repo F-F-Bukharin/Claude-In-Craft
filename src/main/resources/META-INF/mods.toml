@@ -8,7 +8,7 @@ version="${mod_version}"
 displayName="${mod_name}"
 authors="${mod_authors}"
 description='''${mod_description}'''
-# Server-side only: adds no blocks, items or entity types, so clients without the mod can join.
+# Adds no blocks, items or entity types, so clients without the mod can join. Its one client screen (the Brain panel) is optional.
 displayTest="IGNORE_ALL_VERSION"
 
 [[dependencies.${mod_id}]]

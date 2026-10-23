@@ -64,11 +64,12 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
    - A slab, stair or carpet walkway over a drop can read as `hazard_drop` at low HP.
    - A hit from beyond `hostile_range` (a ghast) builds a flee that scraps routine work, then returns `ok:no_threats`.
    - FIXED 23 Oct: `"prio": null` now counts as absent (test `nullPrioMeansTheDefault`).
-9. Claude Brain screen, in game (merged into dev). Right-click the body.
-   - B1. As an allowlisted player or an op, right-click Claude. A chest opens, titled `Claude Brain: order from <you>: "..."`. The running action comes first (lime dye), then the waiting ones (paper), each named by its tool and with its priority.
+9. Brain panel, in game (merged into dev, not pushed). Right-click the body.
+   - B1. As an allowlisted player or an op, right-click Claude. A small panel opens: the order header (`order from <you>: "..."`, wrapped), then the running action, the waiting ones with their prio, and paused ones marked. `Nothing queued` when the queue is empty.
    - B2. As anyone else, right-click Claude. Nothing happens.
-   - B3. While a level 3 flee runs, open the chest. The flee shows as running, and any paused level 2 action shows as paused (clock, "resumes after a reflex"). Clicks in the chest move nothing.
-   - Watch in B1: the title can run past the chest's edge; the order text is cut at 30 characters.
+   - B3. While a level 3 flee runs, the panel shows the flee as running and any paused level 2 action as paused. It refreshes about once a second, so watch an action start and finish.
+   - B4. Esc closes the panel, and the game keeps running behind it.
+   - Watch in B1: a very long order makes a tall panel; check that it fits a small window.
 10. Map view and short chat (23 Oct, F reported long chat and a blind Claude). Every world_state now carries `map` (17 by 17, at feet level) and `map_origin`. The `look` tool gives up to 49 by 49. Chat is capped at two lines of 100 characters in code, and the prompt asks for 15 words at most.
    - V1. `claude: what do you see?` Its answer should match the terrain around it: trees, water, walls.
    - V2. Build a wall of 2 blocks with one gap, stand behind it, and say `claude: come here`. It should route through the gap.

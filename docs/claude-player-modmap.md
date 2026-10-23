@@ -22,7 +22,7 @@ Paths are under `src/main/java/com/example/claudeplayer/` unless noted. Everythi
 
 | Path | What |
 |---|---|
-| `ClaudePlayerMod.java` | @Mod entry: registers the config |
+| `ClaudePlayerMod.java` | @Mod entry: registers the config and the Brain panel's channel |
 | `Config.java` | ForgeConfigSpec for every key in KEYS, turned into `core/Settings` |
 | `AgentRuntime.java` | Per-server wiring (settings, guardrails, memory, body, queue, brain, loop), chat routing, `say` and `notice` |
 | `core/Settings.java` | Immutable settings; the defaults live in its Builder |
@@ -61,13 +61,15 @@ Paths are under `src/main/java/com/example/claudeplayer/` unless noted. Everythi
 | `nav/Navigator.java` | Steers the body along paths planned by an off-world zombie |
 | `nav/MoveHandle.java`, `nav/FollowHandle.java` | move_to (refuses lava, fire and deadly drops) and follow_player |
 | `nav/EscapePlanner.java` | "Does a retreat path exist?" for the policy, and where `flee` runs to: straight away from the nearest threat first |
-| `event/ServerEvents.java` | Forge event wiring; right-click on the body opens the Brain screen |
+| `event/ServerEvents.java` | Forge event wiring; right-click on the body sends the Brain panel |
 | `event/DamageWatcher.java` | Threat scan every 2 ticks (3D, `hostile_range`), the quiet chase re-flee, and hits: reflexes and interrupts; help calls at level 5 |
 | `command/CpCommands.java` | `/cp` subcommands |
-| `gui/BrainMenu.java` | Claude Brain screen: a read-only chest of the queue (running, then waiting; paused marked), opened by right-clicking the body. Server side only |
+| `core/brain/BrainPanel.java` | Pure lines for the Brain panel: the order header, the queue (running, waiting, paused), Nothing queued, +N more past 15 |
+| `net/BrainNetwork.java` | The optional Brain channel: the panel packet (open or refresh) to the client, and the client's refresh request once a second; `sendPanel` and `mayOpen` |
+| `client/BrainScreen.java` | Client-only Screen for the Brain panel: wraps and draws the lines, refreshes about once a second, Esc closes; not a pause |
 | `src/main/resources/claudeplayer/system_prompt.md` | System prompt; `config/claudeplayer_system_prompt.md` overrides it |
 
-Tests live in `src/test/java/com/example/claudeplayer/`: PurityTest; `core/act/ActionQueueTest`; `core/brain/` AgentLoopTest, ApiBrainTest, ToolParseTest; `core/chat/ChatIntakeTest`; `core/memory/MemoryTest`; `core/safety/` CautionPolicyTest, ReflexesTest and SafetyTest (Guardrails, WorldText, ThreatTracker).
+Tests live in `src/test/java/com/example/claudeplayer/`: PurityTest; `core/act/ActionQueueTest`; `core/brain/` AgentLoopTest, ApiBrainTest, BrainPanelTest, ToolParseTest; `core/chat/ChatIntakeTest`; `core/memory/MemoryTest`; `core/safety/` CautionPolicyTest, ReflexesTest and SafetyTest (Guardrails, WorldText, ThreatTracker).
 
 ## SYSTEMS
 
@@ -244,4 +246,5 @@ COMPILED means the code compiles against forge-1.20.1-47.4.28 with official mapp
 - 22 Oct 2026: Claude Brain screen built and merged into dev: right-click the body for a read-only chest of the queue, for the players who may use `/cp`. `./gradlew build` is green with 127 unit tests. Not in game yet.
 - 22 Oct 2026: playtest 1 fixes on dev: player positions and nearby points of interest in the snapshot, replies up to 600 characters, a 16-block straight-line reflex radius, a quiet 2 s re-flee while chased, `ender_chest_personal`, cache reads counted at a tenth for the token cap, and prompt rules. `./gradlew build` is green with 134 unit tests. Not checked in game yet.
 - 23 Oct 2026: origin/dev (skills, map view, `ChatLines`, warm sessions, autonomy, gather and dig) merged with the playtest 1 fixes. F's `ChatLines` replaced the 600-character replies; `points` and player `pos` stay beside `map`. `./gradlew build` is green with 206 unit tests. Not checked in game yet.
+- 23 Oct 2026: the Brain chest is replaced by a text panel (F's playtest). Right-click the body for the order header (wrapped, never cut), the running action, the waiting ones with their prio, paused ones marked, and Nothing queued when idle. It refreshes about once a second while open. Merged into dev, not pushed. `./gradlew build` is green with 214 unit tests. Not checked in game yet.
 - Next: F runs the Phase 0 checks against this code. Spike A is `/cp spawn` plus `C come here`; Spike B is `/cp keycheck` with a bad key. Details in the handoff.
