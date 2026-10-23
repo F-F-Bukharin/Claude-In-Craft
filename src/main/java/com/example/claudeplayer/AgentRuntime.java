@@ -113,7 +113,7 @@ public final class AgentRuntime {
         Brain backend = settings.usesApi() ? brain : claudeCode;
         ToolSchemas tools = new ToolSchemas(settings.toolPhase());
         this.loop = new AgentLoop(settings, new DemoBrain(backend), brainThread, this::onMainThread, queue, guardrails, prompts,
-                tools, memory, new LoopHost());
+                tools, memory, new LoopHost(), System::currentTimeMillis);
         if (!settings.usesApi()) brainThread.execute(() -> claudeCode.prewarm(prompts.system(), tools.definitions()));
         LOG.info("Claude Player ready: brain {}, model {}, caution level {}, {} allowlisted, {} long-term memories",
                 settings.brain(), settings.model(), level().number(), Config.allowlist().size(), memory.longTerm().size());
@@ -168,14 +168,17 @@ public final class AgentRuntime {
             notice(body.respawn());
         } else if (intake instanceof ChatIntake.SetLevel set) {
             setLevel(set.level(), set.player());
+        } else if (intake instanceof ChatIntake.Autonomy auto) {
+            autonomy(auto.player(), auto.on());
         }
     }
 
-    /** Kill switch, from {@code C stop} or {@code /cp stop}. */
+    /** Kill switch, from {@code C stop} or {@code /cp stop}. Ends autonomy too. */
     public void halt() {
+        boolean wasAutonomous = loop.autonomous();
         loop.stop();
         navigator.stop(body.player());
-        if (body.alive()) say("Stopping.");
+        if (body.alive()) say(wasAutonomous ? "Stopping. Autonomy off." : "Stopping.");
     }
 
     public String setLevel(CautionLevel level, String by) {
@@ -208,8 +211,10 @@ public final class AgentRuntime {
 
     /** The body died: the loop stops and waits for a respawn order (death is accepted, D3). */
     public void onBodyDied(String cause) {
+        boolean wasAutonomous = loop.autonomous();
         loop.bodyGone();
-        say("I died (" + cause + "). Respawn me with " + settings.trigger() + " respawn or /cp respawn.");
+        say("I died (" + cause + "). Respawn me with " + settings.trigger() + " respawn or /cp respawn."
+                + (wasAutonomous ? " Autonomy off." : ""));
     }
 
     /** /cp keycheck, on the brain thread: a free count_tokens call (api), or one tiny Claude Code call. */
@@ -296,8 +301,8 @@ public final class AgentRuntime {
     public String status() {
         String state = body.alive() ? "in the world" : body.dead() ? "dead" : "not spawned";
         CautionLevel l = level();
-        return String.format(Locale.ROOT, "%s is %s | caution %d (%s) | %s | queue: %s, %d waiting | memory: %d short, %d long | %d calls, %d tokens this session",
-                settings.bodyName(), state, l.number(), l.title, loop.status(),
+        return String.format(Locale.ROOT, "%s is %s | caution %d (%s) | %s | %s | queue: %s, %d waiting | memory: %d short, %d long | %d calls, %d tokens this session",
+                settings.bodyName(), state, l.number(), l.title, loop.status(), loop.autonomyStatus(),
                 Objects.requireNonNullElse(queue.runningTool(), "idle"), queue.waitingCount(),
                 memory.shortTerm().size(), memory.longTerm().size(), guardrails.callsMade(), guardrails.tokensUsed());
     }
@@ -351,13 +356,28 @@ public final class AgentRuntime {
     }
 
     private void order(String player, String text) {
-        if (!body.alive()) {
-            notice(body.dead()
-                    ? settings.bodyName() + " is dead. Respawn with " + settings.trigger() + " respawn or /cp respawn."
-                    : settings.bodyName() + " isn't spawned. Use /cp spawn.");
+        if (bodyMissing()) return;
+        loop.startOrder(player, text);
+    }
+
+    /** {@code C go do your thing} / {@code C auto off}. Off leaves the kill switch alone and a running order too. */
+    private void autonomy(String player, boolean on) {
+        if (!on) {
+            loop.stopAutonomy();
+            say("Autonomy off.");
             return;
         }
-        loop.startOrder(player, text);
+        if (bodyMissing()) return;
+        loop.startAutonomy(player);
+        say("Going solo. Call me with " + settings.trigger() + " <order>.");
+    }
+
+    private boolean bodyMissing() {
+        if (body.alive()) return false;
+        notice(body.dead()
+                ? settings.bodyName() + " is dead. Respawn with " + settings.trigger() + " respawn or /cp respawn."
+                : settings.bodyName() + " isn't spawned. Use /cp spawn.");
+        return true;
     }
 
     // server.tell always queues (execute would run inline on the server thread), and closed drops late results.

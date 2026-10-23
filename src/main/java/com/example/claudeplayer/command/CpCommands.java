@@ -136,6 +136,8 @@ public final class CpCommands {
         section(help, "Talk to " + name + " (allowlisted players)");
         entry(help, t + " come here", t + " ", "any order, in plain words");
         entry(help, t + " stop", t + " stop", "halt everything now");
+        entry(help, t + " go do your thing", t + " go do your thing", "go solo: mine, craft, smelt, survive; orders still work");
+        entry(help, t + " auto off", t + " auto off", "end autonomy without the kill switch");
         entry(help, t + " respawn", t + " respawn", "bring " + name + " back after a death");
         entry(help, t + " level <0-5>", t + " level ", "caution: 0 guns blazing ... 3 reasonable ... 5 innocent");
         entry(help, t + " demo", t + " demo", "walk a small square, no API key needed");

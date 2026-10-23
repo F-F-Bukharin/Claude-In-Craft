@@ -63,6 +63,38 @@ class ChatIntakeTest {
     }
 
     @Test
+    void autonomyPhrasesTurnItOnAndTrailingWordsAreFine() {
+        ChatIntake.Autonomy on = new ChatIntake.Autonomy("F", true);
+        assertEquals(on, c("C go do your thing, I'll call you when you're needed"));
+        assertEquals(on, c("C Do your thing!"));
+        assertEquals(on, c("C go auto"));
+        assertEquals(on, c("C auto"));
+        assertEquals(on, c("C autonomous"));
+        assertEquals(on, c("C free-roam for a while"));
+        assertEquals(on, c("Claude: survive"));
+        assertInstanceOf(ChatIntake.Ignore.class, classify("Stranger", "claude: go do your thing"));
+    }
+
+    @Test
+    void autoOffEndsAutonomyWithoutTheKillSwitchAndStopStillHalts() {
+        ChatIntake.Autonomy off = new ChatIntake.Autonomy("F", false);
+        assertEquals(off, c("C auto off"));
+        assertEquals(off, c("C stop auto."));
+        assertEquals(off, c("C: Auto off please"));
+        assertInstanceOf(ChatIntake.Stop.class, c("C stop"));
+        assertInstanceOf(ChatIntake.Stop.class, c("C stop autonomy"));
+    }
+
+    @Test
+    void ordinaryOrdersStayOrders() {
+        assertEquals(new ChatIntake.Order("F", "go to the house"), c("C go to the house"));
+        assertEquals(new ChatIntake.Order("F", "survey the area"), c("C survey the area"));
+        assertEquals(new ChatIntake.Order("F", "automate the farm"), c("C automate the farm"));
+        assertEquals(new ChatIntake.Order("F", "do your homework"), c("C do your homework"));
+        assertEquals(new ChatIntake.Order("F", "tell me about survival"), c("C tell me about survival"));
+    }
+
+    @Test
     void aLetterTriggerIsAWholeWordInItsOwnCase() {
         assertInstanceOf(ChatIntake.Ignore.class, c("Cool, nice house"));
         assertInstanceOf(ChatIntake.Ignore.class, c("c come here"), "lowercase c is ordinary chat");
