@@ -70,9 +70,6 @@ public final class Config {
     private static final ForgeConfigSpec.LongValue SESSION_TOKEN_CAP = B
             .comment("Model calls stop once this many tokens were used since the server started.")
             .defineInRange("session_token_cap", D.sessionTokenCap(), 1_000L, Long.MAX_VALUE);
-    private static final ForgeConfigSpec.IntValue BREAK_RADIUS = B
-            .comment("Blocks may be broken or placed only within this distance of home.")
-            .defineInRange("break_radius", D.breakRadius(), 0, 1024);
     private static final ForgeConfigSpec.IntValue HOSTILE_RANGE = B
             .defineInRange("hostile_range", D.hostileRange(), 2, 64);
     private static final ForgeConfigSpec.IntValue ESCAPE_DISTANCE = B
@@ -80,8 +77,8 @@ public final class Config {
     private static final ForgeConfigSpec.IntValue ESCAPE_MAX_STEPS = B
             .defineInRange("escape_max_steps", D.escapeMaxSteps(), 2, 64);
     private static final ForgeConfigSpec.IntValue TOOL_PHASE = B
-            .comment("Highest plan phase whose tools Claude may call: 2 = v1 tools, memory and inspect_container;",
-                    "3 adds follow_player; 4 adds attack_entity; 6 adds the v2 world tools (stubs for now).")
+            .comment("Highest plan phase whose tools Claude may call: 2 = v1 tools, memory, inspect_container",
+                    "and the block tools (mine_block, place_block, equip); 3 adds follow_player; 4 adds attack_entity; 6 adds craft (a stub for now).")
             .defineInRange("tool_phase", D.toolPhase(), 1, 6);
     private static final ForgeConfigSpec.BooleanValue IDLE_REACTIONS = B
             .comment("Let Claude react to threats when no order is running. Costs model calls.")
@@ -126,7 +123,6 @@ public final class Config {
             b.maxSteps = MAX_STEPS.get();
             b.maxCallsPerMinute = MAX_CALLS_PER_MINUTE.get();
             b.sessionTokenCap = SESSION_TOKEN_CAP.get();
-            b.breakRadius = BREAK_RADIUS.get();
             b.hostileRange = HOSTILE_RANGE.get();
             b.escapeDistance = ESCAPE_DISTANCE.get();
             b.escapeMaxSteps = ESCAPE_MAX_STEPS.get();

@@ -71,22 +71,22 @@ public final class ToolSchemas {
         add("inspect_container", 2, "Look inside a chest, barrel or other container within 6 blocks. Returns its contents and notes them in short-term memory.",
                 in -> new Action.InspectContainer(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000)),
                 integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."));
-        // v2
+        // v2 (the block tools are enabled at phase 2)
         add("follow_player", 3, "Follow a player, staying within about 3 blocks, for 1 to 60 seconds. Holds the queue.",
                 in -> new Action.FollowPlayer(in.text("name", 16), in.number("seconds", 1, 60)),
                 text("name", "The player's name, as in world_state.players."), number("seconds", "How long, 1 to 60."));
         add("attack_entity", 4, "Attack one entity by its id from world_state.hostiles. Your caution level decides whether that's allowed; a denial says why.",
                 in -> new Action.AttackEntity(in.integer("entity_id", 0, Integer.MAX_VALUE)),
                 integer("entity_id", "The entity's id."));
-        add("mine_block", 6, "Break the block at a position. Only inside your work area around home.",
+        add("mine_block", 2, "Dig out the block at a position within 4.5 blocks of your eyes, with the best tool you carry, then pick up what drops. Holds the queue while digging. Natural blocks (logs, leaves, stone, dirt, sand, gravel, ores, plants) can be mined anywhere; anything else only if you placed it. Fails with out_of_reach (walk closer first), no_block, too_slow (needs a better tool) or block_changed; denied:protected_block or denied:unbreakable.",
                 in -> new Action.MineBlock(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000)),
                 integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."));
-        add("place_block", 6, "Place a block from your inventory at a position. Only inside your work area around home.",
+        add("place_block", 2, "Place a block from your inventory at a position within 4.5 blocks of your eyes, against a solid neighbour. Fails with missing_item, not_a_block, out_of_reach, occupied, no_support or blocked (something stands there).",
                 in -> new Action.PlaceBlock(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000), in.text("item", 64)),
-                integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."), text("item", "Item id, for example minecraft:cobblestone."));
-        add("equip", 6, "Move an item from your inventory to your main hand.",
+                integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."), text("item", "Item id as in your inventory, for example cobblestone."));
+        add("equip", 2, "Hold an item from your inventory in your main hand; armor goes on instead. Nothing is dropped: whatever was there swaps into its slot. Fails with missing_item.",
                 in -> new Action.Equip(in.text("item", 64)),
-                text("item", "Item id, for example minecraft:stone_sword."));
+                text("item", "Item id as in your inventory, for example stone_sword or iron_helmet."));
         add("craft", 6, "Craft an item from what's in your inventory.",
                 in -> new Action.Craft(in.text("item", 64), in.integer("count", 1, 64)),
                 text("item", "Item id to make."), integer("count", "How many, 1 to 64."));
