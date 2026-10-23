@@ -25,7 +25,7 @@ public record StateSnapshot(
 
     public record Mob(int id, String type, String name, double distance, float health, Vec pos) {}
 
-    public record Seen(String name, double distance) {}
+    public record Seen(String name, double distance, Vec pos) {}
 
     /** No body in the world: never spawned, despawned, or dead. */
     public static StateSnapshot absent(boolean dead, int level, Vec home) {
@@ -74,6 +74,7 @@ public record StateSnapshot(
             JsonObject j = new JsonObject();
             j.addProperty("name", p.name());
             j.addProperty("dist", round(p.distance()));
+            j.add("pos", vec(p.pos()));
             seen.add(j);
         }
         o.add("players", seen);

@@ -55,7 +55,7 @@ public final class SnapshotBuilder {
                 .toList();
         List<StateSnapshot.Seen> players = world.players().stream().filter(o -> o != p)
                 .sorted(Comparator.comparingDouble(p::distanceToSqr)).limit(MAX_PLAYERS)
-                .map(o -> new StateSnapshot.Seen(WorldText.clean(o.getGameProfile().getName(), WorldText.NAME_MAX), p.distanceTo(o)))
+                .map(o -> new StateSnapshot.Seen(WorldText.clean(o.getGameProfile().getName(), WorldText.NAME_MAX), p.distanceTo(o), vec(o.position())))
                 .toList();
         String weather = world.isThundering() ? "thunder" : world.isRaining() ? "rain" : "clear";
         return new StateSnapshot(true, false, vec(p.position()), world.dimension().location().toString(),
