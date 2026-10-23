@@ -1,5 +1,7 @@
 # Claude Player: handoff
 
+**23 Oct 2026, branch `claude/gifted-newton-nrhrer`: start with `docs/claude-player-branch-handoff.md`.** It covers what this branch adds, how it overlaps `dev`, and how to merge the two.
+
 Updated 23 Oct 2026 after piece 4 (usage, caveman, think-harder); first written 22 Oct after the skeleton pass (Opus 5.5). Read this first, then the modmap RULES, then plan §6 and §7.
 
 ## Where things stand
