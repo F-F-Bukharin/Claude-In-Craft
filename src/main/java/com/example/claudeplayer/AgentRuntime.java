@@ -23,11 +23,13 @@ import com.example.claudeplayer.core.brain.UsageLedger;
 import com.example.claudeplayer.core.chat.ChatIntake;
 import com.example.claudeplayer.core.chat.ChatLines;
 import com.example.claudeplayer.core.chat.Conversation;
+import com.example.claudeplayer.core.chat.ThinkHarder;
 import com.example.claudeplayer.core.memory.JsonMemoryFile;
 import com.example.claudeplayer.core.memory.Memory;
 import com.example.claudeplayer.core.memory.MemoryActions;
 import com.example.claudeplayer.core.safety.CautionLevel;
 import com.example.claudeplayer.core.safety.Guardrails;
+import com.example.claudeplayer.core.safety.Reflexes;
 import com.example.claudeplayer.core.safety.WorldText;
 import com.example.claudeplayer.event.DamageWatcher;
 import com.example.claudeplayer.event.HungerWatcher;
@@ -49,6 +51,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.TickTask;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraftforge.fml.loading.FMLPaths;
 import org.slf4j.Logger;
@@ -82,6 +85,8 @@ public final class AgentRuntime {
     private final ClaudeCodeBrain claudeCode;
     private final UsageLedger usage;
     private final Optional<CavemanSkill> caveman;
+    private final ThinkHarder thinkHarder;
+    private String offeredTo; // who the open think-harder offer went to; its order is held in thinkHarder
     private final AgentLoop loop;
     private final Path keyFile;
     private volatile boolean closed;
@@ -94,6 +99,8 @@ public final class AgentRuntime {
         this.server = server;
         this.settings = Config.settings();
         this.guardrails = new Guardrails(settings, System::currentTimeMillis);
+        this.thinkHarder = new ThinkHarder(settings.thinkHarderPhrases(), settings.thinkHarderTimeoutSeconds(),
+                System::currentTimeMillis);
         this.memory = new Memory(settings,
                 new JsonMemoryFile(server.getWorldPath(LevelResource.ROOT).resolve(ClaudePlayerMod.MODID).resolve("memory.json")),
                 System::currentTimeMillis);
@@ -158,6 +165,8 @@ public final class AgentRuntime {
         queue.tick();
         loop.tick();
         for (String warning : usage.drainWarnings()) noticeAllowlisted(warning);
+        String unanswered = thinkHarder.expired(); // no answer in time counts as no
+        if (unanswered != null) order(offeredTo, unanswered, false);
         if (quickstartFor != null && ticks >= quickstartAt) {
             ServerPlayer player = quickstartFor;
             quickstartFor = null;
@@ -175,7 +184,7 @@ public final class AgentRuntime {
         if (ChatIntake.allowed(name, allowlist)) conversation.add(name, raw);
         ChatIntake.Intake intake = ChatIntake.classify(name, raw, settings.triggers(), allowlist);
         if (intake instanceof ChatIntake.Order order) {
-            order(order.player(), order.text());
+            chatOrder(order.player(), order.text());
         } else if (intake instanceof ChatIntake.Stop) {
             halt();
         } else if (intake instanceof ChatIntake.Respawn) {
@@ -189,6 +198,7 @@ public final class AgentRuntime {
 
     /** Kill switch, from {@code C stop} or {@code /cp stop}. Ends autonomy too. */
     public void halt() {
+        thinkHarder.takeOrder(); // a held think-harder order must not start after a stop
         boolean wasAutonomous = loop.autonomous();
         loop.stop();
         navigator.stop(body.player());
@@ -228,8 +238,13 @@ public final class AgentRuntime {
         List<String> allowlist = Config.allowlist();
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             if (player instanceof AgentPlayer || !ChatIntake.allowed(player.getGameProfile().getName(), allowlist)) continue;
-            player.sendSystemMessage(Component.literal("[Claude Player] " + text).withStyle(ChatFormatting.GRAY));
+            noticePlayer(player, text);
         }
+    }
+
+    /** A gray system line for one player. */
+    private static void noticePlayer(ServerPlayer player, String text) {
+        player.sendSystemMessage(Component.literal("[Claude Player] " + text).withStyle(ChatFormatting.GRAY));
     }
 
     /** The body died: the loop stops and waits for a respawn order (death is accepted, D3). */
@@ -398,9 +413,42 @@ public final class AgentRuntime {
         return p.startsWith("~/") || p.startsWith("~\\") ? Path.of(home, p.substring(2)).toString() : p;
     }
 
-    private void order(String player, String text) {
+    /**
+     * An order from chat. A y or n from the player who was offered think-harder answers the offer. An order with a
+     * think-harder phrase runs at normal effort if a hostile is near, else is held while the player is asked. Any
+     * other order replaces a held one.
+     */
+    private void chatOrder(String player, String text) {
+        ThinkHarder.Answer answer = thinkHarder.answer(player, text);
+        if (answer != ThinkHarder.Answer.NONE) {
+            String held = thinkHarder.takeOrder();
+            if (held != null) order(player, held, answer == ThinkHarder.Answer.YES);
+            return;
+        }
+        thinkHarder.takeOrder();
+        if (settings.usesApi() || !thinkHarder.wants(text)) { // the API brain has no max effort to offer
+            order(player, text, false);
+            return;
+        }
         if (bodyMissing()) return;
-        loop.startOrder(player, text);
+        AgentPlayer p = body.player();
+        List<Mob> hostiles = SnapshotBuilder.hostilesXZ(p, settings.hostileRange());
+        if (!hostiles.isEmpty()) {
+            Mob nearest = hostiles.get(0);
+            say(ThinkHarder.gate(SnapshotBuilder.typeId(nearest),
+                    Reflexes.horizontal(nearest.getX() - p.getX(), nearest.getZ() - p.getZ())));
+            order(player, text, false);
+            return;
+        }
+        offeredTo = player;
+        String offer = thinkHarder.offer(player, text, settings.trigger());
+        ServerPlayer target = server.getPlayerList().getPlayerByName(player);
+        if (target != null) noticePlayer(target, offer);
+    }
+
+    private void order(String player, String text, boolean think) {
+        if (bodyMissing()) return;
+        loop.startOrder(player, text, think);
     }
 
     /** {@code C go do your thing} / {@code C auto off}. Off leaves the kill switch alone and a running order too. */

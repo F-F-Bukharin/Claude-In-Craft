@@ -18,11 +18,12 @@ public interface Brain {
     /**
      * {@code messages} is a Messages API transcript; the loop hands each call its own copy. {@code caveman} is true
      * for an order that started with the caveman rules on: a backend that can adds them to its system prompt, and the
-     * value stays the same for every turn of the order.
+     * value stays the same for every turn of the order. {@code effort} is a one-off effort for a think-harder order,
+     * or null for the backend's configured one; {@link ApiBrain} ignores it.
      */
-    record Request(String system, JsonArray tools, JsonArray messages, boolean caveman) {
+    record Request(String system, JsonArray tools, JsonArray messages, boolean caveman, String effort) {
         public Request(String system, JsonArray tools, JsonArray messages) {
-            this(system, tools, messages, false);
+            this(system, tools, messages, false, null);
         }
     }
 

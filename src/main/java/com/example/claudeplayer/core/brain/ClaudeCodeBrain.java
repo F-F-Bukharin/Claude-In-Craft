@@ -106,12 +106,16 @@ public final class ClaudeCodeBrain implements Brain {
 
     @Override
     public Reply send(Request request) throws BrainException {
-        List<String> command = streamCommand(request.system(), request.tools(), request.caveman());
+        // This turn's command carries the order's effort; the spare always starts at the configured one.
+        List<String> command = streamCommand(request.system(), request.tools(), request.caveman(), request.effort());
+        List<String> spareCommand = streamCommand(request.system(), request.tools(), request.caveman(), null);
         JsonArray messages = request.messages();
         if (messages.size() == 1) ledger.startOrder(); // a transcript's first turn is a new order
         long started = System.nanoTime();
         ClaudeCodeSessions.Session session = sessions.claimCurrent();
         int from = session == null ? -1 : continues(session.seen, messages);
+        // A session started with other flags (the effort changed) can't carry on: a new one reads the whole transcript.
+        if (session != null && !session.command.equals(command)) from = -1;
         if (from < 0) {
             if (messages.size() > 1) {
                 LOG.info("claude code session restarts from the whole transcript ({} messages)", messages.size());
@@ -120,7 +124,7 @@ public final class ClaudeCodeBrain implements Brain {
             from = 0;
         }
         session.write(userLine(renderTranscript(messages, from)), settings.claudeCodeTimeoutSeconds() * 1000L);
-        sessions.refill(command); // the next spare starts while the model thinks
+        sessions.refill(spareCommand); // the next spare starts while the model thinks
         Reply reply;
         try {
             String result;
@@ -188,7 +192,7 @@ public final class ClaudeCodeBrain implements Brain {
     /** Starts the spare ahead of the first order, so even that one skips startup. Brain thread. */
     public void prewarm(String system, JsonArray tools) {
         try {
-            sessions.refill(streamCommand(system, tools, false));
+            sessions.refill(streamCommand(system, tools, false, null));
         } catch (BrainException e) {
             LOG.debug("no Claude Code spare: {}", e.getMessage());
         }
@@ -239,6 +243,11 @@ public final class ClaudeCodeBrain implements Brain {
 
     /** {@code stream}: a warm session that reads stream-json user lines and writes stream-json events. */
     static List<String> command(String exe, Settings s, Path systemFile, boolean windows, boolean stream) {
+        return command(exe, s, systemFile, windows, stream, null);
+    }
+
+    /** {@code effort}: this command's {@code --effort}, from validated config; null or blank means {@code claude_effort}. */
+    static List<String> command(String exe, Settings s, Path systemFile, boolean windows, boolean stream, String effort) {
         List<String> cmd = new ArrayList<>(stream
                 ? List.of(exe, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose")
                 : List.of(exe, "-p", "--output-format", "json"));
@@ -247,7 +256,8 @@ public final class ClaudeCodeBrain implements Brain {
                 // Windows rebuilds one command line from these; without \" the JSON loses its quotes.
                 "--json-schema", windows ? SCHEMA.replace("\"", "\\\"") : SCHEMA));
         if (s.model() != null && !s.model().isBlank()) cmd.addAll(List.of("--model", s.model()));
-        if (s.claudeEffort() != null && !s.claudeEffort().isBlank()) cmd.addAll(List.of("--effort", s.claudeEffort()));
+        String level = effort == null || effort.isBlank() ? s.claudeEffort() : effort;
+        if (level != null && !level.isBlank()) cmd.addAll(List.of("--effort", level));
         return cmd;
     }
 
@@ -457,8 +467,10 @@ public final class ClaudeCodeBrain implements Brain {
      * The warm-session command. The system prompt file is named by its content's hash, so a changed prompt is a
      * changed command (the spare gets replaced) and a file a running process reads is never rewritten. With
      * {@code withCaveman} the rules end the file, so a spare built without them never takes such an order.
+     * {@code effort} null means {@code claude_effort}.
      */
-    private List<String> streamCommand(String system, JsonArray tools, boolean withCaveman) throws BrainException {
+    private List<String> streamCommand(String system, JsonArray tools, boolean withCaveman, String effort)
+            throws BrainException {
         String exe = executable();
         if (exe == null) {
             throw new BrainException(BrainException.Kind.NO_CLI, "claude not found");
@@ -468,7 +480,7 @@ public final class ClaudeCodeBrain implements Brain {
         if (withCaveman && skill != null) text += skill.promptSection();
         String name = "system-" + sha256(text).substring(0, 16) + ".md";
         Path file = Files.isRegularFile(workDir.resolve(name)) ? workDir.resolve(name) : writeWork(name, text);
-        return command(exe, settings, file, WINDOWS, true);
+        return command(exe, settings, file, WINDOWS, true, effort);
     }
 
     private static String sha256(String text) {

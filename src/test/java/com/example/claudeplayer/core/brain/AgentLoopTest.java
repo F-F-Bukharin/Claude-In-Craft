@@ -2,6 +2,7 @@ package com.example.claudeplayer.core.brain;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.example.claudeplayer.core.Settings;
@@ -225,6 +226,38 @@ class AgentLoopTest {
         pump();
         assertTrue(requests.get(0).caveman());
         assertFalse(requests.get(1).caveman());
+    }
+
+    @Test
+    void aThinkHarderOrdersRequestsCarryTheThinkEffortUntilAReflex() {
+        build(b -> b.maxCallsPerMinute = 100);
+        script.add(tools(move("m")));
+        script.add(tools(say("s")));
+        script.add(text("Safe now."));
+        loop.startOrder("F", "think harder and walk", true);
+        pump();
+        ticks(3); // m is running
+        assertEquals("max", requests.get(0).effort(), "claude_think_effort");
+        loop.reflex("zombie #7 is 4.0 blocks away.", List.of(new Action.Flee()));
+        pump();
+        assertEquals(2, requests.size());
+        assertNull(requests.get(1).effort(), "the next turn drops back to the configured effort");
+        ticks(10);
+        assertEquals(3, requests.size());
+        assertNull(requests.get(2).effort(), "and stays there for the rest of the order");
+    }
+
+    @Test
+    void thinkHarderEndsWithItsOrder() {
+        build(b -> b.claudeThinkEffort = "max");
+        script.add(text("One."));
+        script.add(text("Two."));
+        loop.startOrder("F", "think harder", true);
+        pump();
+        loop.startOrder("F", "plain order");
+        pump();
+        assertEquals("max", requests.get(0).effort());
+        assertNull(requests.get(1).effort());
     }
 
     @Test

@@ -140,6 +140,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     private Supplier<String> cavemanNote = () -> "";
     private boolean cavemanFromStart; // the running order began with the rules in its system prompt
     private boolean cavemanNoted; // the running order already got the one note
+    private boolean thinkHarder; // the running order asks the brain for claude_think_effort
 
     public AgentLoop(Settings settings, Brain brain, Executor brainThread, Executor mainThread, ActionQueue queue,
                      Guardrails guardrails, PromptBuilder prompts, ToolSchemas tools, Memory memory, Host host,
@@ -184,8 +185,16 @@ public final class AgentLoop implements ActionQueue.Listener {
 
     /** A new order from an allowlisted player. Replaces whatever was running and lifts a kill-switch halt. */
     public void startOrder(String player, String text) {
+        startOrder(player, text, false);
+    }
+
+    /**
+     * As above; {@code thinkHarder} runs the order at {@code claude_think_effort} until it ends or a reflex fires.
+     * Only the player's yes to the think-harder offer sets it, never the model.
+     */
+    public void startOrder(String player, String text, boolean thinkHarder) {
         guardrails.resume();
-        begin(new Opening(player, text, Kind.ORDER));
+        begin(new Opening(player, text, Kind.ORDER), thinkHarder);
     }
 
     /** Autonomy on, from an allowlisted player. Lifts a kill-switch halt like an order does. */
@@ -223,7 +232,7 @@ public final class AgentLoop implements ActionQueue.Listener {
      */
     public void interrupt(String reason) {
         if (orderFrom == null || goal) {
-            if (settings.idleReactions() && !guardrails.halted()) begin(new Opening("", reason, Kind.EVENT));
+            if (settings.idleReactions() && !guardrails.halted()) begin(new Opening("", reason, Kind.EVENT), false);
             return;
         }
         String note = "INTERRUPT: " + reason;
@@ -248,11 +257,12 @@ public final class AgentLoop implements ActionQueue.Listener {
      */
     public void reflex(String reason, List<Action> actions) {
         List<ActionQueue.Entry> entries = new ArrayList<>();
+        thinkHarder = false; // a threat ends max effort: the next turn is back at the configured one
         for (Action a : actions) entries.add(new ActionQueue.Entry("reflex-" + ++reflexCount, reflexTool(a), a, 3));
         ActionQueue.Preemption displaced = enqueue(entries);
         String did = " Reflex: " + entries.stream().map(ActionQueue.Entry::tool).collect(Collectors.joining(", ")) + ".";
         if (orderFrom == null || goal) {
-            if (settings.idleReactions() && !guardrails.halted()) begin(new Opening("", reason + did, Kind.EVENT));
+            if (settings.idleReactions() && !guardrails.halted()) begin(new Opening("", reason + did, Kind.EVENT), false);
             return;
         }
         report("INTERRUPT: " + reason + did + listed(" Paused: ", displaced.paused()) + listed(" Scrapped: ", displaced.scrapped()));
@@ -326,12 +336,13 @@ public final class AgentLoop implements ActionQueue.Listener {
             }
         }
         LOG.info("autonomy goal #{}", ++goalCount);
-        begin(new Opening(autonomyBy, "", Kind.GOAL));
+        begin(new Opening(autonomyBy, "", Kind.GOAL), false);
     }
 
-    private void begin(Opening first) {
+    private void begin(Opening first, boolean think) {
         if (goal) recordGoal(first.kind() == Kind.ORDER ? "; an order took over" : "; a threat took over");
         abandon();
+        thinkHarder = think;
         opening = first;
         goal = first.kind() == Kind.GOAL;
         orderFrom = goal ? "" : first.player();
@@ -523,7 +534,8 @@ public final class AgentLoop implements ActionQueue.Listener {
         inFlight = true;
         guardrails.recordCall();
         int forEpoch = epoch;
-        Brain.Request request = new Brain.Request(prompts.system(), tools.definitions(), messages.deepCopy(), cavemanFromStart);
+        Brain.Request request = new Brain.Request(prompts.system(), tools.definitions(), messages.deepCopy(), cavemanFromStart,
+                thinkHarder ? settings.claudeThinkEffort() : null);
         try {
             brainThread.execute(() -> {
                 Brain.Reply reply = null;
@@ -622,6 +634,7 @@ public final class AgentLoop implements ActionQueue.Listener {
         steps = 0;
         cavemanFromStart = false;
         cavemanNoted = false;
+        thinkHarder = false;
     }
 
     /**
