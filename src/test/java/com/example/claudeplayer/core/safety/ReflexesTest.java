@@ -81,6 +81,16 @@ class ReflexesTest {
     }
 
     @Test
+    void aChaseIsDueWithinSixBlocksEveryTwoSeconds() {
+        assertTrue(Reflexes.chaseDue(4.0, 1000, 900, false), "in range and due");
+        assertTrue(Reflexes.chaseDue(6.0, 1000, 900, false), "6 blocks is in range");
+        assertFalse(Reflexes.chaseDue(6.5, 1000, 900, false), "too far");
+        assertFalse(Reflexes.chaseDue(4.0, 1000, 900, true), "a level 3 is running");
+        assertFalse(Reflexes.chaseDue(4.0, 1000, 961, false), "fired 39 ticks ago");
+        assertTrue(Reflexes.chaseDue(4.0, 1000, 960, false), "fired 40 ticks ago");
+    }
+
+    @Test
     void litFusesAreNotHeldBackByTheGap() {
         ThreatTracker fuses = new ThreatTracker(0, 60);
         assertTrue(fuses.report("lit:1", 100));

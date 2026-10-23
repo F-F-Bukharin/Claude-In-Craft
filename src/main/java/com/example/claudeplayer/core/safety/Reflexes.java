@@ -13,6 +13,11 @@ public final class Reflexes {
 
     public enum Move { FLEE, FIGHT, NONE }
 
+    /** A hostile this close (straight line, blocks) after its first report is still chasing. */
+    public static final double CHASE_RANGE = 6;
+    /** The chase rule re-runs the decision for one mob at most this often. */
+    public static final long CHASE_GAP_TICKS = 40;
+
     /** Distance on the ground plane; height is ignored. */
     public static double horizontal(double dx, double dz) {
         return Math.sqrt(dx * dx + dz * dz);
@@ -28,6 +33,14 @@ public final class Reflexes {
             case HOLD -> Move.NONE;
             case FIGHT -> !attacksEnabled ? Move.FLEE : s.distance() <= reach ? Move.FIGHT : Move.NONE;
         };
+    }
+
+    /**
+     * The chase rule: a flee ends after about 10 blocks and a threat is reported once, so a mob that keeps up gets
+     * the decision re-run while no level 3 action is running, at most once per mob every 2 s.
+     */
+    public static boolean chaseDue(double distance, long now, long lastFired, boolean levelThreeRunning) {
+        return distance <= CHASE_RANGE && !levelThreeRunning && now - lastFired >= CHASE_GAP_TICKS;
     }
 
     /** "lava", "fire" or "drop" when the spot is deadly, null when safe. A fall of n blocks deals n - 3 damage. */

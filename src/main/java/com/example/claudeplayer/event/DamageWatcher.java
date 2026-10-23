@@ -11,8 +11,11 @@ import com.example.claudeplayer.core.safety.Reflexes;
 import com.example.claudeplayer.core.safety.ThreatTracker;
 import com.example.claudeplayer.core.safety.WorldText;
 import com.mojang.logging.LogUtils;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
@@ -24,8 +27,9 @@ import org.slf4j.Logger;
 /**
  * Turns hits and approaching hostiles into reflexes and loop interrupts, debounced by {@link ThreatTracker} (one
  * per threat, at most one every 5 s; lit creepers have their own tracker with no gap). {@link Reflexes} picks the
- * move; it is held here and delivered on the next runtime tick, never from inside another entity's tick. At
- * caution level 5 it also calls for help below 30% HP.
+ * move; it is held here and delivered on the next runtime tick, never from inside another entity's tick. A mob
+ * that keeps chasing within {@link Reflexes#CHASE_RANGE} gets the decision re-run ({@link Reflexes#chaseDue}),
+ * delivered only when it yields a move. At caution level 5 it also calls for help below 30% HP.
  */
 public final class DamageWatcher {
     private static final Logger LOG = LogUtils.getLogger();
@@ -38,6 +42,7 @@ public final class DamageWatcher {
     private final AgentRuntime rt;
     private final ThreatTracker threats = new ThreatTracker(100, 600);
     private final ThreatTracker fuses = new ThreatTracker(0, 60);
+    private final Map<Integer, Long> chased = new HashMap<>(); // mob id -> tick its decision last ran
     private long lastHurt = -1_000;
     private long lastHelp = -1_000;
     private boolean hurtWhileMoving;
@@ -75,13 +80,27 @@ public final class DamageWatcher {
         }
         long now = rt.ticks();
         if (pending == null && now % SCAN_TICKS == 0) {
-            for (Mob mob : SnapshotBuilder.hostiles(p, rt.settings().hostileRange())) {
+            List<Mob> near = SnapshotBuilder.hostiles(p, rt.settings().hostileRange());
+            chased.keySet().retainAll(near.stream().map(Entity::getId).collect(Collectors.toSet())); // gone or out of range
+            boolean levelThree = rt.queue().snapshot().stream().anyMatch(i -> i.entry().prio() == 3); // running or next
+            for (Mob mob : near) {
                 boolean lit = SnapshotBuilder.litCreeper(mob);
                 if (!lit && mob instanceof Creeper) fuses.forget("lit:" + mob.getId()); // a re-lit fuse is a new one
                 if (lit ? fuses.report("lit:" + mob.getId(), now) : threats.report("near:" + mob.getId(), now)) {
+                    chased.put(mob.getId(), now);
                     pending = react(p, String.format(Locale.ROOT, "%s is %.1f blocks away%s.",
                             describe(mob), p.distanceTo(mob), lit ? ", fuse lit" : ""), mob);
                     break;
+                }
+                if (rt.settings().reflexes() && Reflexes.chaseDue(p.distanceTo(mob), now,
+                        chased.getOrDefault(mob.getId(), Long.MIN_VALUE / 2), levelThree)) {
+                    chased.put(mob.getId(), now);
+                    Pending chase = react(p, String.format(Locale.ROOT, "%s is still chasing, %.1f blocks away%s.",
+                            describe(mob), p.distanceTo(mob), lit ? ", fuse lit" : ""), mob);
+                    if (!chase.actions().isEmpty()) { // a HOLD stays quiet, or a mob near the body would spam the model
+                        pending = chase;
+                        break;
+                    }
                 }
             }
         }
