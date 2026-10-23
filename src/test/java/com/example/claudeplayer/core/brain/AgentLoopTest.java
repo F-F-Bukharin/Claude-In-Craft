@@ -964,6 +964,25 @@ class AgentLoopTest {
     }
 
     @Test
+    void aReflexFailingWhileACallIsOutDoesNotCancelTheReplysCalls() {
+        build(b -> b.maxCallsPerMinute = 100);
+        script.add(tools(move("m")));
+        script.add(tools(say("s")));
+        script.add(text("Noted."));
+        loop.startOrder("F", "walk");
+        pump();
+        ticks(3); // m is running
+        fleeResult = ActionResult.failed("no_escape");
+        loop.reflex("creeper #9 is 2.0 blocks away, fuse lit.", List.of(new Action.Flee())); // request 1 goes out
+        queue.tick(); // the flee runs and fails while request 1 is still out
+        pump();
+        ticks(10);
+        assertEquals(3, requests.size());
+        assertFalse(results(2).contains("cancelled"), "a reflex's outcome is news, not a reason to drop the reply's calls");
+        assertTrue(lastText(2).contains("Reflex flee: failed:no_escape"), lastText(2));
+    }
+
+    @Test
     void anOkReflexAddsNoOutcomeNote() {
         build(b -> {});
         script.add(tools(move("m")));
