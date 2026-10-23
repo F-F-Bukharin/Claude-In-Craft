@@ -25,6 +25,9 @@ public final class Sight {
     /** A living entity in the cone with a clear line of sight. {@code name}: a player's name (already a name, quoted here), else null. */
     public record Seen(String type, int id, String name, double dist, int x, int y, int z) {}
 
+    /** The directions see accepts; forward keeps the way the body faces. */
+    public static final List<String> DIRECTIONS = List.of("forward", "north", "south", "east", "west", "up", "down");
+
     private Sight() {}
 
     private static final Set<String> NOTABLE = Set.of("ancient_debris", "netherite_block", "diamond_block", "spawner",

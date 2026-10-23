@@ -120,6 +120,25 @@ class ToolParseTest {
     }
 
     @Test
+    void seeTakesAnOptionalDirectionAndRejectsOthers() {
+        assertEquals(new Action.See("forward"), v1.parse("see", json("{}")).action());
+        assertEquals(new Action.See("forward"), v1.parse("see", json("{\"direction\":null}")).action());
+        for (String d : List.of("forward", "north", "south", "east", "west", "up", "down")) {
+            assertEquals(new Action.See(d), v1.parse("see", json("{\"direction\":\"" + d + "\"}")).action());
+        }
+        assertEquals(new Action.See("north"), v1.parse("see", json("{\"direction\":\" North \"}")).action());
+        assertEquals("failed:bad_input:direction", error(v1, "see", "{\"direction\":\"left\"}"));
+        assertEquals("failed:bad_input:direction", error(v1, "see", "{\"direction\":5}"));
+        assertEquals("denied:unknown_tool", error(new ToolSchemas(1), "see", "{}"));
+        for (JsonElement el : v1.definitions()) {
+            JsonObject def = el.getAsJsonObject();
+            if (def.get("name").getAsString().equals("see")) {
+                assertFalse(def.getAsJsonObject("input_schema").getAsJsonArray("required").contains(new JsonPrimitive("direction")));
+            }
+        }
+    }
+
+    @Test
     void definitionsListOnlyEnabledToolsInAFixedOrder() {
         List<String> names = new ArrayList<>();
         for (JsonElement el : v1.definitions()) {
@@ -127,7 +146,7 @@ class ToolParseTest {
             assertEquals("object", def.getAsJsonObject("input_schema").get("type").getAsString());
             names.add(def.get("name").getAsString());
         }
-        assertEquals(List.of("get_state", "look", "move_to", "say", "wait", "stop", "flee", "note", "remember", "forget", "inspect_container",
+        assertEquals(List.of("get_state", "look", "see", "move_to", "say", "wait", "stop", "flee", "note", "remember", "forget", "inspect_container",
                 "store", "take", "eat", "follow_player", "mine_block", "place_block", "equip", "craft", "smelt",
                 "gather", "dig", "till", "plant", "harvest", "use_bucket"), names);
     }

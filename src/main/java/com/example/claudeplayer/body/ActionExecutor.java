@@ -57,6 +57,7 @@ public final class ActionExecutor implements ActionRunner {
         if (action instanceof Action.Look look) {
             return Handle.done(ActionResult.ok(SnapshotBuilder.map(p, look.radius(), rt.settings().hostileRange()).text()));
         }
+        if (action instanceof Action.See see) return Handle.done(SeeActions.see(p, see.direction()));
         if (action instanceof Action.Say say) {
             rt.say(say.text());
             return Handle.done(ActionResult.ok());
