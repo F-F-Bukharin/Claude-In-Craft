@@ -206,6 +206,27 @@ class AgentLoopTest {
     }
 
     @Test
+    void cacheReadsWeighATenth() {
+        assertEquals(270, new Brain.Usage(100, 20, 50, 1000).weighted());
+        assertEquals(1170, new Brain.Usage(100, 20, 50, 1000).total(), "total still counts everything");
+    }
+
+    @Test
+    void cacheReadsAloneDontTripTheTokenCap() {
+        build(b -> b.sessionTokenCap = 1000);
+        Brain.Reply cached = tools(say("t1"));
+        script.add(new Brain.Reply(cached.id(), cached.content(), cached.toolCalls(), cached.text(), cached.stopReason(),
+                new Brain.Usage(100, 20, 0, 5000))); // 5120 in all, 620 weighted
+        script.add(text("Done!"));
+        loop.startOrder("F", "say hi");
+        pump();
+        ticks(1);
+        assertEquals(2, requests.size(), "the second call went out");
+        assertEquals(List.of("Done!"), said);
+        assertTrue(notices.isEmpty(), notices.toString());
+    }
+
+    @Test
     void stopCancelsTheQueueAndALateReplyIsIgnored() {
         build(b -> {});
         script.add(tools(move("m")));
