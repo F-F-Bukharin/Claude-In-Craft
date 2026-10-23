@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.example.claudeplayer.core.Settings;
-import com.example.claudeplayer.core.StateSnapshot;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 
@@ -38,12 +37,21 @@ class SafetyTest {
     }
 
     @Test
-    void blockEditsStayInsideTheWorkArea() {
-        Guardrails g = new Guardrails(Settings.of(b -> b.breakRadius = 32), () -> now);
-        StateSnapshot.Vec home = new StateSnapshot.Vec(0, 64, 0);
-        assertTrue(g.allowBlockChange(10, 64, 10, home));
-        assertFalse(g.allowBlockChange(40, 64, 0, home));
-        assertFalse(g.allowBlockChange(0, 64, 0, null), "no home, no edits");
+    void naturalBlocksBreakAnywhere() {
+        assertEquals("ok", Guardrails.checkBreak(false, false, true, false).code());
+        assertEquals("ok", Guardrails.checkBreak(false, false, true, true).code());
+    }
+
+    @Test
+    void manMadeBlocksBreakOnlyIfClaudePlacedThem() {
+        assertEquals("denied:protected_block", Guardrails.checkBreak(false, false, false, false).code());
+        assertEquals("ok", Guardrails.checkBreak(false, false, false, true).code());
+    }
+
+    @Test
+    void airAndUnbreakableBlocksNeverBreak() {
+        assertEquals("failed:no_block", Guardrails.checkBreak(true, false, false, false).code());
+        assertEquals("denied:unbreakable", Guardrails.checkBreak(false, true, true, true).code(), "bedrock, even if placed");
     }
 
     @Test

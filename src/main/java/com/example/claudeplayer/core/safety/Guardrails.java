@@ -1,11 +1,11 @@
 package com.example.claudeplayer.core.safety;
 
 import com.example.claudeplayer.core.Settings;
-import com.example.claudeplayer.core.StateSnapshot;
+import com.example.claudeplayer.core.act.ActionResult;
 import java.util.ArrayDeque;
 import java.util.function.LongSupplier;
 
-/** Hard limits on model calls and world edits: kill switch, call rate, token cap, work area. Server thread only. */
+/** Hard limits on model calls and world edits: kill switch, call rate, token cap, which blocks may be broken. Server thread only. */
 public final class Guardrails {
     /** HALTED and TOKEN_CAP end the order; RATE_LIMITED means wait and try again. */
     public enum Check { OK, HALTED, RATE_LIMITED, TOKEN_CAP }
@@ -40,12 +40,15 @@ public final class Guardrails {
         tokens += count;
     }
 
-    /** Break and place only within break_radius of home. No home, no edits. */
-    public boolean allowBlockChange(int x, int y, int z, StateSnapshot.Vec home) {
-        if (home == null) return false;
-        double dx = x - home.x(), dy = y - home.y(), dz = z - home.z();
-        double r = settings.breakRadius();
-        return dx * dx + dy * dy + dz * dz <= r * r;
+    /**
+     * The break rule: natural blocks anywhere, man-made ones only where Claude placed them itself, never air or an
+     * unbreakable block. The game side supplies the facts; ok means go ahead.
+     */
+    public static ActionResult checkBreak(boolean empty, boolean unbreakable, boolean natural, boolean selfPlaced) {
+        if (empty) return ActionResult.failed("no_block");
+        if (unbreakable) return ActionResult.denied("unbreakable");
+        if (!natural && !selfPlaced) return ActionResult.denied("protected_block");
+        return ActionResult.ok();
     }
 
     /** Kill switch: blocks model calls until {@link #resume} (the next allowlisted order). */

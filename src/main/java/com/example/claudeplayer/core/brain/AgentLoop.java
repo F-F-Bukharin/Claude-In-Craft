@@ -10,12 +10,15 @@ import com.example.claudeplayer.core.memory.Memory;
 import com.example.claudeplayer.core.safety.Guardrails;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,6 +38,11 @@ import org.slf4j.LoggerFactory;
  * <p>Priorities: each call runs at its {@code prio} level. A reflex is code acting first: its actions go in at
  * level 3, which scraps routine work and pauses level 2, and the model then hears what the body did and what was
  * displaced. A dropped order leaves level 3 running, so a flee outlives the order that was interrupted.
+ *
+ * <p>Autonomy: while it is on and nothing else runs, a goal turn starts at most once per
+ * {@code autonomy_interval_seconds}. A goal is one model call: its tool calls run and the goal ends without a
+ * follow-up round, leaving its result codes for the next goal's prompt. Orders and reactions displace a goal like
+ * any order; the cycle resumes once they are done.
  */
 public final class AgentLoop implements ActionQueue.Listener {
     private static final Logger LOG = LoggerFactory.getLogger(AgentLoop.class);
@@ -52,7 +60,11 @@ public final class AgentLoop implements ActionQueue.Listener {
         void notice(String text);
     }
 
-    private record Opening(String player, String text, boolean event) {}
+    private enum Kind { ORDER, EVENT, GOAL }
+
+    private record Opening(String player, String text, Kind kind) {}
+
+    private static final int OUTCOMES_KEPT = 5;
 
     private static final class Call {
         final String id;
@@ -90,6 +102,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     private final ToolSchemas tools;
     private final Memory memory;
     private final Host host;
+    private final LongSupplier clockMillis;
 
     private int epoch; // bumps whenever the order is dropped; replies from an older epoch are ignored
     private String orderFrom; // null when idle, "" for a reaction nobody ordered
@@ -108,9 +121,17 @@ public final class AgentLoop implements ActionQueue.Listener {
     private String finalText;
     private int steps;
     private int reflexCount; // numbers the reflex-<n> call ids
+    private boolean goal; // the running order is an autonomous goal turn
+    private String goalText; // the goal reply's text, said when the goal ends unless blank
+    private String autonomyBy; // who turned autonomy on; null when off. Never persisted: a restart starts it off
+    private long nextGoalAt; // clock millis; a skipped cycle waits for the next interval too
+    private int goalCount;
+    private final Deque<String> outcomes = new ArrayDeque<>(); // the last goals' result codes, oldest first
+    private String lastGoalFailure; // the notice of the last failed goal call, so a repeat stays quiet
 
     public AgentLoop(Settings settings, Brain brain, Executor brainThread, Executor mainThread, ActionQueue queue,
-                     Guardrails guardrails, PromptBuilder prompts, ToolSchemas tools, Memory memory, Host host) {
+                     Guardrails guardrails, PromptBuilder prompts, ToolSchemas tools, Memory memory, Host host,
+                     LongSupplier clockMillis) {
         this.settings = settings;
         this.brain = brain;
         this.brainThread = brainThread;
@@ -121,6 +142,7 @@ public final class AgentLoop implements ActionQueue.Listener {
         this.tools = tools;
         this.memory = memory;
         this.host = host;
+        this.clockMillis = clockMillis;
         queue.setListener(this);
     }
 
@@ -141,17 +163,45 @@ public final class AgentLoop implements ActionQueue.Listener {
     /** A new order from an allowlisted player. Replaces whatever was running and lifts a kill-switch halt. */
     public void startOrder(String player, String text) {
         guardrails.resume();
-        begin(new Opening(player, text, false));
+        begin(new Opening(player, text, Kind.ORDER));
+    }
+
+    /** Autonomy on, from an allowlisted player. Lifts a kill-switch halt like an order does. */
+    public void startAutonomy(String player) {
+        guardrails.resume();
+        autonomyBy = player;
+    }
+
+    /** Autonomy off: a running goal is dropped, a running order keeps going. */
+    public void stopAutonomy() {
+        autonomyOff();
+        if (goal) abandon();
+    }
+
+    public boolean autonomous() {
+        return autonomyBy != null;
+    }
+
+    public boolean goalRunning() {
+        return goal;
+    }
+
+    public String autonomyStatus() {
+        if (autonomyBy == null) return "autonomy off";
+        if (goal) return "autonomy on (goal #" + goalCount + " running)";
+        if (orderFrom != null) return "autonomy on (resumes after this order)";
+        long wait = Math.max(0, nextGoalAt - clockMillis.getAsLong());
+        return "autonomy on (next goal in " + (wait + 999) / 1000 + " s)";
     }
 
     /**
      * A threat or a hit: tell the model now. With reflexes on the queue is left alone (a reflex already acted);
-     * with them off everything below level 3 is cancelled. With no order running this starts a reaction, unless
-     * idle reactions are off or the kill switch is on.
+     * with them off everything below level 3 is cancelled. With no order running (or only a goal) this starts a
+     * reaction, unless idle reactions are off or the kill switch is on.
      */
     public void interrupt(String reason) {
-        if (orderFrom == null) {
-            if (settings.idleReactions() && !guardrails.halted()) begin(new Opening("", reason, true));
+        if (orderFrom == null || goal) {
+            if (settings.idleReactions() && !guardrails.halted()) begin(new Opening("", reason, Kind.EVENT));
             return;
         }
         String note = "INTERRUPT: " + reason;
@@ -178,8 +228,8 @@ public final class AgentLoop implements ActionQueue.Listener {
         List<ActionQueue.Entry> entries = reflexEntries(actions);
         ActionQueue.Preemption displaced = enqueue(entries);
         String did = " Reflex: " + entries.stream().map(ActionQueue.Entry::tool).collect(Collectors.joining(", ")) + ".";
-        if (orderFrom == null) {
-            if (settings.idleReactions() && !guardrails.halted()) begin(new Opening("", reason + did, true));
+        if (orderFrom == null || goal) {
+            if (settings.idleReactions() && !guardrails.halted()) begin(new Opening("", reason + did, Kind.EVENT));
             return;
         }
         report("INTERRUPT: " + reason + did + listed(" Paused: ", displaced.paused()) + listed(" Scrapped: ", displaced.scrapped()));
@@ -201,27 +251,30 @@ public final class AgentLoop implements ActionQueue.Listener {
         return entries;
     }
 
-    /** Kill switch: cancel everything, drop the order, block model calls until the next order. */
+    /** Kill switch: cancel everything, drop the order, end autonomy, block model calls until the next order. */
     public void stop() {
         guardrails.halt();
+        autonomyOff();
         abandon();
         quietly(queue::cancelAll);
     }
 
-    /** The body died or was removed: drop the order without another model call. */
+    /** The body died or was removed: drop the order and end autonomy without another model call. */
     public void bodyGone() {
+        autonomyOff();
         abandon();
         quietly(queue::cancelAll);
     }
 
-    /** Once per server tick: sends a call that was waiting for the call-rate window. */
+    /** Once per server tick: sends a call that was waiting for the call-rate window, or starts a due goal. */
     public void tick() {
         if (deferred) flush();
+        if (autonomyBy != null && orderFrom == null && queue.idle() && clockMillis.getAsLong() >= nextGoalAt) startGoal();
     }
 
     public String status() {
         if (orderFrom == null) return guardrails.halted() ? "halted" : "idle";
-        String who = orderFrom.isEmpty() ? "reacting to a threat" : "order from " + orderFrom;
+        String who = goal ? "autonomous goal #" + goalCount : orderFrom.isEmpty() ? "reacting to a threat" : "order from " + orderFrom;
         String wait = inFlight ? ", waiting for the model" : deferred ? ", waiting for the call-rate window" : "";
         return who + ", round " + steps + "/" + settings.maxSteps() + wait;
     }
@@ -248,11 +301,31 @@ public final class AgentLoop implements ActionQueue.Listener {
         checkProgress();
     }
 
+    /** One goal turn, unless a guardrail says no: then this cycle is skipped, not queued. */
+    private void startGoal() {
+        nextGoalAt = clockMillis.getAsLong() + settings.autonomyIntervalSeconds() * 1000L;
+        switch (guardrails.allowCall()) {
+            case OK -> {}
+            case TOKEN_CAP -> {
+                autonomyOff();
+                host.notice("Session token cap reached (" + settings.sessionTokenCap() + "). Autonomy off.");
+                return;
+            }
+            default -> {
+                return;
+            }
+        }
+        LOG.info("autonomy goal #{}", ++goalCount);
+        begin(new Opening(autonomyBy, "", Kind.GOAL));
+    }
+
     private void begin(Opening first) {
+        if (goal) recordGoal(first.kind() == Kind.ORDER ? "; an order took over" : "; a threat took over");
         abandon();
         opening = first;
-        orderFrom = first.player();
-        orderText = first.event() ? "" : first.text();
+        goal = first.kind() == Kind.GOAL;
+        orderFrom = goal ? "" : first.player();
+        orderText = first.kind() == Kind.ORDER ? first.text() : "";
         flush();
     }
 
@@ -273,6 +346,12 @@ public final class AgentLoop implements ActionQueue.Listener {
             interruptInFlight = null;
             mustReport = true;
             checkProgress();
+            return;
+        }
+        if (goal) { // one call per goal: its tools run, and no results go back
+            goalText = reply.text();
+            if (reply.toolCalls().isEmpty() || "refusal".equals(reply.stopReason())) endGoal();
+            else startBatch(reply.toolCalls());
             return;
         }
         if ("refusal".equals(reply.stopReason())) {
@@ -333,6 +412,10 @@ public final class AgentLoop implements ActionQueue.Listener {
     /** Decides whether to send results, finish the order, or keep waiting. */
     private void checkProgress() {
         if (orderFrom == null || inFlight || cancelling) return;
+        if (goal) {
+            if (batch != null && batch.done()) endGoal();
+            return;
+        }
         if (batch != null && !batch.reported) {
             boolean prefetch = batch.calls.size() > settings.prefetchAt() && batch.notStarted() <= settings.prefetchAt();
             if (batch.done() || prefetch) reportBatch();
@@ -380,7 +463,9 @@ public final class AgentLoop implements ActionQueue.Listener {
         String text;
         if (opening == null) {
             text = prompts.updateTurn(notes, state);
-        } else if (opening.event()) {
+        } else if (opening.kind() == Kind.GOAL) {
+            text = prompts.autonomyTurn(opening.player(), List.copyOf(outcomes), memory.render(), notes, state);
+        } else if (opening.kind() == Kind.EVENT) {
             text = prompts.eventTurn(opening.text(), memory.render(), notes, state);
         } else {
             text = prompts.orderTurn(opening.player(), opening.text(), host.recentChat(), memory.render(), notes, state);
@@ -427,7 +512,18 @@ public final class AgentLoop implements ActionQueue.Listener {
     private void fail(BrainException e) {
         LOG.warn("model call failed: {} {} (request {})", e.kind(), e.getMessage(), e.requestId());
         if (e.kind() == BrainException.Kind.AUTH) guardrails.halt();
-        end(e.chatMessage(settings.apiKeyEnv()));
+        String notice = e.chatMessage(settings.apiKeyEnv());
+        if (goal) {
+            recordGoal("; the model call failed");
+            // A goal retries every interval: say a failure once, not once a minute, until a goal works again.
+            boolean repeat = notice.equals(lastGoalFailure);
+            lastGoalFailure = notice;
+            if (repeat) {
+                abandon();
+                return;
+            }
+        }
+        end(notice);
     }
 
     private void finish(String text) {
@@ -440,15 +536,40 @@ public final class AgentLoop implements ActionQueue.Listener {
         host.notice(notice);
     }
 
+    /** The goal's calls are done: keep their codes for the next goal and end quietly, unless the reply had words. */
+    private void endGoal() {
+        recordGoal("");
+        lastGoalFailure = null;
+        String text = goalText;
+        abandon();
+        if (text != null && !text.isBlank()) host.say(text);
+    }
+
+    private void recordGoal(String ending) {
+        String calls = batch == null ? "no calls ran" : batch.calls.stream()
+                .map(c -> c.name + " " + (c.result == null ? "unfinished" : c.result.code()))
+                .collect(Collectors.joining(", "));
+        outcomes.addLast("goal #" + goalCount + ": " + calls + ending);
+        while (outcomes.size() > OUTCOMES_KEPT) outcomes.removeFirst();
+    }
+
+    private void autonomyOff() {
+        autonomyBy = null;
+        outcomes.clear();
+    }
+
     /**
-     * Drops the order quietly: cancels the queue below level 3 and forgets the transcript. A reply still in flight
-     * is ignored.
+     * Drops the order quietly: cancels the queue below level 3, forgets the transcript and lets the brain release
+     * the order's session. A reply still in flight is ignored.
      */
     private void abandon() {
         epoch++;
+        brain.reset();
         orderFrom = null;
         orderText = null;
         opening = null;
+        goal = false;
+        goalText = null;
         quietly(() -> queue.cancelBelow(3));
         messages = new JsonArray();
         pending.clear();

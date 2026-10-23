@@ -1,6 +1,7 @@
 package com.example.claudeplayer.core.brain;
 
 import com.example.claudeplayer.core.Settings;
+import com.example.claudeplayer.core.WorldMap;
 import com.example.claudeplayer.core.chat.Conversation;
 import com.example.claudeplayer.core.safety.CautionLevel;
 import com.example.claudeplayer.core.safety.WorldText;
@@ -14,7 +15,8 @@ import java.util.List;
 
 /**
  * Builds the system prompt (fixed for the session, so it caches) and the user turns. World data goes into tagged
- * blocks that the system prompt marks as data; only the {@code <order>} block carries instructions.
+ * blocks that the system prompt marks as data; only the {@code <order>} and {@code <autonomy>} blocks carry
+ * instructions.
  */
 public final class PromptBuilder {
     public static final String DEFAULT_RESOURCE = "/claudeplayer/system_prompt.md";
@@ -34,6 +36,7 @@ public final class PromptBuilder {
                 .replace("{{action_timeout}}", String.valueOf(settings.actionTimeoutSeconds()))
                 .replace("{{trigger}}", settings.trigger())
                 .replace("{{short_minutes}}", String.valueOf(settings.shortTermMinutes()))
+                .replace("{{map_key}}", WorldMap.KEY)
                 .replace("{{levels}}", levels.toString().stripTrailing());
     }
 
@@ -76,6 +79,31 @@ public final class PromptBuilder {
     public String eventTurn(String event, String memory, List<String> notes, String state) {
         StringBuilder b = new StringBuilder("<event>\nNo one gave an order. ").append(event)
                 .append("\nReact as your caution level says, then report in one short sentence.\n</event>\n");
+        if (!memory.isEmpty()) b.append(memory).append('\n');
+        return finish(b, notes, state);
+    }
+
+    /**
+     * The only turn of an autonomous goal: nobody gave an order, so the model picks one goal. {@code by} turned
+     * autonomy on; {@code outcomes} are the last goals' result codes, oldest first.
+     */
+    public String autonomyTurn(String by, List<String> outcomes, String memory, List<String> notes, String state) {
+        StringBuilder b = new StringBuilder("<autonomy by=\"").append(WorldText.clean(by, WorldText.NAME_MAX)).append("\">\n")
+                .append("No one gave an order. You are on your own until a player calls you.\n")
+                .append("Survival ladder: wood, crafting table, wooden pickaxe, cobblestone, stone tools, then coal and iron"
+                        + " (dig down, gather), furnace, smelt, iron tools and armor. Keep food above half by eating; you"
+                        + " can't hunt yet, so gather food when you see it. At night stay near home or dig a small shelter."
+                        + " Store surplus at home.\n")
+                .append("Pick ONE goal and do it with as few calls as possible, preferring gather, dig, craft, smelt, store"
+                        + " and eat over many small calls. This is your only reply for this goal: its calls run, then the"
+                        + " next goal starts from fresh state. Keep your plan in a long-term memory with subject autonomy_plan."
+                        + " Reply text goes to chat, so leave it empty unless a player must know something now.\n")
+                .append("</autonomy>\n");
+        if (!outcomes.isEmpty()) {
+            b.append("<last_goals>\n");
+            for (String outcome : outcomes) b.append("- ").append(outcome).append('\n');
+            b.append("</last_goals>\n");
+        }
         if (!memory.isEmpty()) b.append(memory).append('\n');
         return finish(b, notes, state);
     }

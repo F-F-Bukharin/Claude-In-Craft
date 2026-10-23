@@ -8,6 +8,9 @@ public sealed interface Action {
     // v1
     record GetState() implements Action {}
 
+    /** A wider top-down map than world_state.map (executed in the game). */
+    record Look(int radius) implements Action {}
+
     record MoveTo(double x, double y, double z) implements Action {}
 
     record Say(String text) implements Action {}
@@ -30,9 +33,21 @@ public sealed interface Action {
     /** Read-only look into a chest or other container; the game side also notes it in short-term memory. */
     record InspectContainer(int x, int y, int z) implements Action {}
 
-    // v2: schemas exist, hidden until tool_phase reaches them
+    /** The item for store and take that means every item; their count is then ignored (0). */
+    String ALL = "all";
+
+    /** Moves items from the inventory into a container; {@code item} is a short id (oak_log) or {@link #ALL}. */
+    record Store(int x, int y, int z, String item, int count) implements Action {}
+
+    /** Moves items from a container into the inventory; {@code item} is a short id (oak_log) or {@link #ALL}. */
+    record Take(int x, int y, int z, String item, int count) implements Action {}
+
+    /** Eats the best food carried. {@code auto}: queued by the auto-eat reflex, never by the model; it only adds a log line. */
+    record Eat(boolean auto) implements Action {}
+
     record FollowPlayer(String name, double seconds) implements Action {}
 
+    // v2: schemas exist, hidden until tool_phase reaches them
     record AttackEntity(int entityId) implements Action {}
 
     record MineBlock(int x, int y, int z) implements Action {}
@@ -41,5 +56,15 @@ public sealed interface Action {
 
     record Equip(String item) implements Action {}
 
+    /** Crafts {@code count} items from the inventory (executed in the game). */
     record Craft(String item, int count) implements Action {}
+
+    /** Loads up to {@code count} of an item and enough fuel into a furnace nearby; doesn't wait for it to finish. */
+    record Smelt(String item, int count) implements Action {}
+
+    /** Mines blocks matching {@code target} (a block id or a GatherTargets group) nearby until {@code count} of their drops are gained. */
+    record Gather(String target, int count) implements Action {}
+
+    /** Digs a 1-wide, 2-high tunnel {@code length} steps north, south, east or west, or a staircase down (DigPlan). */
+    record Dig(String direction, int length) implements Action {}
 }

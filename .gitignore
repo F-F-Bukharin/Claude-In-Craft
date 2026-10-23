@@ -28,3 +28,4 @@ eclipse
 .env
 
 forge*changelog.txt
+.claude/worktrees/

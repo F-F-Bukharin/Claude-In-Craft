@@ -104,14 +104,18 @@ class ClaudeCodeBrainTest {
     }
 
     @Test
-    void systemPromptListsEveryToolWithItsSchema() {
+    void systemPromptListsEveryActionAsOneCompactLine() {
         JsonArray tools = new ToolSchemas(2).definitions();
         String system = ClaudeCodeBrain.renderSystem("You are Claude.", tools);
-        assertTrue(system.startsWith("You are Claude."));
+        assertTrue(system.startsWith("Your only callable tool is StructuredOutput"), "rules out native tool calls first");
+        assertTrue(system.contains("You are Claude."));
         for (var t : tools) {
             String name = t.getAsJsonObject().get("name").getAsString();
-            assertTrue(system.contains("\n## " + name + "\n"), name);
+            assertTrue(system.contains("\n- " + name + " {"), name);
         }
-        assertTrue(system.contains("input schema: {"));
+        assertTrue(system.contains("- move_to {\"x\": number, \"y\": number, \"z\": number}: Walk"));
+        assertTrue(system.contains("- get_state {}: "));
+        assertFalse(system.contains("input_schema") || system.contains("\"properties\""), "no JSON schemas: they read like tools");
+        assertFalse(system.contains("\"prio\": integer"), "prio is optional and explained once");
     }
 }

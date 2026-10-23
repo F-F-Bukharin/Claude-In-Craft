@@ -2,11 +2,14 @@ package com.example.claudeplayer.core.brain;
 
 import com.example.claudeplayer.core.act.Action;
 import com.example.claudeplayer.core.act.ActionResult;
+import com.example.claudeplayer.core.work.DigPlan;
+import com.example.claudeplayer.core.work.GatherTargets;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -42,12 +45,15 @@ public final class ToolSchemas {
         // v1
         add("get_state", 1, "Get a fresh world snapshot. Every message already ends with one; use this mid-batch to re-check.",
                 in -> new Action.GetState());
+        add("look", 1, "See farther: the same top-down map as world_state.map, with a radius of 4 to 24 blocks instead of 8. A radius of 24 is about 900 tokens, so ask for what you need.",
+                in -> new Action.Look(in.integer("radius", 4, 24)),
+                integer("radius", "Blocks from you to the map's edge, 4 to 24."));
         add("move_to", 1, "Walk to a block position. Holds the queue until you arrive, there is no path (failed:no_path) or the action times out (failed:timeout).",
                 in -> new Action.MoveTo(in.number("x", -3e7, 3e7), in.number("y", -64, 320), in.number("z", -3e7, 3e7)),
                 number("x", "Target x."), number("y", "Target y, at your feet."), number("z", "Target z."));
-        add("say", 1, "Say something in chat as yourself. Keep it short.",
+        add("say", 1, "Say something in chat as yourself: 15 words at most, only when a player needs to know.",
                 in -> new Action.Say(in.text("text", 200)),
-                text("text", "What to say. Longer than 200 characters gets cut."));
+                text("text", "What to say. Chat shows two lines of 100 characters at most; the rest is cut."));
         add("wait", 1, "Do nothing for 0.1 to 10 seconds. Holds the queue.",
                 in -> new Action.Wait(in.number("seconds", 0.1, 10)),
                 number("seconds", "How long, 0.1 to 10."));
@@ -68,25 +74,44 @@ public final class ToolSchemas {
         add("inspect_container", 2, "Look inside a chest, barrel or other container within 6 blocks. Returns its contents and notes them in short-term memory.",
                 in -> new Action.InspectContainer(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000)),
                 integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."));
-        // v2
-        add("follow_player", 3, "Follow a player, staying within about 3 blocks, for 1 to 60 seconds. Holds the queue.",
+        add("store", 2, "Put items from your inventory into a chest, barrel, furnace or other container within 6 blocks. item all stores everything except your held item, armor and food. Moves what fits and says so; the container's new contents go to short-term memory.",
+                in -> { String item = item(in); return new Action.Store(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000), item, count(in, item)); },
+                integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."), text("item", "Item id, for example oak_log, or all."), integer("count", "How many, 1 to 2304. Ignored for all."));
+        add("take", 2, "Take items from a chest, furnace (its output too) or other container within 6 blocks into your inventory. item all takes everything that fits. The container's new contents go to short-term memory.",
+                in -> { String item = item(in); return new Action.Take(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000), item, count(in, item)); },
+                integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."), text("item", "Item id, for example iron_ingot, or all."), integer("count", "How many, 1 to 2304. Ignored for all."));
+        add("eat", 2, "Eat the best food you carry; takes about 1.6 s. failed:not_hungry when food is full, failed:no_food when you have none. You also eat on your own when hungry and nothing is near.",
+                in -> new Action.Eat(false));
+        add("follow_player", 2, "Follow a player, staying within about 3 blocks, for 1 to 60 seconds. Holds the queue.",
                 in -> new Action.FollowPlayer(in.text("name", 16), in.number("seconds", 1, 60)),
                 text("name", "The player's name, as in world_state.players."), number("seconds", "How long, 1 to 60."));
+        // v2
         add("attack_entity", 4, "Attack one entity by its id from world_state.hostiles. Your caution level decides whether that's allowed; a denial says why.",
                 in -> new Action.AttackEntity(in.integer("entity_id", 0, Integer.MAX_VALUE)),
                 integer("entity_id", "The entity's id."));
-        add("mine_block", 6, "Break the block at a position. Only inside your work area around home.",
+        add("mine_block", 2, "Dig out the block at a position within 4.5 blocks of your eyes, with the best tool you carry, then pick up what drops. Holds the queue while digging. Natural blocks (logs, leaves, stone, dirt, sand, gravel, ores, plants) can be mined anywhere; anything else only if you placed it. Fails with out_of_reach (walk closer first), no_block, too_slow (needs a better tool) or block_changed; denied:protected_block or denied:unbreakable.",
                 in -> new Action.MineBlock(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000)),
                 integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."));
-        add("place_block", 6, "Place a block from your inventory at a position. Only inside your work area around home.",
+        add("place_block", 2, "Place a block from your inventory at a position within 4.5 blocks of your eyes, against a solid neighbour. Fails with missing_item, not_a_block, out_of_reach, occupied, no_support or blocked (something stands there).",
                 in -> new Action.PlaceBlock(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000), in.text("item", 64)),
-                integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."), text("item", "Item id, for example minecraft:cobblestone."));
-        add("equip", 6, "Move an item from your inventory to your main hand.",
+                integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."), text("item", "Item id as in your inventory, for example cobblestone."));
+        add("equip", 2, "Hold an item from your inventory in your main hand; armor goes on instead. Nothing is dropped: whatever was there swaps into its slot. Fails with missing_item.",
                 in -> new Action.Equip(in.text("item", 64)),
-                text("item", "Item id, for example minecraft:stone_sword."));
-        add("craft", 6, "Craft an item from what's in your inventory.",
+                text("item", "Item id as in your inventory, for example stone_sword or iron_helmet."));
+        add("craft", 2, "Craft an item from your inventory, 0.25 s per craft. 2x2 recipes work anywhere; bigger ones need a crafting table within 4.5 blocks (failed:needs_crafting_table). failed:missing lists what you lack.",
                 in -> new Action.Craft(in.text("item", 64), in.integer("count", 1, 64)),
-                text("item", "Item id to make."), integer("count", "How many, 1 to 64."));
+                text("item", "Item id to make, for example oak_planks or minecraft:stick."),
+                integer("count", "How many items you want, 1 to 64. Crafts as often as needed, so 4 oak_planks is one craft."));
+        add("smelt", 2, "Load a furnace, smoker or blast furnace within 6 blocks with an item from your inventory and enough fuel (coal or charcoal first, then planks, then logs). Returns at once with when it will be ready and notes it in short-term memory; collect the output later with take.",
+                in -> new Action.Smelt(in.text("item", 64), in.integer("count", 1, 64)),
+                text("item", "Item id to smelt or cook, for example raw_iron, oak_log or beef."), integer("count", "How many, 1 to 64."));
+        add("gather", 2, "Collect blocks on your own in one call: walks to the nearest reachable matching block within 24 blocks, mines it with your best tool, picks up the drops and repeats until you have count more of what they drop (stone gives cobblestone, coal_ore gives coal). Prefer it to many move_to and mine_block calls. Takes only natural blocks with an open face, nothing beside water or lava, nothing deeper than 4 below you, and nothing out of reach from the ground (no pillaring). Gives up after 120 s. ok says what was gathered and why it stopped: done, none_reachable, needs_tool (nothing you carry harvests it), inventory_full, timeout, hazard_lava, hazard_fire or hazard_drop. failed:danger (a hostile within 6 blocks or health under 40%) also says what was gathered; failed:unknown_target.",
+                in -> new Action.Gather(GatherTargets.normalize(in.text("target", 64)), in.integer("count", 1, 256)),
+                text("target", "A block id (oak_log, iron_ore) or a group: log (any tree), stone (stone, deepslate, andesite, diorite, granite, tuff), coal, iron, copper, gold, diamond, redstone, lapis, emerald (each its ore and deepslate ore), sand, dirt, gravel, clay."),
+                integer("count", "How many dropped items you want, 1 to 256."));
+        add("dig", 2, "Dig a tunnel 1 wide and 2 high from where you stand, walking into each step. north, south, east or west keep your level and never dig the floor; down digs stairs one block lower per step toward the way you face, so you can walk back up. Use it to get underground to ores instead of many mine_block calls. Ores on the tunnel walls are listed (at most 5) so you can gather or mine_block them. Stops at y=-60. ok: dug N/length steps (stopped: y_floor or timeout after 5 minutes). Fails, saying how far it got, with protected_block, unbreakable, hazard_lava or hazard_water (a fluid next to the block about to open), hazard_drop (a fall of 3 or more ahead), too_slow (needs a better tool), stuck, or blocked (falling sand or gravel keeps refilling it).",
+                in -> new Action.Dig(direction(in), in.integer("length", 1, 32)),
+                text("direction", "north, south, east, west or down."), integer("length", "Steps to dig, 1 to 32."));
     }
 
     /** The enabled tools in a fixed order; a stable list keeps the prompt cache valid. */
@@ -133,6 +158,24 @@ public final class ToolSchemas {
         definitions.add(def);
     }
 
+    /** An item id for store and take, lower case and without the minecraft: prefix, or all. */
+    private static String item(Input in) {
+        String id = in.text("item", 64).toLowerCase(Locale.ROOT);
+        return id.startsWith("minecraft:") ? id.substring("minecraft:".length()) : id;
+    }
+
+    /** One of DigPlan.DIRECTIONS. */
+    private static String direction(Input in) {
+        String d = in.text("direction", 8).toLowerCase(Locale.ROOT);
+        if (!DigPlan.DIRECTIONS.contains(d)) throw new BadInput("direction");
+        return d;
+    }
+
+    /** 1 to 2304 (a full inventory of 64-stacks); not read for all. */
+    private static int count(Input in, String item) {
+        return Action.ALL.equals(item) ? 0 : in.integer("count", 1, 2304);
+    }
+
     private static Prop number(String name, String description) {
         return prop(name, "number", description);
     }
@@ -154,8 +197,9 @@ public final class ToolSchemas {
 
     /** Validates one tool_use input. Numbers may arrive as JSON numbers or numeric strings. */
     private record Input(JsonObject json) {
+        /** A key set to null counts as absent, so {@code "prio": null} means the default. */
         boolean has(String key) {
-            return json.has(key);
+            return json.has(key) && !json.get(key).isJsonNull();
         }
 
         double number(String key, double min, double max) {

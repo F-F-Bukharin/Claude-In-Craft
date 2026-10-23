@@ -28,14 +28,14 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
 | # | Found | Status |
 |---|---|---|
 | 1 | Claude couldn't see player coordinates | Fixed on dev: players carry `pos` |
-| 2 | No follow command | `follow_player` unlocks at `tool_phase` 3; F set 3 in the profile config |
-| 3 | Long replies cut off at 256 characters | Fixed on dev: 600 |
-| 4 | No mining, crafting or placing | Open: phase-6 stubs, a later feature piece |
+| 2 | No follow command | Fixed on dev (F): `follow_player` is at `tool_phase` 2 now, on by default |
+| 3 | Long replies cut off at 256 characters | Fixed on dev (F): `ChatLines` splits a reply into at most two lines of 100 characters at a sentence end or space, and the prompt asks for 15 words; the local 600 cap was dropped in the merge |
+| 4 | No mining, crafting or placing | Fixed on dev (F): `mine_block`, `place_block`, `equip`, `craft` and `smelt`, plus the `gather` and `dig` routines |
 | 5 | Each order forgets the last conversation | Open: by design; notes and memories carry facts across orders |
 | 6 | Mobs far below or above set off flees (XZ-only radius) | Fixed on dev: 16 blocks straight-line (F's call) |
 | 7 | A chasing zombie hit Claude after one flee | Fixed on dev: quiet re-flee every 2 s within 6 blocks |
-| 8 | Claude didn't know where the chest was | Fixed on dev: `points` lists nearby containers, beds and crafting tables |
-| 9 | No way to take or deposit items | Open: a later feature (with #4) |
+| 8 | Claude didn't know where the chest was | Fixed on dev: `points` lists nearby containers, ender chests, crafting tables and bed heads with block positions. F's map marks containers as `C` at feet level, but not ender chests, tables or beds, so `points` stays beside it |
+| 9 | No way to take or deposit items | Fixed on dev (F): `store` and `take` |
 | 10 | Ender chest read as "tool not available" | Fixed on dev: `failed:ender_chest_personal` plus a prompt line |
 | 11 | Claude repeated its own wrong "tool isn't available" | Fixed on dev: the prompt says the tool list is the truth |
 | 12 | Token cap hit after about 32 calls (cache reads at full weight) | Fixed on dev: cache reads count a tenth |
@@ -63,27 +63,59 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
    - The prompt should say to give an approach and its attack the same prio, since higher levels run first.
    - A slab, stair or carpet walkway over a drop can read as `hazard_drop` at low HP.
    - A hit from beyond `hostile_range` (a ghast) builds a flee that scraps routine work, then returns `ok:no_threats`.
-   - `"prio": null` fails the call; it could count as absent.
+   - FIXED 23 Oct: `"prio": null` now counts as absent (test `nullPrioMeansTheDefault`).
 9. Claude Brain screen, in game (merged into dev). Right-click the body.
    - B1. As an allowlisted player or an op, right-click Claude. A chest opens, titled `Claude Brain: order from <you>: "..."`. The running action comes first (lime dye), then the waiting ones (paper), each named by its tool and with its priority.
    - B2. As anyone else, right-click Claude. Nothing happens.
    - B3. While a level 3 flee runs, open the chest. The flee shows as running, and any paused level 2 action shows as paused (clock, "resumes after a reflex"). Clicks in the chest move nothing.
    - Watch in B1: the title can run past the chest's edge; the order text is cut at 30 characters.
-10. Later, once the major bugs are ironed out: a friends package, so friends play on their own Claude Code accounts.
+10. Map view and short chat (23 Oct, F reported long chat and a blind Claude). Every world_state now carries `map` (17 by 17, at feet level) and `map_origin`. The `look` tool gives up to 49 by 49. Chat is capped at two lines of 100 characters in code, and the prompt asks for 15 words at most.
+   - V1. `claude: what do you see?` Its answer should match the terrain around it: trees, water, walls.
+   - V2. Build a wall of 2 blocks with one gap, stand behind it, and say `claude: come here`. It should route through the gap.
+   - V3. Ask for something wordy (`claude: tell me about yourself`). Chat shows at most two lines.
+   - Trigger (23 Oct, F's choice): the default is now `C`, case-sensitive and followed by a space, ':' or ','. `Claude:` (the body name plus a colon) always works too. Existing config files keep their saved `trigger` until it is edited.
+   - Not done: the Blockman status block pinned to each turn (spec section 7), and the flee issues, which wait on F's description of how flees failed.
+
+11. Skills, autonomy and the faster helper (23 Oct, merged into dev; 196 unit tests green; nothing tried in game yet). F's choices: natural blocks anywhere and man-made only if Claude placed them; autonomy calls the model only between goals, at most once a minute; after an order, autonomy resumes.
+   - In game, try: `C mine the log in front of you`; `C get 10 logs`; `C craft planks and sticks`, then a wooden pickaxe away from and next to a crafting table; with raw iron and coal next to a furnace, `C smelt the iron`, then `take` the ingots; `C dig down 15` (it stops before lava and reports ores seen); `C put your logs in the chest`; let it get hungry with bread in its inventory; `C follow me`; `C go do your thing, I'll call you` (about one `autonomy goal #n` log line a minute), then `C come here` (it should resume afterwards), then `C stop`.
+   - Helper: warm sessions are merged. Measured with the real prompt: opening turns 1.7 to 4.9 s, follow-up turns about 2 to 3.4 s, against 7.7 s cold before. Most of what's left is Haiku's thinking, which this CLI can't turn off (`MAX_THINKING_TOKENS`, `alwaysThinkingEnabled` and `CLAUDE_CODE_DISABLE_THINKING` were all tried).
+   - Fixed: Haiku called game actions as native tools on 4 of 4 opening turns, which wasted a round trip and often ended in "I can't move". The rendered prompt now says StructuredOutput is the only tool and lists actions compactly. Measured afterwards: 0 of 24.
+   - **Known bridge bugs, open**, from a fresh review of the warm sessions (verdict: ship after fixes). Fix 1 and 2 before relying on it:
+     1. The turn timeout doesn't cover the stdin write: a cold child stalled before reading stdin can hang the brain thread. `/cp stop` or a new order kills it.
+     2. A `reset()` during an opening's start is lost, so `/cp stop` right after an order doesn't stop that model call.
+     3. FIXED 23 Oct (untested on Linux and macOS): `isClaude` also matches by command line (`--input-format stream-json` plus `--system-prompt-file`) when the path is a resolved symlink or node.
+     4. `reset()` does a process walk and pid-file I/O on the server thread.
+     5. The idle sweep can race a turn's start.
+     6. FIXED 23 Oct: the scrub now also removes `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY` and `AWS_BEARER_TOKEN_BEDROCK` (test `scrubRemovesTheCloudProviderSwitches`).
+     - Branch `fix/warm-sessions` (commit 3328d70) holds an unfinished, untested start on these. It was stopped to save usage; check it before reusing it.
+   - The system prompt now points to gather and dig for anything beyond a block or two (23 Oct).
+   - Autonomy says a failed goal call once, not every interval, until a goal works again (23 Oct; test `aGoalFailureIsSaidOnceUntilAGoalWorksAgain`, checked to fail without the fix).
+   - Gather no longer stops at once with `inventory_full` when no slot is empty but a partial stack of the target has room (23 Oct; game-side, no unit test).
+   - Next latency win: let a reply mark the order done, so a simple order ("come here", "say hi") skips the report turn. That's one model call instead of two.
+
+12. Playtest 1 fixes, in game (on dev). Paste the relevant `latest.log` lines here.
+   - R1. At level 4 or 5, a skeleton in a cave 20+ blocks below, or 17+ blocks away in a straight line on a hill, triggers no flee. A zombie 10 blocks away on flat ground still does (`reflex FLEE`).
+   - R2. A zombie that keeps chasing after the first flee: the body flees again within about 2 s of the flee ending, before the zombie lands a hit, and the log shows a second `reflex FLEE` for the same `#id`, and no extra Claude chat line for the re-flee. The second flee leaves no new INTERRUPT in the transcript, and no reaction call while idle.
+   - R3. At a HOLD level (level 3, zombie at 5 blocks, full HP), the zombie standing nearby causes no repeated interrupts (one `near:` interrupt only).
+   - R4. `C what's in the ender chest` gets an explanation that ender chests are personal, not "tool not available".
+   - R5. A long order runs past 32 calls without "Session token cap reached" when most input is cache reads.
+   - P1. `C come here` walks to you.
+   - P2. `C what's in the chest` names its contents without being told where it is.
+   - P3. `C follow me` follows for up to 60 s (`follow_player` is at phase 2 now).
+13. Later, once the major bugs are ironed out: a friends package, so friends play on their own Claude Code accounts.
    - A CurseForge profile export (1.20.1, Forge 47.4.28, the mod jar) that friends import.
    - A setup `.bat` that finds Claude Code (PATH, `%USERPROFILE%\.local\bin`, npm global), installs it with the official installer only if the friend agrees, and starts its sign-in.
    - A short START HERE: import, run the setup, open a world, `/cp quickstart`, `/cp keycheck`.
    - Learn from Claudefox's `claude-in-zen/friends/` and its review notes U1 (don't present an unsigned build as normal), E6 (don't assume `.local\bin`) and U2 (show which account is signed in). Never ship F's own login or keys.
    - Brainstorm it with F first. A standalone launcher app is possible, but a CurseForge export does the same job with far less to maintain.
-11. Playtest 1 fixes, in game (on dev). Paste the relevant `latest.log` lines here.
-   - R1. At level 4 or 5, a skeleton in a cave 20+ blocks below, or 17+ blocks away in a straight line on a hill, triggers no flee. A zombie 10 blocks away on flat ground still does (`reflex FLEE`).
-   - R2. A zombie that keeps chasing after the first flee: the body flees again within about 2 s of the flee ending, before the zombie lands a hit, and the log shows a second `reflex FLEE` for the same `#id`, and no extra Claude chat line for the re-flee. The second flee leaves no new INTERRUPT in the transcript, and no reaction call while idle.
-   - R3. At a HOLD level (level 3, zombie at 5 blocks, full HP), the zombie standing nearby causes no repeated interrupts (one `near:` interrupt only).
-   - R4. `claude: what's in the ender chest` gets an explanation that ender chests are personal, not "tool not available".
-   - R5. A long order runs past 32 calls without "Session token cap reached" when most input is cache reads.
-   - P1. `claude: come here` walks to you.
-   - P2. `claude: what's in the chest` names its contents without being told where it is.
-   - With `tool_phase` 3: P3. `claude: follow me` follows for up to 60 s.
+
+## Claude Code facts (spikes from spec section 11, run 23 Oct with claude.exe 2.1.299, Haiku 5.5, effort low)
+- S1, yes: in one `--input-format stream-json --output-format stream-json --verbose --json-schema` session, every turn's `result` carries `structured_output`. The cache works across turns: cache_read went 1615, then 1725, then 2033.
+- S2, yes: a spare started on stream-json input sits idle with no output until its first line. Its first turn took 4.1 s, against 7.7 s for a cold start. Warm later turns took 2.3 to 4.3 s, depending mostly on output length.
+- S5, partly: `rate_limit_event` came only on a session's first turn, not on every turn. It carries `utilization` and `resetsAt` per window, and `status` (`allowed_warning` past `surpassedThreshold` 0.75). The ledger gets one reading per session unless it asks again.
+- S6, no: an idle `claude.exe` (no tools) starts no child processes, so `destroyForcibly` is enough and the tree kill is cheap insurance.
+- Seen in passing: F's seven-day window read 0.77 on 23 Oct.
+- Seen in passing: with a system prompt that doesn't explain the JSON reply, Haiku tried a native tool call ("No such tool available: say") before answering. `ClaudeCodeBrain`'s HOW_TO_ACT section prevents that; keep it.
 
 ## Risks to watch
 - API cost during busy play (plan §3 and §9). Watch the token count in `/cp status`.

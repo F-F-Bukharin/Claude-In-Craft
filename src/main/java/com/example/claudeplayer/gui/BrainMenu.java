@@ -84,6 +84,7 @@ public final class BrainMenu {
     private static Component title(AgentLoop loop, boolean halted) {
         String head;
         if (!loop.active()) head = halted ? "halted" : "idle";
+        else if (loop.goalRunning()) head = "autonomous goal";
         else if (loop.orderFrom().isEmpty()) head = "reacting to a threat";
         else head = "order from " + WorldText.clean(loop.orderFrom(), WorldText.NAME_MAX) + ": \""
                 + WorldText.clean(loop.orderText(), TITLE_TEXT_MAX) + "\"";

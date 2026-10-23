@@ -18,6 +18,7 @@ import com.example.claudeplayer.core.brain.DemoBrain;
 import com.example.claudeplayer.core.brain.PromptBuilder;
 import com.example.claudeplayer.core.brain.ToolSchemas;
 import com.example.claudeplayer.core.chat.ChatIntake;
+import com.example.claudeplayer.core.chat.ChatLines;
 import com.example.claudeplayer.core.chat.Conversation;
 import com.example.claudeplayer.core.memory.JsonMemoryFile;
 import com.example.claudeplayer.core.memory.Memory;
@@ -26,6 +27,7 @@ import com.example.claudeplayer.core.safety.CautionLevel;
 import com.example.claudeplayer.core.safety.Guardrails;
 import com.example.claudeplayer.core.safety.WorldText;
 import com.example.claudeplayer.event.DamageWatcher;
+import com.example.claudeplayer.event.HungerWatcher;
 import com.example.claudeplayer.nav.EscapePlanner;
 import com.example.claudeplayer.nav.Navigator;
 import com.mojang.logging.LogUtils;
@@ -70,6 +72,7 @@ public final class AgentRuntime {
     private final EscapePlanner escape;
     private final ActionQueue queue;
     private final DamageWatcher damage;
+    private final HungerWatcher hunger;
     private final ExecutorService brainThread;
     private final ApiBrain brain;
     private final ClaudeCodeBrain claudeCode;
@@ -94,6 +97,7 @@ public final class AgentRuntime {
         this.queue = new ActionQueue(settings.actionsPerSecond(), settings.actionTimeoutSeconds() * 20,
                 new MemoryActions(memory, new ActionExecutor(this)));
         this.damage = new DamageWatcher(this);
+        this.hunger = new HungerWatcher(this);
         this.brainThread = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "claudeplayer-brain");
             t.setDaemon(true);
@@ -107,8 +111,10 @@ public final class AgentRuntime {
         PromptBuilder prompts = new PromptBuilder(settings,
                 PromptBuilder.loadTemplate(configDir.resolve("claudeplayer_system_prompt.md")));
         Brain backend = settings.usesApi() ? brain : claudeCode;
+        ToolSchemas tools = new ToolSchemas(settings.toolPhase());
         this.loop = new AgentLoop(settings, new DemoBrain(backend), brainThread, this::onMainThread, queue, guardrails, prompts,
-                new ToolSchemas(settings.toolPhase()), memory, new LoopHost());
+                tools, memory, new LoopHost(), System::currentTimeMillis);
+        if (!settings.usesApi()) brainThread.execute(() -> claudeCode.prewarm(prompts.system(), tools.definitions()));
         LOG.info("Claude Player ready: brain {}, model {}, caution level {}, {} allowlisted, {} long-term memories",
                 settings.brain(), settings.model(), level().number(), Config.allowlist().size(), memory.longTerm().size());
     }
@@ -135,6 +141,7 @@ public final class AgentRuntime {
         ticks++;
         body.tick();
         damage.tick(); // reflexes enqueue before the queue ticks, so a level-3 action starts this tick
+        hunger.tick();
         queue.tick();
         loop.tick();
         if (quickstartFor != null && ticks >= quickstartAt) {
@@ -152,7 +159,7 @@ public final class AgentRuntime {
         String name = player.getGameProfile().getName();
         List<String> allowlist = Config.allowlist();
         if (ChatIntake.allowed(name, allowlist)) conversation.add(name, raw);
-        ChatIntake.Intake intake = ChatIntake.classify(name, raw, settings.trigger(), allowlist);
+        ChatIntake.Intake intake = ChatIntake.classify(name, raw, settings.triggers(), allowlist);
         if (intake instanceof ChatIntake.Order order) {
             order(order.player(), order.text());
         } else if (intake instanceof ChatIntake.Stop) {
@@ -161,14 +168,17 @@ public final class AgentRuntime {
             notice(body.respawn());
         } else if (intake instanceof ChatIntake.SetLevel set) {
             setLevel(set.level(), set.player());
+        } else if (intake instanceof ChatIntake.Autonomy auto) {
+            autonomy(auto.player(), auto.on());
         }
     }
 
-    /** Kill switch, from {@code claude: stop} or {@code /cp stop}. */
+    /** Kill switch, from {@code C stop} or {@code /cp stop}. Ends autonomy too. */
     public void halt() {
+        boolean wasAutonomous = loop.autonomous();
         loop.stop();
         navigator.stop(body.player());
-        if (body.alive()) say("Stopping.");
+        if (body.alive()) say(wasAutonomous ? "Stopping. Autonomy off." : "Stopping.");
     }
 
     public String setLevel(CautionLevel level, String by) {
@@ -184,10 +194,12 @@ public final class AgentRuntime {
 
     /** Chat as the body. */
     public void say(String text) {
-        String clean = WorldText.clean(text, 600);
-        if (clean.isEmpty()) return;
-        conversation.add(settings.bodyName(), clean);
-        server.getPlayerList().broadcastSystemMessage(Component.literal("<" + settings.bodyName() + "> " + clean), false);
+        List<String> lines = ChatLines.fit(WorldText.clean(text, 256));
+        if (lines.isEmpty()) return;
+        conversation.add(settings.bodyName(), String.join(" ", lines));
+        for (String line : lines) {
+            server.getPlayerList().broadcastSystemMessage(Component.literal("<" + settings.bodyName() + "> " + line), false);
+        }
     }
 
     /** A gray system line in chat. */
@@ -199,8 +211,10 @@ public final class AgentRuntime {
 
     /** The body died: the loop stops and waits for a respawn order (death is accepted, D3). */
     public void onBodyDied(String cause) {
+        boolean wasAutonomous = loop.autonomous();
         loop.bodyGone();
-        say("I died (" + cause + "). Respawn me with " + settings.trigger() + " respawn or /cp respawn.");
+        say("I died (" + cause + "). Respawn me with " + settings.trigger() + " respawn or /cp respawn."
+                + (wasAutonomous ? " Autonomy off." : ""));
     }
 
     /** /cp keycheck, on the brain thread: a free count_tokens call (api), or one tiny Claude Code call. */
@@ -287,8 +301,8 @@ public final class AgentRuntime {
     public String status() {
         String state = body.alive() ? "in the world" : body.dead() ? "dead" : "not spawned";
         CautionLevel l = level();
-        return String.format(Locale.ROOT, "%s is %s | caution %d (%s) | %s | queue: %s, %d waiting | memory: %d short, %d long | %d calls, %d tokens this session",
-                settings.bodyName(), state, l.number(), l.title, loop.status(),
+        return String.format(Locale.ROOT, "%s is %s | caution %d (%s) | %s | %s | queue: %s, %d waiting | memory: %d short, %d long | %d calls, %d tokens this session",
+                settings.bodyName(), state, l.number(), l.title, loop.status(), loop.autonomyStatus(),
                 Objects.requireNonNullElse(queue.runningTool(), "idle"), queue.waitingCount(),
                 memory.shortTerm().size(), memory.longTerm().size(), guardrails.callsMade(), guardrails.tokensUsed());
     }
@@ -342,13 +356,28 @@ public final class AgentRuntime {
     }
 
     private void order(String player, String text) {
-        if (!body.alive()) {
-            notice(body.dead()
-                    ? settings.bodyName() + " is dead. Respawn with " + settings.trigger() + " respawn or /cp respawn."
-                    : settings.bodyName() + " isn't spawned. Use /cp spawn.");
+        if (bodyMissing()) return;
+        loop.startOrder(player, text);
+    }
+
+    /** {@code C go do your thing} / {@code C auto off}. Off leaves the kill switch alone and a running order too. */
+    private void autonomy(String player, boolean on) {
+        if (!on) {
+            loop.stopAutonomy();
+            say("Autonomy off.");
             return;
         }
-        loop.startOrder(player, text);
+        if (bodyMissing()) return;
+        loop.startAutonomy(player);
+        say("Going solo. Call me with " + settings.trigger() + " <order>.");
+    }
+
+    private boolean bodyMissing() {
+        if (body.alive()) return false;
+        notice(body.dead()
+                ? settings.bodyName() + " is dead. Respawn with " + settings.trigger() + " respawn or /cp respawn."
+                : settings.bodyName() + " isn't spawned. Use /cp spawn.");
+        return true;
     }
 
     // server.tell always queues (execute would run inline on the server thread), and closed drops late results.
@@ -363,6 +392,7 @@ public final class AgentRuntime {
         loop.stop();
         body.despawnForShutdown();
         brainThread.shutdownNow();
+        claudeCode.close();
     }
 
     private final class LoopHost implements AgentLoop.Host {

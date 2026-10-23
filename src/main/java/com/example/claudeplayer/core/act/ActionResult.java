@@ -21,6 +21,11 @@ public record ActionResult(Status status, String reason, String data) {
         return new ActionResult(Status.FAILED, reason, null);
     }
 
+    /** failed plus what got done before it failed (gather's and dig's progress). */
+    public static ActionResult failed(String reason, String data) {
+        return new ActionResult(Status.FAILED, reason, data);
+    }
+
     public static ActionResult cancelled() {
         return new ActionResult(Status.CANCELLED, null, null);
     }

@@ -21,7 +21,7 @@ public final class Config {
             .comment("Path to claude.exe (or claude). Empty finds it on PATH or in ~/.local/bin.")
             .define("claude_code_path", D.claudeCodePath());
     private static final ForgeConfigSpec.IntValue CLAUDE_CODE_TIMEOUT = B
-            .comment("Seconds one Claude Code call may take, startup included.")
+            .comment("Seconds one Claude Code turn may take before its session is killed.")
             .defineInRange("claude_code_timeout_seconds", D.claudeCodeTimeoutSeconds(), 10, 600);
     private static final ForgeConfigSpec.ConfigValue<String> MODEL = B
             .comment("Model id, for either brain.").define("model", D.model());
@@ -45,7 +45,9 @@ public final class Config {
             .comment("The body's player name, 3 to 16 letters, digits or underscores.")
             .define("body_name", D.bodyName(), o -> o instanceof String s && s.matches("\\w{3,16}"));
     private static final ForgeConfigSpec.ConfigValue<String> TRIGGER = B
-            .comment("Chat prefix for orders.").define("trigger", D.trigger(), o -> o instanceof String s && !s.isBlank());
+            .comment("Chat prefix for orders. One ending in a letter, like C, must be typed in that case and followed by a space: \"C come here\".",
+                    "The body's name with a colon (\"Claude: come here\") always works too.")
+            .define("trigger", D.trigger(), o -> o instanceof String s && !s.isBlank());
     private static final ForgeConfigSpec.ConfigValue<List<? extends String>> ORDERS_ALLOWLIST = B
             .comment("Players allowed to give orders. Empty means nobody. Ops can edit it with /cp allow and /cp deny.")
             .defineListAllowEmpty("orders_allowlist", List.of(), o -> o instanceof String s && !s.isBlank());
@@ -68,9 +70,6 @@ public final class Config {
     private static final ForgeConfigSpec.LongValue SESSION_TOKEN_CAP = B
             .comment("Model calls stop once this many tokens were used since the server started.")
             .defineInRange("session_token_cap", D.sessionTokenCap(), 1_000L, Long.MAX_VALUE);
-    private static final ForgeConfigSpec.IntValue BREAK_RADIUS = B
-            .comment("Blocks may be broken or placed only within this distance of home.")
-            .defineInRange("break_radius", D.breakRadius(), 0, 1024);
     private static final ForgeConfigSpec.IntValue HOSTILE_RANGE = B
             .defineInRange("hostile_range", D.hostileRange(), 2, 64);
     private static final ForgeConfigSpec.IntValue ESCAPE_DISTANCE = B
@@ -78,8 +77,8 @@ public final class Config {
     private static final ForgeConfigSpec.IntValue ESCAPE_MAX_STEPS = B
             .defineInRange("escape_max_steps", D.escapeMaxSteps(), 2, 64);
     private static final ForgeConfigSpec.IntValue TOOL_PHASE = B
-            .comment("Highest plan phase whose tools Claude may call: 2 = v1 tools, memory and inspect_container;",
-                    "3 adds follow_player; 4 adds attack_entity; 6 adds the v2 world tools (stubs for now).")
+            .comment("Highest plan phase whose tools Claude may call: 2 = v1 tools, memory, containers, eat, follow_player,",
+                    "the block tools (mine_block, place_block, equip), craft and smelt; 4 adds attack_entity.")
             .defineInRange("tool_phase", D.toolPhase(), 1, 6);
     private static final ForgeConfigSpec.BooleanValue IDLE_REACTIONS = B
             .comment("Let Claude react to threats when no order is running. Costs model calls.")
@@ -87,6 +86,9 @@ public final class Config {
     private static final ForgeConfigSpec.BooleanValue REFLEXES = B
             .comment("Code reflexes: flee or fight by caution level, and refuse moves into lava, fire or deadly drops, before the model hears about it.")
             .define("reflexes", D.reflexes());
+    private static final ForgeConfigSpec.BooleanValue AUTO_EAT = B
+            .comment("Eat on its own when hungry, carrying food and nothing hostile is near. Costs no model calls.")
+            .define("auto_eat", D.autoEat());
     private static final ForgeConfigSpec.IntValue MEMORY_SHORT_CAPACITY = B
             .comment("Short-term notes kept at once; the oldest goes first.")
             .defineInRange("memory_short_capacity", D.shortTermCapacity(), 1, 256);
@@ -96,6 +98,12 @@ public final class Config {
     private static final ForgeConfigSpec.IntValue MEMORY_LONG_CAPACITY = B
             .comment("Long-term memories kept per world (saved in <world>/claudeplayer/memory.json).")
             .defineInRange("memory_long_capacity", D.longTermCapacity(), 1, 1024);
+    private static final ForgeConfigSpec.IntValue CLAUDE_CODE_IDLE = B
+            .comment("Minutes a warm Claude Code process (an order's session, or the spare kept for the next order) may sit unused before it is stopped.")
+            .defineInRange("claude_code_idle_minutes", D.claudeCodeIdleMinutes(), 1, 1440);
+    private static final ForgeConfigSpec.IntValue AUTONOMY_INTERVAL = B
+            .comment("While autonomous (\"C go do your thing\"), at least this many seconds between goals, each one model call.")
+            .defineInRange("autonomy_interval_seconds", D.autonomyIntervalSeconds(), 15, 3600);
 
     static final ForgeConfigSpec SPEC = B.build();
 
@@ -124,16 +132,18 @@ public final class Config {
             b.maxSteps = MAX_STEPS.get();
             b.maxCallsPerMinute = MAX_CALLS_PER_MINUTE.get();
             b.sessionTokenCap = SESSION_TOKEN_CAP.get();
-            b.breakRadius = BREAK_RADIUS.get();
             b.hostileRange = HOSTILE_RANGE.get();
             b.escapeDistance = ESCAPE_DISTANCE.get();
             b.escapeMaxSteps = ESCAPE_MAX_STEPS.get();
             b.toolPhase = TOOL_PHASE.get();
             b.idleReactions = IDLE_REACTIONS.get();
             b.reflexes = REFLEXES.get();
+            b.autoEat = AUTO_EAT.get();
             b.shortTermCapacity = MEMORY_SHORT_CAPACITY.get();
             b.shortTermMinutes = MEMORY_SHORT_MINUTES.get();
             b.longTermCapacity = MEMORY_LONG_CAPACITY.get();
+            b.claudeCodeIdleMinutes = CLAUDE_CODE_IDLE.get();
+            b.autonomyIntervalSeconds = AUTONOMY_INTERVAL.get();
         });
     }
 

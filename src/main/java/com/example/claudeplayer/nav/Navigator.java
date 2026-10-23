@@ -57,7 +57,7 @@ public final class Navigator {
     }
 
     /** One tick of steering toward {@code point}. */
-    static void steer(ServerPlayer body, Vec3 point) {
+    public static void steer(ServerPlayer body, Vec3 point) {
         double dx = point.x - body.getX();
         double dz = point.z - body.getZ();
         float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
@@ -69,7 +69,7 @@ public final class Navigator {
         body.setJumping(climb && (body.onGround() || body.isInWater()));
     }
 
-    static void halt(ServerPlayer body) {
+    public static void halt(ServerPlayer body) {
         body.zza = 0f;
         body.xxa = 0f;
         body.setJumping(false);

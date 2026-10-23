@@ -89,7 +89,7 @@ class AgentLoopTest {
             public void save(List<Memory.Entry> entries) {}
         }, () -> now);
         loop = new AgentLoop(settings, brain, brainThread::add, mainThread::add, queue, guardrails,
-                new PromptBuilder(settings, "You are {{name}}."), new ToolSchemas(settings.toolPhase()), memory, host);
+                new PromptBuilder(settings, "You are {{name}}."), new ToolSchemas(settings.toolPhase()), memory, host, () -> now);
     }
 
     /** Runs queued model calls and delivers their replies until both queues are empty. */
@@ -507,6 +507,150 @@ class AgentLoopTest {
         Brain.Reply passthrough = new DemoBrain(request -> text("from the API")).send(new Brain.Request("", new JsonArray(),
                 JsonParser.parseString("[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"<order from=\\\"F\\\">\\ncome here\\n</order>\"}]}]").getAsJsonArray()));
         assertEquals("from the API", passthrough.text());
+    }
+
+    @Test
+    void autonomyRunsOneCallPerGoalAndAtMostOneGoalPerInterval() {
+        build(b -> b.autonomyIntervalSeconds = 60);
+        script.add(tools(say("g1"), say("g2")));
+        loop.startAutonomy("F");
+        ticks(1);
+        assertEquals(1, requests.size());
+        assertTrue(lastText(0).startsWith("<autonomy by=\"F\">\nNo one gave an order."), lastText(0));
+        assertTrue(loop.goalRunning());
+        ticks(40);
+        assertEquals(1, requests.size(), "the goal's results don't go back to the model");
+        assertFalse(loop.active());
+        assertEquals(List.of(), said, "a goal with no reply text ends quietly");
+
+        now += 59_000;
+        ticks(5);
+        assertEquals(1, requests.size(), "the next goal waits for the interval");
+        assertEquals("autonomy on (next goal in 1 s)", loop.autonomyStatus());
+        script.add(text("I need food."));
+        now += 1_000;
+        ticks(1);
+        assertEquals(2, requests.size());
+        assertEquals(1, requests.get(1).messages().size(), "each goal is a fresh transcript");
+        assertTrue(lastText(1).contains("<last_goals>\n- goal #1: say ok, say ok\n</last_goals>"), lastText(1));
+        assertEquals(List.of("I need food."), said);
+    }
+
+    @Test
+    void aGoalFailureIsSaidOnceUntilAGoalWorksAgain() {
+        build(b -> b.autonomyIntervalSeconds = 60);
+        BrainException down = new BrainException(BrainException.Kind.OVERLOADED, 529, "overloaded", null);
+        script.add(down);
+        loop.startAutonomy("F");
+        ticks(1);
+        assertEquals(1, notices.size());
+        script.add(down);
+        now += 60_000;
+        ticks(1);
+        assertEquals(2, requests.size());
+        assertEquals(1, notices.size(), "the same failure a minute later stays quiet");
+        script.add(tools(say("g")));
+        now += 60_000;
+        ticks(40);
+        script.add(down);
+        now += 60_000;
+        ticks(1);
+        assertEquals(4, requests.size());
+        assertEquals(2, notices.size(), "after a goal works, a new failure is said again");
+    }
+
+    @Test
+    void anOrderDisplacesAGoalRunsNormallyAndAutonomyResumes() {
+        build(b -> {});
+        script.add(tools(move("m")));
+        loop.startAutonomy("F");
+        ticks(3);
+        assertEquals("move_to", queue.runningTool());
+        script.add(tools(say("o1")));
+        script.add(text("Here."));
+        loop.startOrder("F", "come here");
+        pump();
+        ticks(20);
+        assertEquals(3, requests.size(), "the goal's one call, then both rounds of the order");
+        assertTrue(lastText(1).startsWith("<order from=\"F\">\ncome here"), lastText(1));
+        assertEquals(List.of("ok"), results(2));
+        assertEquals(List.of("Here."), said);
+        assertTrue(loop.autonomous());
+
+        script.add(tools(say("g2")));
+        now += 60_000;
+        ticks(1);
+        assertEquals(4, requests.size());
+        assertTrue(lastText(3).contains("- goal #1: move_to unfinished; an order took over"), lastText(3));
+    }
+
+    @Test
+    void aThreatDuringAGoalStartsAReaction() {
+        build(b -> {});
+        script.add(tools(move("m")));
+        loop.startAutonomy("F");
+        ticks(3);
+        script.add(text("Ran."));
+        loop.reflex("creeper #9 is 3.0 blocks away, fuse lit.", List.of(new Action.Flee()));
+        pump();
+        assertEquals(2, requests.size());
+        assertTrue(lastText(1).startsWith("<event>"), lastText(1));
+        assertFalse(loop.goalRunning());
+    }
+
+    @Test
+    void autoOffStopAndDeathEndAutonomy() {
+        build(b -> {});
+        script.add(tools(move("m")));
+        loop.startAutonomy("F");
+        ticks(3);
+        assertEquals("move_to", queue.runningTool());
+        loop.stopAutonomy();
+        assertTrue(queue.idle(), "auto off drops the running goal");
+        assertEquals(Guardrails.Check.OK, guardrails.allowCall(), "auto off is not the kill switch");
+        assertEquals("autonomy off", loop.autonomyStatus());
+
+        now += 60_000;
+        loop.startAutonomy("F");
+        loop.stop();
+        assertEquals(Guardrails.Check.HALTED, guardrails.allowCall());
+        loop.startAutonomy("F");
+        loop.bodyGone();
+        ticks(5);
+        assertFalse(loop.autonomous());
+        assertEquals(1, requests.size());
+    }
+
+    @Test
+    void aGuardrailBlockedCycleIsSkippedNotQueued() {
+        build(b -> b.maxCallsPerMinute = 1);
+        script.add(text("Hi."));
+        loop.startOrder("F", "say hi"); // the minute's only call, at 0 s
+        pump();
+        now = 1_000;
+        loop.startAutonomy("F");
+        ticks(3);
+        assertEquals(1, requests.size(), "rate-limited: this cycle is skipped");
+        now = 60_000;
+        ticks(3);
+        assertEquals(1, requests.size(), "the call window is open again, but the next cycle isn't due");
+        script.add(tools(say("g1")));
+        now = 61_000;
+        ticks(1);
+        assertEquals(2, requests.size());
+    }
+
+    @Test
+    void theTokenCapEndsAutonomyAndSaysSoOnce() {
+        build(b -> b.sessionTokenCap = 1_000);
+        guardrails.recordTokens(1_000);
+        loop.startAutonomy("F");
+        ticks(3);
+        now += 120_000;
+        ticks(3);
+        assertEquals(0, requests.size());
+        assertFalse(loop.autonomous());
+        assertEquals(List.of("Session token cap reached (1000). Autonomy off."), notices);
     }
 
     @Test

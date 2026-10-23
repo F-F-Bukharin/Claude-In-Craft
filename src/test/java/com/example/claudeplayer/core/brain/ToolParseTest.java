@@ -35,6 +35,27 @@ class ToolParseTest {
         assertEquals(new Action.Stop(), v1.parse("stop", json("{}")).action());
         assertEquals(new Action.Note("chest@1,2,3", "15 oak_log"), v1.parse("note", json("{\"subject\":\"chest@1,2,3\",\"text\":\"15 oak_log\"}")).action());
         assertEquals(new Action.InspectContainer(1, 2, 3), v1.parse("inspect_container", json("{\"x\":1,\"y\":2,\"z\":3}")).action());
+        assertEquals(new Action.Look(16), v1.parse("look", json("{\"radius\":16}")).action());
+        assertEquals(new Action.MineBlock(4, -10, 7), v1.parse("mine_block", json("{\"x\":4,\"y\":-10,\"z\":7}")).action());
+        assertEquals(new Action.PlaceBlock(4, 65, 7, "dirt"), v1.parse("place_block", json("{\"x\":4,\"y\":65,\"z\":7,\"item\":\"dirt\"}")).action());
+        assertEquals(new Action.Equip("minecraft:iron_pickaxe"), v1.parse("equip", json("{\"item\":\"minecraft:iron_pickaxe\"}")).action());
+        assertEquals(new Action.Craft("oak_planks", 4), v1.parse("craft", json("{\"item\":\"oak_planks\",\"count\":4}")).action());
+        assertEquals(new Action.Smelt("minecraft:raw_iron", 8), v1.parse("smelt", json("{\"item\":\"minecraft:raw_iron\",\"count\":\"8\"}")).action());
+    }
+
+    @Test
+    void survivalAndStorageToolsParse() {
+        assertEquals(new Action.Eat(false), v1.parse("eat", json("{}")).action());
+        assertEquals(new Action.Store(1, 2, 3, "oak_log", 15),
+                v1.parse("store", json("{\"x\":1,\"y\":2,\"z\":3,\"item\":\"minecraft:Oak_Log\",\"count\":15}")).action());
+        assertEquals(new Action.Store(1, 2, 3, Action.ALL, 0),
+                v1.parse("store", json("{\"x\":1,\"y\":2,\"z\":3,\"item\":\"all\",\"count\":9999}")).action(), "count is ignored for all");
+        assertEquals(new Action.Take(1, 2, 3, "iron_ingot", 2304),
+                v1.parse("take", json("{\"x\":1,\"y\":2,\"z\":3,\"item\":\"iron_ingot\",\"count\":2304}")).action());
+        assertEquals(new Action.FollowPlayer("Steve", 30), v1.parse("follow_player", json("{\"name\":\"Steve\",\"seconds\":30}")).action());
+        assertEquals("failed:bad_input:count", error(v1, "take", "{\"x\":1,\"y\":2,\"z\":3,\"item\":\"iron_ingot\",\"count\":2305}"));
+        assertEquals("failed:bad_input:count", error(v1, "store", "{\"x\":1,\"y\":2,\"z\":3,\"item\":\"oak_log\",\"count\":0}"));
+        assertEquals("failed:bad_input:item", error(v1, "store", "{\"x\":1,\"y\":2,\"z\":3,\"count\":1}"));
     }
 
     @Test
@@ -44,6 +65,29 @@ class ToolParseTest {
         assertEquals("failed:bad_input:seconds", error(v1, "wait", "{\"seconds\":99}"));
         assertEquals("failed:bad_input:text", error(v1, "say", "{\"text\":\"   \"}"));
         assertEquals("failed:bad_input:x", error(v1, "inspect_container", "{\"x\":1.5,\"y\":2,\"z\":3}"));
+        assertEquals("failed:bad_input:radius", error(v1, "look", "{\"radius\":99}"));
+        assertEquals("failed:bad_input:y", error(v1, "mine_block", "{\"x\":4,\"y\":999,\"z\":7}"));
+        assertEquals("failed:bad_input:item", error(v1, "place_block", "{\"x\":4,\"y\":65,\"z\":7}"));
+        assertEquals("failed:bad_input:item", error(v1, "equip", "{\"item\":\"  \"}"));
+        assertEquals("failed:bad_input:count", error(v1, "craft", "{\"item\":\"stick\",\"count\":65}"));
+        assertEquals("failed:bad_input:count", error(v1, "craft", "{\"item\":\"stick\",\"count\":0}"));
+        assertEquals("failed:bad_input:item", error(v1, "craft", "{\"count\":1}"));
+        assertEquals("failed:bad_input:count", error(v1, "smelt", "{\"item\":\"raw_iron\",\"count\":2.5}"));
+        assertEquals("failed:bad_input:item", error(v1, "smelt", "{\"item\":\" \",\"count\":1}"));
+    }
+
+    @Test
+    void gatherAndDigParse() {
+        assertEquals(new Action.Gather("log", 16), v1.parse("gather", json("{\"target\":\"log\",\"count\":16}")).action());
+        assertEquals(new Action.Gather("iron_ore", 256), v1.parse("gather", json("{\"target\":\"minecraft:Iron_Ore\",\"count\":\"256\"}")).action());
+        assertEquals(new Action.Dig("down", 15), v1.parse("dig", json("{\"direction\":\"Down\",\"length\":15}")).action());
+        assertEquals(new Action.Dig("north", 1), v1.parse("dig", json("{\"direction\":\"north\",\"length\":1}")).action());
+        assertEquals("failed:bad_input:count", error(v1, "gather", "{\"target\":\"log\",\"count\":257}"));
+        assertEquals("failed:bad_input:count", error(v1, "gather", "{\"target\":\"log\",\"count\":0}"));
+        assertEquals("failed:bad_input:target", error(v1, "gather", "{\"count\":4}"));
+        assertEquals("failed:bad_input:direction", error(v1, "dig", "{\"direction\":\"up\",\"length\":4}"));
+        assertEquals("failed:bad_input:length", error(v1, "dig", "{\"direction\":\"east\",\"length\":33}"));
+        assertEquals("failed:bad_input:length", error(v1, "dig", "{\"direction\":\"east\"}"));
     }
 
     @Test
@@ -67,7 +111,9 @@ class ToolParseTest {
             assertEquals("object", def.getAsJsonObject("input_schema").get("type").getAsString());
             names.add(def.get("name").getAsString());
         }
-        assertEquals(List.of("get_state", "move_to", "say", "wait", "stop", "flee", "note", "remember", "forget", "inspect_container"), names);
+        assertEquals(List.of("get_state", "look", "move_to", "say", "wait", "stop", "flee", "note", "remember", "forget", "inspect_container",
+                "store", "take", "eat", "follow_player", "mine_block", "place_block", "equip", "craft", "smelt",
+                "gather", "dig"), names);
     }
 
     @Test
@@ -102,6 +148,14 @@ class ToolParseTest {
         for (String bad : List.of("0", "4", "1.5", "\"high\"")) {
             assertEquals("failed:bad_input:prio", error(v1, "stop", "{\"prio\":" + bad + "}"), bad);
         }
+    }
+
+    @Test
+    void nullPrioMeansTheDefault() {
+        ToolSchemas.Parsed p = v1.parse("stop", json("{\"prio\":null}"));
+        assertEquals(new Action.Stop(), p.action());
+        assertEquals(1, p.prio());
+        assertEquals("failed:bad_input:z", error(v1, "move_to", "{\"x\":1,\"y\":64,\"z\":null}"), "a null required field still fails");
     }
 
     @Test
