@@ -48,7 +48,7 @@ public final class DamageWatcher {
     private final AgentRuntime rt;
     private final ThreatTracker threats = new ThreatTracker(100, REARM_TICKS);
     private final ThreatTracker fuses = new ThreatTracker(0, 60);
-    private final Map<Integer, Long> chased = new HashMap<>(); // mob id -> tick its decision last ran
+    private final Map<Integer, Long> chased = new HashMap<>(); // mob id -> tick its next chase check is due
     // mob id -> tick last seen, for mobs whose first reflex reached the model; kept on the threats' re-arm horizon
     // (not dropped on leaving range), since their near: key stays reported that long
     private final Map<Integer, Long> heard = new HashMap<>();
@@ -98,16 +98,16 @@ public final class DamageWatcher {
                 boolean lit = SnapshotBuilder.litCreeper(mob);
                 if (!lit && mob instanceof Creeper) fuses.forget("lit:" + mob.getId()); // a re-lit fuse is a new one
                 if (lit ? fuses.report("lit:" + mob.getId(), now) : threats.report("near:" + mob.getId(), now)) {
-                    chased.put(mob.getId(), now);
                     pending = react(p, String.format(Locale.ROOT, "%s is %.1f blocks away%s.",
                             describe(mob), p.distanceTo(mob), lit ? ", fuse lit" : ""), mob);
+                    chased.put(mob.getId(), now + Reflexes.chaseWait(!pending.actions().isEmpty()));
                     break;
                 }
                 if (rt.settings().reflexes() && Reflexes.chaseDue(p.distanceTo(mob), now,
-                        chased.getOrDefault(mob.getId(), Long.MIN_VALUE / 2), heard.containsKey(mob.getId()), levelThree)) {
-                    chased.put(mob.getId(), now);
+                        chased.getOrDefault(mob.getId(), Long.MIN_VALUE), heard.containsKey(mob.getId()), levelThree)) {
                     Pending chase = react(p, String.format(Locale.ROOT, "%s is still chasing, %.1f blocks away%s.",
                             describe(mob), p.distanceTo(mob), lit ? ", fuse lit" : ""), mob);
+                    chased.put(mob.getId(), now + Reflexes.chaseWait(!chase.actions().isEmpty())); // NONE checks again soon
                     if (!chase.actions().isEmpty()) { // a HOLD stays quiet, or a mob near the body would spam the model
                         pending = new Pending(chase.reason(), chase.actions(), true, chase.threat());
                         break;

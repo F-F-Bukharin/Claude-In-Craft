@@ -83,18 +83,27 @@ class ReflexesTest {
     }
 
     @Test
-    void aChaseIsDueWithinSixBlocksEveryTwoSeconds() {
+    void aChaseIsDueWithinSixBlocksOnceItsWaitIsOver() {
         assertTrue(Reflexes.chaseDue(4.0, 1000, 900, true, false), "in range and due");
         assertTrue(Reflexes.chaseDue(6.0, 1000, 900, true, false), "6 blocks is in range");
         assertFalse(Reflexes.chaseDue(6.5, 1000, 900, true, false), "too far");
         assertFalse(Reflexes.chaseDue(4.0, 1000, 900, true, true), "a level 3 is running");
-        assertFalse(Reflexes.chaseDue(4.0, 1000, 961, true, false), "fired 39 ticks ago");
-        assertTrue(Reflexes.chaseDue(4.0, 1000, 960, true, false), "fired 40 ticks ago");
+        assertFalse(Reflexes.chaseDue(4.0, 1000, 1001, true, false), "due next tick");
+        assertTrue(Reflexes.chaseDue(4.0, 1000, 1000, true, false), "due this tick");
+    }
+
+    @Test
+    void aMoveWaitsTwoSecondsAndNoneHalfASecond() {
+        assertEquals(40, Reflexes.chaseWait(true), "a flee or a fight");
+        assertEquals(10, Reflexes.chaseWait(false), "NONE: a HOLD at 4 blocks gets its FIGHT soon once adjacent");
+        long due = 1000 + Reflexes.chaseWait(false); // NONE at 4 blocks on tick 1000
+        assertFalse(Reflexes.chaseDue(1.5, 1009, due, true, false));
+        assertTrue(Reflexes.chaseDue(1.5, 1010, due, true, false), "adjacent 10 ticks later, rechecked then, not at 40");
     }
 
     @Test
     void aMobTheModelNeverHeardAboutNeverChases() {
-        assertFalse(Reflexes.chaseDue(1.0, 1000, Long.MIN_VALUE / 2, false, false), "never stamped, right next to the body");
+        assertFalse(Reflexes.chaseDue(1.0, 1000, Long.MIN_VALUE, false, false), "never stamped, right next to the body");
         assertFalse(Reflexes.chaseDue(4.0, 1000, 900, false, false), "in range and past the gap");
     }
 
