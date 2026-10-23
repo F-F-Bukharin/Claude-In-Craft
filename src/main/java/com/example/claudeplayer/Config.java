@@ -21,7 +21,7 @@ public final class Config {
             .comment("Path to claude.exe (or claude). Empty finds it on PATH or in ~/.local/bin.")
             .define("claude_code_path", D.claudeCodePath());
     private static final ForgeConfigSpec.IntValue CLAUDE_CODE_TIMEOUT = B
-            .comment("Seconds one Claude Code call may take, startup included.")
+            .comment("Seconds one Claude Code turn may take before its session is killed.")
             .defineInRange("claude_code_timeout_seconds", D.claudeCodeTimeoutSeconds(), 10, 600);
     private static final ForgeConfigSpec.ConfigValue<String> MODEL = B
             .comment("Model id, for either brain.").define("model", D.model());

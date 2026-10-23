@@ -151,6 +151,14 @@ class ToolParseTest {
     }
 
     @Test
+    void nullPrioMeansTheDefault() {
+        ToolSchemas.Parsed p = v1.parse("stop", json("{\"prio\":null}"));
+        assertEquals(new Action.Stop(), p.action());
+        assertEquals(1, p.prio());
+        assertEquals("failed:bad_input:z", error(v1, "move_to", "{\"x\":1,\"y\":64,\"z\":null}"), "a null required field still fails");
+    }
+
+    @Test
     void fleeIsAPhaseOneTool() {
         assertEquals(new Action.Flee(), new ToolSchemas(1).parse("flee", json("{}")).action());
     }

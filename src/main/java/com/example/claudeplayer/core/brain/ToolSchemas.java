@@ -197,8 +197,9 @@ public final class ToolSchemas {
 
     /** Validates one tool_use input. Numbers may arrive as JSON numbers or numeric strings. */
     private record Input(JsonObject json) {
+        /** A key set to null counts as absent, so {@code "prio": null} means the default. */
         boolean has(String key) {
-            return json.has(key);
+            return json.has(key) && !json.get(key).isJsonNull();
         }
 
         double number(String key, double min, double max) {

@@ -46,7 +46,7 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
    - The prompt should say to give an approach and its attack the same prio, since higher levels run first.
    - A slab, stair or carpet walkway over a drop can read as `hazard_drop` at low HP.
    - A hit from beyond `hostile_range` (a ghast) builds a flee that scraps routine work, then returns `ok:no_threats`.
-   - `"prio": null` fails the call; it could count as absent.
+   - FIXED 23 Oct: `"prio": null` now counts as absent (test `nullPrioMeansTheDefault`).
 9. Claude Brain screen, in game (merged into dev). Right-click the body.
    - B1. As an allowlisted player or an op, right-click Claude. A chest opens, titled `Claude Brain: order from <you>: "..."`. The running action comes first (lime dye), then the waiting ones (paper), each named by its tool and with its priority.
    - B2. As anyone else, right-click Claude. Nothing happens.
@@ -66,7 +66,7 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
    - **Known bridge bugs, open**, from a fresh review of the warm sessions (verdict: ship after fixes). Fix 1 and 2 before relying on it:
      1. The turn timeout doesn't cover the stdin write: a cold child stalled before reading stdin can hang the brain thread. `/cp stop` or a new order kills it.
      2. A `reset()` during an opening's start is lost, so `/cp stop` right after an order doesn't stop that model call.
-     3. The leftover-process sweep doesn't match Claude on Linux or macOS (symlinked paths).
+     3. FIXED 23 Oct (untested on Linux and macOS): `isClaude` also matches by command line (`--input-format stream-json` plus `--system-prompt-file`) when the path is a resolved symlink or node.
      4. `reset()` does a process walk and pid-file I/O on the server thread.
      5. The idle sweep can race a turn's start.
      6. FIXED 23 Oct: the scrub now also removes `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY` and `AWS_BEARER_TOKEN_BEDROCK` (test `scrubRemovesTheCloudProviderSwitches`).

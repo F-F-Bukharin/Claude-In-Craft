@@ -121,8 +121,11 @@ public final class ClaudeCodeEnv implements ClaudeCodeSessions.Launcher {
 
     static boolean isClaude(ProcessHandle h) {
         String command = h.info().command().orElse("").replace('\\', '/').toLowerCase(Locale.ROOT);
-        return command.endsWith("/claude") || command.endsWith("/claude.exe") || command.equals("claude")
-                || command.equals("claude.exe");
+        if (command.endsWith("/claude") || command.endsWith("/claude.exe") || command.equals("claude")
+                || command.equals("claude.exe")) return true;
+        // Linux and macOS resolve the symlink (…/claude/versions/<ver>) and npm installs run as node: match our flags.
+        String line = h.info().commandLine().orElse("");
+        return line.contains("--input-format stream-json") && line.contains("--system-prompt-file");
     }
 
     private synchronized void record(ProcessHandle h) {
