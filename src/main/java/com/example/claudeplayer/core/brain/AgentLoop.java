@@ -274,6 +274,9 @@ public final class AgentLoop implements ActionQueue.Listener {
     public void onFinished(ActionQueue.Entry entry, ActionResult result) {
         Call call = pending.remove(entry.callId());
         if (call == null) { // a reflex, or a call from an abandoned order
+            if (entry.callId().startsWith("reflex-") && result.isError() && orderFrom != null && !goal) {
+                report("Reflex " + entry.tool() + ": " + result.code()); // the model hears when a reflex fails
+            }
             checkProgress(); // a final reply may be waiting for the queue to go idle
             return;
         }

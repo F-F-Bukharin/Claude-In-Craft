@@ -621,11 +621,12 @@ class AgentLoopTest {
         pump();
         assertEquals(1, queue.waitingCount(), "the model's flee waits behind the reflex");
         script.add(text("Again."));
+        script.add(text("Noted.")); // the reflex's timeout is a failure, so the model hears it
         loop.startOrder("F", "again"); // drops the first order
         pump();
         ticks(250); // the reflex's move times out after 200 ticks
         assertEquals(List.of("MoveTo"), ran, "the dropped order's flee never ran; the reflex did");
-        assertEquals(List.of("Again."), said);
+        assertEquals(List.of("Noted."), said);
     }
 
     @Test
@@ -641,6 +642,39 @@ class AgentLoopTest {
         assertEquals(2, requests.size());
         assertTrue(lastText(1).contains("INTERRUPT: zombie #7 is 4.0 blocks away. Reflex: flee."), lastText(1));
         assertTrue(lastText(1).contains("INTERRUPT: creeper #9 is 3.0 blocks away, fuse lit. Reflex: flee."), lastText(1));
+    }
+
+    @Test
+    void aFailedReflexIsReportedToTheModelDuringAnOrder() {
+        build(b -> {});
+        script.add(tools(move("m")));
+        script.add(text("Trying."));
+        script.add(text("Noted."));
+        loop.startOrder("F", "walk");
+        pump();
+        ticks(3); // m is running
+        fleeResult = ActionResult.failed("no_escape");
+        loop.reflex("creeper #9 is 2.0 blocks away, fuse lit.", List.of(new Action.Flee()));
+        pump(); // the model hears the scrapped move and the reflex
+        ticks(1); // the flee runs and fails
+        assertEquals(3, requests.size());
+        assertTrue(lastText(2).contains("Reflex flee: failed:no_escape"), lastText(2));
+    }
+
+    @Test
+    void anOkReflexAddsNoOutcomeNote() {
+        build(b -> {});
+        script.add(tools(move("m")));
+        script.add(text("Trying."));
+        loop.startOrder("F", "walk");
+        pump();
+        ticks(3); // m is running
+        loop.reflex("creeper #9 is 2.0 blocks away, fuse lit.", List.of(new Action.Flee()));
+        pump();
+        ticks(1); // the flee runs and is ok
+        assertEquals(2, requests.size());
+        assertFalse(lastText(1).contains("Reflex flee:"), lastText(1));
+        assertEquals(List.of("Trying."), said);
     }
 
     @Test
