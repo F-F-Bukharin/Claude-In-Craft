@@ -11,6 +11,9 @@ public sealed interface Action {
     /** A wider top-down map than world_state.map (executed in the game). */
     record Look(int radius) implements Action {}
 
+    /** What a fan of rays from the eyes hits, as text (Sight); {@code direction} is forward, north, south, east, west, up or down. */
+    record See(String direction) implements Action {}
+
     record MoveTo(double x, double y, double z) implements Action {}
 
     record Say(String text) implements Action {}

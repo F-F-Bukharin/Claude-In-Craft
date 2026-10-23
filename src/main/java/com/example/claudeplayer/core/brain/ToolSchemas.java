@@ -1,5 +1,6 @@
 package com.example.claudeplayer.core.brain;
 
+import com.example.claudeplayer.core.Sight;
 import com.example.claudeplayer.core.act.Action;
 import com.example.claudeplayer.core.act.ActionResult;
 import com.example.claudeplayer.core.work.DigPlan;
@@ -34,7 +35,11 @@ public final class ToolSchemas {
 
     private record Tool(String name, int phase, String description, JsonObject schema, Parser parser) {}
 
-    private record Prop(String name, JsonObject schema) {}
+    private record Prop(String name, JsonObject schema, boolean required) {
+        Prop(String name, JsonObject schema) {
+            this(name, schema, true);
+        }
+    }
 
     private final int phase;
     private final List<Tool> tools = new ArrayList<>();
@@ -48,6 +53,9 @@ public final class ToolSchemas {
         add("look", 1, "See farther: the same top-down map as world_state.map, with a radius of 4 to 24 blocks instead of 8. A radius of 24 is about 900 tokens, so ask for what you need.",
                 in -> new Action.Look(in.integer("radius", 4, 24)),
                 integer("radius", "Blocks from you to the map's edge, 4 to 24."));
+        add("see", 2, "See what is in your line of sight, as text, for when the map doesn't show it (the map can't see through walls): the blocks in front of you grouped by id with a count and the nearest one's position and distance, ores, containers and ripe crops listed first with exact positions, water and lava, and the living things in view with ids. A fan of rays 70 degrees wide and 40 tall, up to 32 blocks, under 1 KB. With a direction other than forward you turn to look that way first (up and down tilt your head).",
+                in -> new Action.See(seeDirection(in)),
+                optional(text("direction", "forward (default, the way you face), north, south, east, west, up or down.")));
         add("move_to", 1, "Walk to a block position. Holds the queue until you arrive, there is no path (failed:no_path) or the action times out (failed:timeout).",
                 in -> new Action.MoveTo(in.number("x", -3e7, 3e7), in.number("y", -64, 320), in.number("z", -3e7, 3e7)),
                 number("x", "Target x."), number("y", "Target y, at your feet."), number("z", "Target z."));
@@ -154,7 +162,7 @@ public final class ToolSchemas {
         JsonArray required = new JsonArray();
         for (Prop p : props) {
             properties.add(p.name(), p.schema());
-            required.add(p.name());
+            if (p.required()) required.add(p.name());
         }
         properties.add("prio", integer("prio", PRIO).schema());
         JsonObject schema = new JsonObject();
@@ -184,9 +192,21 @@ public final class ToolSchemas {
         return d;
     }
 
+    /** One of Sight.DIRECTIONS, forward when absent. */
+    private static String seeDirection(Input in) {
+        if (!in.has("direction")) return "forward";
+        String d = in.text("direction", 8).toLowerCase(Locale.ROOT);
+        if (!Sight.DIRECTIONS.contains(d)) throw new BadInput("direction");
+        return d;
+    }
+
     /** 1 to 2304 (a full inventory of 64-stacks); not read for all. */
     private static int count(Input in, String item) {
         return Action.ALL.equals(item) ? 0 : in.integer("count", 1, 2304);
+    }
+
+    private static Prop optional(Prop p) {
+        return new Prop(p.name(), p.schema(), false);
     }
 
     private static Prop number(String name, String description) {
