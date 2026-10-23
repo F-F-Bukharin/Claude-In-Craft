@@ -153,6 +153,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     private boolean cavemanFromStart; // the running order began with the rules in its system prompt
     private boolean cavemanNoted; // the running order already got the one note
     private boolean thinkHarder; // the running order asks the brain for claude_think_effort
+    private long orderStartedAt; // a step note older than this belongs to an earlier order
     private boolean capNoticed; // autonomy already said the token cap is holding it back
 
     public AgentLoop(Settings settings, Brain brain, Executor brainThread, Executor mainThread, ActionQueue queue,
@@ -365,6 +366,7 @@ public final class AgentLoop implements ActionQueue.Listener {
         if (goal) recordGoal(first.kind() == Kind.ORDER ? "; an order took over" : "; a threat took over");
         abandon();
         thinkHarder = think;
+        orderStartedAt = clockMillis.getAsLong();
         opening = first;
         goal = first.kind() == Kind.GOAL;
         orderFrom = goal ? "" : first.player();
@@ -540,7 +542,8 @@ public final class AgentLoop implements ActionQueue.Listener {
         } else {
             text = prompts.orderTurn(opening.player(), opening.text(), host.recentChat(), memory.render(), notes, state);
         }
-        text += "\n" + PromptBuilder.status(goal ? "own goal" : orderText, orderFrom, step(), snapshot, queue.snapshot());
+        String purpose = goal ? "own goal" : orderText.isEmpty() ? "react to the threat" : orderText;
+        text += "\n" + PromptBuilder.status(purpose, orderFrom, step(), snapshot, queue.snapshot());
         JsonArray content = compact ? new JsonArray() : pendingResults; // tool_result blocks must come first in the turn
         content.add(textBlock(text));
         if (compact) { // the results are text now: a tool_result needs its tool_use, which is gone
@@ -621,10 +624,11 @@ public final class AgentLoop implements ActionQueue.Listener {
         return nl < 0 ? content : content.substring(0, nl);
     }
 
-    /** The model's own progress line for the status block: its short-term note with subject step, or null. */
+    /** The model's own progress line for the status block: its note with subject step from this order, or null. */
     private String step() {
-        return memory.shortTerm().stream().filter(e -> e.subject().equals("step")).map(Memory.Entry::text)
-                .findFirst().orElse(null);
+        return memory.shortTerm().stream()
+                .filter(e -> e.subject().equalsIgnoreCase("step") && e.updatedMillis() >= orderStartedAt)
+                .map(Memory.Entry::text).findFirst().orElse(null);
     }
 
     private void send() {

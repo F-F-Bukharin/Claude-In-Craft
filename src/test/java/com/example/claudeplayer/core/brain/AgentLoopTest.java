@@ -1016,6 +1016,38 @@ class AgentLoopTest {
     }
 
     @Test
+    void aStepNoteFromAnEarlierOrderIsNotThisOrdersStep() {
+        build(b -> {});
+        memory.note("step", "2/4 replant row 3");
+        now += 1_000;
+        script.add(text("Here."));
+        loop.startOrder("F", "come here");
+        pump();
+        assertTrue(lastText(0).contains("ORDER: \"come here\" (from F) | STEP: -\n"), lastText(0));
+    }
+
+    @Test
+    void theStepNoteMatchesInAnyCase() {
+        build(b -> b.maxCallsPerMinute = 100);
+        script.add(tools(say("s1")));
+        script.add(text("Done."));
+        loop.startOrder("F", "greet");
+        memory.note("Step", "1/2 say hello"); // Memory keys subjects without case
+        pump();
+        ticks(40);
+        assertTrue(lastText(1).contains("| STEP: 1/2 say hello\n"), lastText(1));
+    }
+
+    @Test
+    void aReactionsStatusNamesWhatItIsFor() {
+        build(b -> {});
+        script.add(text("Fled."));
+        loop.interrupt("zombie #7 is 4.0 blocks away.");
+        pump();
+        assertTrue(lastText(0).contains("ORDER: \"react to the threat\" | STEP: -"), lastText(0));
+    }
+
+    @Test
     void theBundledPromptFillsEveryPlaceholder() {
         String system = new PromptBuilder(Settings.DEFAULTS, PromptBuilder.loadTemplate(null)).system();
         assertFalse(system.contains("{{"), system);
