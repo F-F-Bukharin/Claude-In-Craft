@@ -1,5 +1,7 @@
 # Claude Player: handoff
 
+**23 Oct 2026: start with `docs/claude-player-next-session.md`.** It covers the local unpushed `dev`, the branches still in flight, and the next steps and ideas.
+
 Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then the modmap RULES, then plan §6 and §7.
 
 ## Where things stand
