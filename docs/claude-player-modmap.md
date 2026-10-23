@@ -29,6 +29,11 @@ Paths are under `src/main/java/com/example/claudeplayer/` unless noted. Everythi
 | `core/StateSnapshot.java` | Immutable world snapshot and its compact JSON |
 | `core/act/Action.java` | Sealed interface, one record per tool |
 | `core/act/ActionResult.java` | `ok`, `denied:<why>`, `failed:<why>`, `cancelled`, `queued` |
+| `core/act/Gear.java` | Pure gear choice for `fight`: best weapon, armor pieces and shield from the inventory |
+| `core/act/VisionGate.java` | Glance admission: one per turn, then `vision_cooldown_seconds` |
+| `core/brain/Images.java` | Image blocks for tool results, and log redaction of their base64 |
+| `core/safety/FightRules.java` | Pure fight step from CautionPolicy's verdict: strike, approach, the target left the level's range, or denied |
+| `body/FightHandle.java` | The fight routine: gear up, walk to the target, swing on cooldown, CautionPolicy before every swing; stops on lava, fire or a deadly drop |
 | `core/act/ActionRunner.java` | Execution contract: start → Handle (poll, cancel, timeout) |
 | `core/act/ActionQueue.java` | Tick pacing, levels 1 to 3 (a level 3 entry preempts: it scraps level 1 and pauses a running level 2), quick vs timed actions, timeout, cancel, stop, `snapshot()` for the Brain screen |
 | `core/brain/Brain.java` | Backend interface: `ApiBrain` or `ClaudeCodeBrain`, picked by `brain` |
@@ -143,7 +148,7 @@ public record Verdict(boolean allowed, String reason) {}
 
 ### 9. Interrupts
 - Interrupts: a threat (a hostile within `hostile_range` in a straight line, height included, or any hit on the body), a new order, or `stop`.
-- With `reflexes` on, code acts first. `Reflexes.decide` turns the level's stance into `flee` or one `attack_entity` swing (only within 3 blocks, and only at `tool_phase` 4 or higher), queued at level 3. A lit creeper is always fled from. Players and non-hostile mobs never trigger a reflex. The interrupt then tells Claude what ran, what was paused and what was scrapped; otherwise the queue is left alone. HOLD, or FIGHT out of reach, is an interrupt with no reflex.
+- With `reflexes` on, code acts first. `Reflexes.decide` turns the level's stance into `flee` or a FIGHT, which queues `fight` (the routine) at level 3; below `tool_phase` 4 a FIGHT becomes a flee. A lit creeper is always fled from. Players and non-hostile mobs never trigger a reflex. The interrupt then tells Claude what ran, what was paused and what was scrapped; otherwise the queue is left alone. HOLD, or FIGHT out of reach, is an interrupt with no reflex.
 - With `reflexes` off, a threat interrupt cancels everything below level 3, sends results at once (unfinished actions report `cancelled`), and starts a new message.
 - Threat interrupts are debounced: one per threat, and no more than one every 5 seconds. Lit creepers have their own tracker with no gap. The scan runs every 2 ticks.
 - Chase rule: with `reflexes` on and no level 3 running or waiting, a hostile within 6 blocks re-runs the reflex decision at most once per mob every 2 s. A FLEE or FIGHT is queued as a reflex; NONE sends nothing. The rule is quiet: only the first reflex for a threat (the `near:`, `lit:` and `hit:` paths) tells the model. A re-fire only queues its level 3 actions, with no interrupt and no reaction call (`AgentLoop.reflexQuiet`).
@@ -195,6 +200,8 @@ Config (`Config.java`). A file that holds a key stays out of version control.
 | `memory_short_capacity` | `24` | Short-term notes kept |
 | `memory_short_minutes` | `10` | Minutes before a note fades |
 | `memory_long_capacity` | `64` | Long-term memories per world |
+| `vision_width`, `vision_height` | `320`, `180` | Glance picture size (64 to 640); about w×h/750 tokens |
+| `vision_cooldown_seconds` | `15` | Seconds between glances (0 to 3600) |
 
 Commands (`/cp`):
 
@@ -219,10 +226,10 @@ Dev launch: `./gradlew runClient -Pquickstart="World"` passes `--quickPlaySingle
 ## TOOLS (what Claude can call)
 Gated by `tool_phase` (default 2).
 - Phases 1 and 2, on by default: `get_state`, `look(radius)`, `see(direction?)` (text vision: a fan of 55 rays, 70 by 40 degrees, 32 blocks, from the eyes, plus entities in view; answers in under 1 KB with ores, containers and ripe crops first and exact; a direction other than `forward` turns the body first), `move_to(x, y, z)`, `flee`, `say(text)`, `wait(seconds)`, `stop`; memory `note`, `remember`, `forget`; containers `inspect_container`, `store(x,y,z,item,count)`, `take(x,y,z,item,count)`; `eat`, `follow_player(name, seconds)`; blocks `mine_block(x,y,z)`, `place_block(x,y,z,item)`, `equip(item)`; `craft(item, count)` (3x3 needs a table within 4.5), `smelt(item, count)` (loads a furnace and returns; collect with `take`); routines `gather(target, count)` (groups: log, stone, coal, iron, ...) and `dig(direction, length)` (tunnel or staircase, stops at fluids). Break rule: natural blocks anywhere, others only if Claude placed them. `inspect_container` reads the containers listed in `world_state.points` (within 6 blocks); an ender chest fails with `failed:ender_chest_personal`. `move_to` to a player uses the `pos` in `world_state.players`.
-- Phase 3: `follow_player(name, seconds)`. Phase 4: `attack_entity(entity_id)`, behind CautionPolicy.
-- Phase 6, stubs: `mine_block`, `place_block`, `equip`, `craft`. The work-area check is live; the edit itself returns `failed:not_implemented`.
+- Also phase 2: farming `till`, `plant`, `harvest` (a routine that replants) and `use_bucket` (lava only in the work area, never within 4 blocks of a player); `glance` (no arguments: a `vision_width`×`vision_height` PNG from the body's eyes for important moments; at most one per turn and one per `vision_cooldown_seconds`, enforced by `VisionGate` in AgentLoop; answers `failed:no_client` until the renderer, glance part 2, lands).
+- Phase 4: `attack_entity(entity_id)` (one swing) and `fight(entity_id)` (gear up, walk and swing until it ends), behind CautionPolicy.
 - Never tools: change caution level, edit the allowlist, run commands, touch config. ToolParseTest checks it.
-- Every tool takes an optional `prio`: 1 routine (default), 2 important (paused and resumed after danger), 3 safety. Only `flee`, `stop` and `attack_entity` may ask for 3; anything else at 3 runs at 2, and a `prio_lowered` note goes out in the next turn.
+- Every tool takes an optional `prio`: 1 routine (default), 2 important (paused and resumed after danger), 3 safety. Only `flee`, `stop`, `attack_entity` and `fight` may ask for 3; anything else at 3 runs at 2, and a `prio_lowered` note goes out in the next turn.
 - Results are short codes: `ok`, `denied:<reason>`, `failed:<reason>`, `cancelled`, `scrapped` (level 1 work dropped by a level 3 entry), `queued`.
 
 ## GAME FACTS
@@ -249,4 +256,5 @@ COMPILED means the code compiles against forge-1.20.1-47.4.28 with official mapp
 - 22 Oct 2026: playtest 1 fixes on dev: player positions and nearby points of interest in the snapshot, replies up to 600 characters, a 16-block straight-line reflex radius, a quiet 2 s re-flee while chased, `ender_chest_personal`, cache reads counted at a tenth for the token cap, and prompt rules. `./gradlew build` is green with 134 unit tests. Not checked in game yet.
 - 23 Oct 2026: origin/dev (skills, map view, `ChatLines`, warm sessions, autonomy, gather and dig) merged with the playtest 1 fixes. F's `ChatLines` replaced the 600-character replies; `points` and player `pos` stay beside `map`. `./gradlew build` is green with 206 unit tests. Not checked in game yet.
 - 23 Oct 2026: the Brain chest is replaced by a text panel (F's playtest). Right-click the body for the order header (wrapped, never cut), the running action, the waiting ones with their prio, paused ones marked, and Nothing queued when idle. It refreshes about once a second while open. Merged into dev, not pushed. `./gradlew build` is green with 214 unit tests. Not checked in game yet.
-- Next: F runs the Phase 0 checks against this code. Spike A is `/cp spawn` plus `C come here`; Spike B is `/cp keycheck` with a bad key. Details in the handoff.
+- 23 Oct 2026: playtest 2 work merged into dev and pushed (`ca91c94`): level gaze and crops on the map, farming and buckets, `see`, `fight` with auto-gear, and glance part 1 (the model side). `./gradlew build` is green with 263 unit tests. Not checked in game yet.
+- Next: the chase-heard remainder, glance part 2 (the renderer), then F's playtest. Details in the handoff.
