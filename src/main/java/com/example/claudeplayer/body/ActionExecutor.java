@@ -41,10 +41,12 @@ public final class ActionExecutor implements ActionRunner {
 
     private final AgentRuntime rt;
     private final ContainerActions containers;
+    private final FarmActions farm;
 
     public ActionExecutor(AgentRuntime rt) {
         this.rt = rt;
         this.containers = new ContainerActions(rt);
+        this.farm = new FarmActions(rt);
     }
 
     @Override
@@ -79,6 +81,10 @@ public final class ActionExecutor implements ActionRunner {
         if (action instanceof Action.Smelt s) return Handle.done(Smelting.load(rt, p, s));
         if (action instanceof Action.Gather g) return GatherHandle.start(rt, p, g);
         if (action instanceof Action.Dig d) return new DigHandle(rt, p, d);
+        if (action instanceof Action.Till t) return Handle.done(FarmActions.till(p, new BlockPos(t.x(), t.y(), t.z())));
+        if (action instanceof Action.Plant pl) return Handle.done(FarmActions.plant(p, pl));
+        if (action instanceof Action.Harvest h) return new HarvestHandle(rt, p, h);
+        if (action instanceof Action.UseBucket b) return Handle.done(farm.useBucket(p, new BlockPos(b.x(), b.y(), b.z())));
         return Handle.done(ActionResult.failed("not_implemented"));
     }
 

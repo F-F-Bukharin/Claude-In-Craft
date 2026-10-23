@@ -91,6 +91,22 @@ class ToolParseTest {
     }
 
     @Test
+    void farmingAndBucketToolsParse() {
+        assertEquals(new Action.Till(4, 63, -2), v1.parse("till", json("{\"x\":4,\"y\":63,\"z\":-2}")).action());
+        assertEquals(new Action.Plant(4, 63, -2, "wheat_seeds"), v1.parse("plant", json("{\"x\":4,\"y\":63,\"z\":-2,\"item\":\"minecraft:Wheat_Seeds\"}")).action());
+        assertEquals(new Action.Harvest(10, 64, 10, 8), v1.parse("harvest", json("{\"x\":10,\"y\":64,\"z\":10,\"radius\":8}")).action());
+        assertEquals(new Action.Harvest(10, 64, 10, 1), v1.parse("harvest", json("{\"x\":10,\"y\":64,\"z\":10,\"radius\":\"1\"}")).action());
+        assertEquals(new Action.UseBucket(0, 70, 0), v1.parse("use_bucket", json("{\"x\":0,\"y\":70,\"z\":0}")).action());
+        assertEquals("failed:bad_input:radius", error(v1, "harvest", "{\"x\":10,\"y\":64,\"z\":10,\"radius\":0}"));
+        assertEquals("failed:bad_input:radius", error(v1, "harvest", "{\"x\":10,\"y\":64,\"z\":10,\"radius\":9}"));
+        assertEquals("failed:bad_input:radius", error(v1, "harvest", "{\"x\":10,\"y\":64,\"z\":10}"));
+        assertEquals("failed:bad_input:item", error(v1, "plant", "{\"x\":4,\"y\":63,\"z\":-2}"));
+        assertEquals("failed:bad_input:item", error(v1, "plant", "{\"x\":4,\"y\":63,\"z\":-2,\"item\":\" \"}"));
+        assertEquals("failed:bad_input:y", error(v1, "till", "{\"x\":4,\"y\":400,\"z\":-2}"));
+        assertEquals("failed:bad_input:z", error(v1, "use_bucket", "{\"x\":0,\"y\":70}"));
+    }
+
+    @Test
     void longChatIsCutNotRejected() {
         Action.Say say = (Action.Say) v1.parse("say", json("{\"text\":\"" + "a".repeat(500) + "\"}")).action();
         assertEquals(200, say.text().length());
@@ -113,7 +129,7 @@ class ToolParseTest {
         }
         assertEquals(List.of("get_state", "look", "move_to", "say", "wait", "stop", "flee", "note", "remember", "forget", "inspect_container",
                 "store", "take", "eat", "follow_player", "mine_block", "place_block", "equip", "craft", "smelt",
-                "gather", "dig"), names);
+                "gather", "dig", "till", "plant", "harvest", "use_bucket"), names);
     }
 
     @Test
