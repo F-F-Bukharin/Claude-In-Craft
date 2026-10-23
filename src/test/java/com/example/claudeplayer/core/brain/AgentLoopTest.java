@@ -629,6 +629,21 @@ class AgentLoopTest {
     }
 
     @Test
+    void everyInterruptDuringOneCallReachesTheModel() {
+        build(b -> {});
+        script.add(tools(move("m")));
+        script.add(text("Both noted."));
+        loop.startOrder("F", "walk");
+        brainThread.poll().run(); // the call is out; its reply waits on the main thread
+        loop.reflex("zombie #7 is 4.0 blocks away.", List.of(new Action.Flee()));
+        loop.reflex("creeper #9 is 3.0 blocks away, fuse lit.", List.of(new Action.Flee()));
+        pump();
+        assertEquals(2, requests.size());
+        assertTrue(lastText(1).contains("INTERRUPT: zombie #7 is 4.0 blocks away. Reflex: flee."), lastText(1));
+        assertTrue(lastText(1).contains("INTERRUPT: creeper #9 is 3.0 blocks away, fuse lit. Reflex: flee."), lastText(1));
+    }
+
+    @Test
     void theBundledPromptFillsEveryPlaceholder() {
         String system = new PromptBuilder(Settings.DEFAULTS, PromptBuilder.loadTemplate(null)).system();
         assertFalse(system.contains("{{"), system);

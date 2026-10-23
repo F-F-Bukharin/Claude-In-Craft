@@ -117,7 +117,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     private boolean deferred;
     private boolean cancelling;
     private boolean mustReport;
-    private String interruptInFlight;
+    private final List<String> interruptInFlight = new ArrayList<>(); // notes for the reply on its way; it was planned on stale state
     private String finalText;
     private int steps;
     private int reflexCount; // numbers the reflex-<n> call ids
@@ -210,7 +210,7 @@ public final class AgentLoop implements ActionQueue.Listener {
             return;
         }
         if (inFlight) {
-            interruptInFlight = note; // the reply on its way was planned on stale state
+            interruptInFlight.add(note);
         } else {
             notes.add(note);
             mustReport = true;
@@ -325,10 +325,10 @@ public final class AgentLoop implements ActionQueue.Listener {
         JsonArray content = reply.content();
         if (content.isEmpty()) content = single(textBlock("(no reply)")); // the API rejects empty assistant turns
         messages.add(message("assistant", content));
-        if (interruptInFlight != null) {
+        if (!interruptInFlight.isEmpty()) {
             for (Brain.ToolCall call : reply.toolCalls()) pendingResults.add(toolResult(call.id(), ActionResult.cancelled()));
-            notes.add(interruptInFlight);
-            interruptInFlight = null;
+            notes.addAll(interruptInFlight);
+            interruptInFlight.clear();
             mustReport = true;
             checkProgress();
             return;
@@ -382,7 +382,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     /** Tells the model now: unfinished calls of the current batch report {@code queued}. */
     private void report(String note) {
         if (inFlight) {
-            interruptInFlight = note; // the reply on its way was planned on stale state
+            interruptInFlight.add(note);
             return;
         }
         notes.add(note);
@@ -564,7 +564,7 @@ public final class AgentLoop implements ActionQueue.Listener {
         inFlight = false;
         deferred = false;
         mustReport = false;
-        interruptInFlight = null;
+        interruptInFlight.clear();
         finalText = null;
         steps = 0;
     }
