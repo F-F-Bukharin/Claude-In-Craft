@@ -52,6 +52,12 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
    - B2. As anyone else, right-click Claude. Nothing happens.
    - B3. While a level 3 flee runs, open the chest. The flee shows as running, and any paused level 2 action shows as paused (clock, "resumes after a reflex"). Clicks in the chest move nothing.
    - Watch in B1: the title can run past the chest's edge; the order text is cut at 30 characters.
+10. Later, once the major bugs are ironed out: a friends package, so friends play on their own Claude Code accounts.
+   - A CurseForge profile export (1.20.1, Forge 47.4.28, the mod jar) that friends import.
+   - A setup `.bat` that finds Claude Code (PATH, `%USERPROFILE%\.local\bin`, npm global), installs it with the official installer only if the friend agrees, and starts its sign-in.
+   - A short START HERE: import, run the setup, open a world, `/cp quickstart`, `/cp keycheck`.
+   - Learn from Claudefox's `claude-in-zen/friends/` and its review notes U1 (don't present an unsigned build as normal), E6 (don't assume `.local\bin`) and U2 (show which account is signed in). Never ship F's own login or keys.
+   - Brainstorm it with F first. A standalone launcher app is possible, but a CurseForge export does the same job with far less to maintain.
 
 ## Risks to watch
 - API cost during busy play (plan §3 and §9). Watch the token count in `/cp status`.
