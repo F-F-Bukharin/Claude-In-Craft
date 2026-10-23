@@ -93,8 +93,10 @@ final class MoveHandle implements ActionRunner.Handle {
         BlockPos feet = BlockPos.containing(body.position().add(dx / length * PROBE_AHEAD, 0, dz / length * PROBE_AHEAD));
         BlockPos below = feet.below();
         int depth = 0;
-        // A slab, stair or carpet at the feet is solid ground the body stands on, so there is no drop to count.
-        if (level.getBlockState(feet).getCollisionShape(level, feet).isEmpty()) {
+        // A slab, stair or carpet at the feet is the ground the body stands on: no drop under it, and what lies
+        // below it (lava under a slab bridge) is not underfoot.
+        boolean standsOnFeet = !level.getBlockState(feet).getCollisionShape(level, feet).isEmpty();
+        if (!standsOnFeet) {
             while (depth < MAX_DROP && level.getBlockState(below).getCollisionShape(level, below).isEmpty()
                     && level.getFluidState(below).isEmpty()) {
                 depth++;
@@ -102,7 +104,8 @@ final class MoveHandle implements ActionRunner.Handle {
             }
         }
         boolean water = level.getFluidState(below).is(FluidTags.WATER);
-        return Reflexes.hazard(id(level.getBlockState(feet)), id(level.getBlockState(feet.below())), depth, water, body.getHealth());
+        BlockPos ground = standsOnFeet ? feet : feet.below();
+        return Reflexes.hazard(id(level.getBlockState(feet)), id(level.getBlockState(ground)), depth, water, body.getHealth());
     }
 
     /** The full registry id ("minecraft:lava"), which is what {@link Reflexes#hazard} matches. */
