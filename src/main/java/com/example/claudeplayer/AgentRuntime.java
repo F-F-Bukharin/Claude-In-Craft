@@ -13,6 +13,7 @@ import com.example.claudeplayer.core.brain.AgentLoop;
 import com.example.claudeplayer.core.brain.ApiBrain;
 import com.example.claudeplayer.core.brain.Brain;
 import com.example.claudeplayer.core.brain.BrainException;
+import com.example.claudeplayer.core.brain.CavemanSkill;
 import com.example.claudeplayer.core.brain.ClaudeCodeBrain;
 import com.example.claudeplayer.core.brain.DemoBrain;
 import com.example.claudeplayer.core.brain.JsonUsageFile;
@@ -38,6 +39,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
@@ -79,6 +81,7 @@ public final class AgentRuntime {
     private final ApiBrain brain;
     private final ClaudeCodeBrain claudeCode;
     private final UsageLedger usage;
+    private final Optional<CavemanSkill> caveman;
     private final AgentLoop loop;
     private final Path keyFile;
     private volatile boolean closed;
@@ -113,12 +116,17 @@ public final class AgentRuntime {
                 System::currentTimeMillis);
         // Under the system temp dir, outside any project, so Claude Code loads no CLAUDE.md.
         this.claudeCode = new ClaudeCodeBrain(settings, Path.of(System.getProperty("java.io.tmpdir"), "claudeplayer-claude-code"), usage);
+        String home = System.getProperty("user.home");
+        this.caveman = CavemanSkill.load(expandHome(settings.cavemanSkillPath(), home), Path.of(home, ".claude", "skills"));
+        if (caveman.isEmpty()) LOG.info("no caveman skill found; caveman stays off");
+        caveman.ifPresent(claudeCode::caveman);
         PromptBuilder prompts = new PromptBuilder(settings,
                 PromptBuilder.loadTemplate(configDir.resolve("claudeplayer_system_prompt.md")));
         Brain backend = settings.usesApi() ? brain : claudeCode;
         ToolSchemas tools = new ToolSchemas(settings.toolPhase());
         this.loop = new AgentLoop(settings, new DemoBrain(backend), brainThread, this::onMainThread, queue, guardrails, prompts,
                 tools, memory, new LoopHost(), System::currentTimeMillis);
+        if (!settings.usesApi()) loop.caveman(this::cavemanOn, () -> caveman.map(CavemanSkill::note).orElse(""));
         if (!settings.usesApi()) brainThread.execute(() -> claudeCode.prewarm(prompts.system(), tools.definitions()));
         LOG.info("Claude Player ready: brain {}, model {}, caution level {}, {} allowlisted, {} long-term memories",
                 settings.brain(), settings.model(), level().number(), Config.allowlist().size(), memory.longTerm().size());
@@ -323,6 +331,8 @@ public final class AgentRuntime {
         StringBuilder b = new StringBuilder(line);
         if (!settings.usesApi()) {
             for (String usageLine : usage.statusLines()) b.append("\nClaude Code ").append(usageLine);
+            b.append("\nCaveman: ").append(cavemanOn() ? "on" : "off")
+                    .append(caveman.map(c -> ", sha256 " + c.sha256().substring(0, 12)).orElse(" (no skill found)"));
         }
         return b.toString();
     }
@@ -373,6 +383,19 @@ public final class AgentRuntime {
 
     public long ticks() {
         return ticks;
+    }
+
+    /** Caveman applies to an order when the skill exists and either usage window has reached caveman_at. */
+    private boolean cavemanOn() {
+        return caveman.isPresent() && usage.utilization() >= settings.cavemanAt();
+    }
+
+    /** A leading {@code ~} in a configured path means the user's home folder. */
+    private static String expandHome(String path, String home) {
+        if (path == null) return "";
+        String p = path.strip();
+        if (p.equals("~")) return home;
+        return p.startsWith("~/") || p.startsWith("~\\") ? Path.of(home, p.substring(2)).toString() : p;
     }
 
     private void order(String player, String text) {

@@ -42,6 +42,7 @@ class ClaudeCodeSessionsTest {
 
     private final List<FakeProc> procs = Collections.synchronizedList(new ArrayList<>());
     private final Deque<List<String>> script = new ArrayDeque<>(); // the events answering each written line
+    private final List<List<String>> commands = Collections.synchronizedList(new ArrayList<>()); // one per started process
     private final AtomicLong now = new AtomicLong(1_000_000);
 
     private ClaudeCodeBrain brain(int timeoutSeconds) {
@@ -56,6 +57,7 @@ class ClaudeCodeSessionsTest {
         ClaudeCodeSessions.Launcher launcher = command -> {
             FakeProc p = new FakeProc();
             procs.add(p);
+            commands.add(command);
             return p;
         };
         return ledger == null ? new ClaudeCodeBrain(s, dir, launcher, now::get)
@@ -166,6 +168,40 @@ class ClaudeCodeSessionsTest {
         BrainException e = assertThrows(BrainException.class, () -> brain.send(request(opening())));
 
         assertEquals(BrainException.Kind.RATE_LIMITED, e.kind());
+    }
+
+    @Test
+    void anOrderThatStartsWithCavemanEndsItsSystemPromptWithTheRules() throws BrainException, IOException {
+        ClaudeCodeBrain brain = brain(5);
+        CavemanSkill skill = new CavemanSkill("Me caveman. Few word.", "abc123", Path.of("SKILL.md"));
+        brain.caveman(skill);
+        script.add(List.of(result(1, "[]")));
+        script.add(List.of(result(1, "[]")));
+
+        brain.send(new Brain.Request("You are Claude.", new JsonArray(), opening(), true));
+        brain.send(request(opening()));
+
+        String on = systemFile(commands.get(0));
+        assertTrue(on.endsWith(skill.promptSection()), on);
+        String off = systemFile(commands.get(2));
+        assertFalse(off.contains("Me caveman"), "an order that starts without caveman has no rules");
+        assertEquals(off + skill.promptSection(), on, "the rules are the only difference");
+    }
+
+    @Test
+    void aSpareBuiltWithoutCavemanIsNotUsedForACavemanOrder() throws BrainException, IOException {
+        ClaudeCodeBrain brain = brain(5);
+        brain.caveman(new CavemanSkill("Me caveman.", "abc123", Path.of("SKILL.md")));
+        brain.prewarm("You are Claude.", new JsonArray());
+        script.add(List.of(result(1, "[" + MOVE + "]")));
+
+        brain.send(new Brain.Request("You are Claude.", new JsonArray(), opening(), true));
+
+        assertTrue(procs.get(0).written.isEmpty(), "the plain spare didn't take the order");
+        assertFalse(procs.get(0).alive, "and was replaced");
+        assertEquals(1, procs.get(1).written.size(), "a process with the rules did");
+        assertTrue(systemFile(commands.get(1)).contains("Me caveman."));
+        assertTrue(systemFile(commands.get(2)).contains("Me caveman."), "the next spare matches the order just run");
     }
 
     @Test
@@ -394,6 +430,11 @@ class ClaudeCodeSessionsTest {
         m.add(JsonParser.parseString("{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\""
                 + reply.toolCalls().get(0).id() + "\",\"content\":\"ok\"},{\"type\":\"text\",\"text\":\"" + update + "\"}]}"));
         return m;
+    }
+
+    /** The system prompt file a process was started with. */
+    private static String systemFile(List<String> command) throws IOException {
+        return java.nio.file.Files.readString(Path.of(command.get(command.indexOf("--system-prompt-file") + 1)));
     }
 
     private static String text(String line) {

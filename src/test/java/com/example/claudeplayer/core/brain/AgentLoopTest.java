@@ -176,6 +176,58 @@ class AgentLoopTest {
     }
 
     @Test
+    void aCavemanNoteJoinsARunningOrderOnceAtTheNextTurn() {
+        build(b -> b.maxCallsPerMinute = 100);
+        boolean[] on = {false};
+        loop.caveman(() -> on[0], () -> "CAVEMAN RULES");
+        script.add(tools(say("t1")));
+        script.add(tools(say("t2")));
+        script.add(text("Done!"));
+        loop.startOrder("F", "say hi");
+        pump();
+        assertFalse(lastText(0).contains("CAVEMAN RULES"));
+        assertFalse(requests.get(0).caveman(), "the order started with usage low");
+        on[0] = true; // usage crosses the line while the order runs
+        ticks(1);
+        assertTrue(lastText(1).contains("CAVEMAN RULES"), lastText(1));
+        ticks(10);
+        assertEquals(3, requests.size());
+        assertFalse(lastText(2).contains("CAVEMAN RULES"), "once per order, so the transcript only grows");
+        assertFalse(requests.get(1).caveman() || requests.get(2).caveman(),
+                "the system prompt doesn't change mid-order; the note carries the rules");
+    }
+
+    @Test
+    void anOrderThatStartsWithCavemanGetsNoNoteAndEveryRequestSaysSo() {
+        build(b -> {});
+        loop.caveman(() -> true, () -> "CAVEMAN RULES");
+        script.add(tools(say("t1")));
+        script.add(text("Done!"));
+        loop.startOrder("F", "say hi");
+        pump();
+        ticks(1);
+        assertEquals(2, requests.size());
+        assertTrue(requests.get(0).caveman() && requests.get(1).caveman());
+        assertFalse(lastText(0).contains("CAVEMAN RULES") || lastText(1).contains("CAVEMAN RULES"));
+    }
+
+    @Test
+    void cavemanIsDecidedAgainForEachOrder() {
+        build(b -> {});
+        boolean[] on = {true};
+        loop.caveman(() -> on[0], () -> "CAVEMAN RULES");
+        script.add(text("One."));
+        script.add(text("Two."));
+        loop.startOrder("F", "first");
+        pump();
+        on[0] = false; // usage fell back below the line
+        loop.startOrder("F", "second");
+        pump();
+        assertTrue(requests.get(0).caveman());
+        assertFalse(requests.get(1).caveman());
+    }
+
+    @Test
     void anOrderRunsItsToolsThenPostsTheFinalText() {
         build(b -> {});
         script.add(tools(say("t1")));

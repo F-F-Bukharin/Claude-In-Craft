@@ -15,8 +15,16 @@ public interface Brain {
     /** The order was dropped: release whatever the backend keeps for it. Any thread; must not block. */
     default void reset() {}
 
-    /** {@code messages} is a Messages API transcript; the loop hands each call its own copy. */
-    record Request(String system, JsonArray tools, JsonArray messages) {}
+    /**
+     * {@code messages} is a Messages API transcript; the loop hands each call its own copy. {@code caveman} is true
+     * for an order that started with the caveman rules on: a backend that can adds them to its system prompt, and the
+     * value stays the same for every turn of the order.
+     */
+    record Request(String system, JsonArray tools, JsonArray messages, boolean caveman) {
+        public Request(String system, JsonArray tools, JsonArray messages) {
+            this(system, tools, messages, false);
+        }
+    }
 
     record ToolCall(String id, String name, JsonObject input) {}
 

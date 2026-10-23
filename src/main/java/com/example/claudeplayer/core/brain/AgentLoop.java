@@ -18,7 +18,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -134,6 +136,10 @@ public final class AgentLoop implements ActionQueue.Listener {
     private int goalCount;
     private final Deque<String> outcomes = new ArrayDeque<>(); // the last goals' result codes, oldest first
     private String lastGoalFailure; // the notice of the last failed goal call, so a repeat stays quiet
+    private BooleanSupplier cavemanOn = () -> false; // usage is high enough for caveman, and the skill exists
+    private Supplier<String> cavemanNote = () -> "";
+    private boolean cavemanFromStart; // the running order began with the rules in its system prompt
+    private boolean cavemanNoted; // the running order already got the one note
 
     public AgentLoop(Settings settings, Brain brain, Executor brainThread, Executor mainThread, ActionQueue queue,
                      Guardrails guardrails, PromptBuilder prompts, ToolSchemas tools, Memory memory, Host host,
@@ -150,6 +156,16 @@ public final class AgentLoop implements ActionQueue.Listener {
         this.host = host;
         this.clockMillis = clockMillis;
         queue.setListener(this);
+    }
+
+    /**
+     * Caveman: {@code on} says whether the rules apply now. An order that begins with it on carries that in every
+     * request (the backend puts the rules in its system prompt). An order already running when it turns on gets
+     * {@code note} once, in its next update turn, so the transcript only grows. Server thread.
+     */
+    public void caveman(BooleanSupplier on, Supplier<String> note) {
+        this.cavemanOn = on;
+        this.cavemanNote = note;
     }
 
     public boolean active() {
@@ -468,6 +484,12 @@ public final class AgentLoop implements ActionQueue.Listener {
         }
         StateSnapshot snapshot = host.snapshot();
         String state = snapshot.toJson();
+        if (opening != null) {
+            cavemanFromStart = cavemanOn.getAsBoolean();
+        } else if (!cavemanFromStart && !cavemanNoted && cavemanOn.getAsBoolean()) {
+            notes.add(cavemanNote.get());
+            cavemanNoted = true;
+        }
         String text;
         if (opening == null) {
             text = prompts.updateTurn(notes, state);
@@ -501,7 +523,7 @@ public final class AgentLoop implements ActionQueue.Listener {
         inFlight = true;
         guardrails.recordCall();
         int forEpoch = epoch;
-        Brain.Request request = new Brain.Request(prompts.system(), tools.definitions(), messages.deepCopy());
+        Brain.Request request = new Brain.Request(prompts.system(), tools.definitions(), messages.deepCopy(), cavemanFromStart);
         try {
             brainThread.execute(() -> {
                 Brain.Reply reply = null;
@@ -598,6 +620,8 @@ public final class AgentLoop implements ActionQueue.Listener {
         finalText = null;
         doneText = null;
         steps = 0;
+        cavemanFromStart = false;
+        cavemanNoted = false;
     }
 
     /**

@@ -69,6 +69,7 @@ public final class ClaudeCodeBrain implements Brain {
     private final ClaudeCodeSessions sessions;
     private final AtomicLong replies = new AtomicLong();
     private final UsageLedger ledger;
+    private volatile CavemanSkill caveman; // null: no skill, so caveman stays off
 
     /** {@code workDir} must sit outside any project, so Claude Code finds no CLAUDE.md to load. */
     public ClaudeCodeBrain(Settings settings, Path workDir, UsageLedger ledger) {
@@ -105,7 +106,7 @@ public final class ClaudeCodeBrain implements Brain {
 
     @Override
     public Reply send(Request request) throws BrainException {
-        List<String> command = streamCommand(request.system(), request.tools());
+        List<String> command = streamCommand(request.system(), request.tools(), request.caveman());
         JsonArray messages = request.messages();
         if (messages.size() == 1) ledger.startOrder(); // a transcript's first turn is a new order
         long started = System.nanoTime();
@@ -179,10 +180,15 @@ public final class ClaudeCodeBrain implements Brain {
         sessions.endCurrent();
     }
 
+    /** The caveman rules to add to the system prompt of orders that start with caveman on. Call once at startup. */
+    public void caveman(CavemanSkill skill) {
+        this.caveman = skill;
+    }
+
     /** Starts the spare ahead of the first order, so even that one skips startup. Brain thread. */
     public void prewarm(String system, JsonArray tools) {
         try {
-            sessions.refill(streamCommand(system, tools));
+            sessions.refill(streamCommand(system, tools, false));
         } catch (BrainException e) {
             LOG.debug("no Claude Code spare: {}", e.getMessage());
         }
@@ -449,14 +455,17 @@ public final class ClaudeCodeBrain implements Brain {
 
     /**
      * The warm-session command. The system prompt file is named by its content's hash, so a changed prompt is a
-     * changed command (the spare gets replaced) and a file a running process reads is never rewritten.
+     * changed command (the spare gets replaced) and a file a running process reads is never rewritten. With
+     * {@code withCaveman} the rules end the file, so a spare built without them never takes such an order.
      */
-    private List<String> streamCommand(String system, JsonArray tools) throws BrainException {
+    private List<String> streamCommand(String system, JsonArray tools, boolean withCaveman) throws BrainException {
         String exe = executable();
         if (exe == null) {
             throw new BrainException(BrainException.Kind.NO_CLI, "claude not found");
         }
         String text = renderSystem(system, tools);
+        CavemanSkill skill = caveman;
+        if (withCaveman && skill != null) text += skill.promptSection();
         String name = "system-" + sha256(text).substring(0, 16) + ".md";
         Path file = Files.isRegularFile(workDir.resolve(name)) ? workDir.resolve(name) : writeWork(name, text);
         return command(exe, settings, file, WINDOWS, true);
