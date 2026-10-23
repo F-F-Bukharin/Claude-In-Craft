@@ -16,7 +16,8 @@ public record Settings(
         int maxSteps, int maxCallsPerMinute, long sessionTokenCap,
         int hostileRange, int escapeDistance, int escapeMaxSteps,
         int toolPhase, boolean idleReactions, boolean reflexes, boolean autoEat,
-        int shortTermCapacity, int shortTermMinutes, int longTermCapacity) {
+        int shortTermCapacity, int shortTermMinutes, int longTermCapacity,
+        int claudeCodeIdleMinutes) {
 
     /** {@code brain}: the player's Claude Code CLI (their subscription), or the Messages API with a key. */
     public static final String BRAIN_CLAUDE_CODE = "claude_code";
@@ -76,13 +77,15 @@ public record Settings(
         public int shortTermCapacity = 24;
         public int shortTermMinutes = 10;
         public int longTermCapacity = 64;
+        public int claudeCodeIdleMinutes = 10;
 
         public Settings build() {
             return new Settings(brain, claudeCodePath, claudeCodeTimeoutSeconds, model, apiKeyEnv, effort, maxTokens, requestTimeoutSeconds, promptCaching, logPrompts,
                     bodyName, trigger, ordersAllowlist, defaultLevel, actionsPerSecond, actionTimeoutSeconds,
                     batchSize, prefetchAt, maxSteps, maxCallsPerMinute, sessionTokenCap, hostileRange,
                     escapeDistance, escapeMaxSteps, toolPhase, idleReactions, reflexes, autoEat,
-                    shortTermCapacity, shortTermMinutes, longTermCapacity);
+                    shortTermCapacity, shortTermMinutes, longTermCapacity,
+                    claudeCodeIdleMinutes);
         }
     }
 }

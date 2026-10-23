@@ -52,6 +52,11 @@ public final class DemoBrain implements Brain {
         return new Reply("demo", content, List.copyOf(calls), "", "tool_use", new Usage(0, 0, 0, 0));
     }
 
+    @Override
+    public void reset() {
+        fallback.reset();
+    }
+
     private static String firstText(JsonArray messages) {
         if (messages.isEmpty()) return "";
         JsonElement content = messages.get(0).getAsJsonObject().get("content");
