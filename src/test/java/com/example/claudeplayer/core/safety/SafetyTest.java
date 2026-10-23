@@ -25,6 +25,25 @@ class SafetyTest {
     }
 
     @Test
+    void waterPoursAnywhereButIntoTheBody() {
+        double none = Double.POSITIVE_INFINITY;
+        assertEquals("ok", Guardrails.checkPour(false, false, none, 1).code(), "far from home, beside a player: fine for water");
+        assertEquals("failed:own_block", Guardrails.checkPour(false, true, 0, none).code());
+    }
+
+    @Test
+    void lavaPoursOnlyInTheWorkAreaAndNeverNearAPlayer() {
+        double none = Double.POSITIVE_INFINITY;
+        assertEquals("ok", Guardrails.checkPour(true, false, 10, none).code());
+        assertEquals("ok", Guardrails.checkPour(true, false, 32, 4.5).code());
+        assertEquals("denied:outside_work_area", Guardrails.checkPour(true, false, 33, none).code());
+        assertEquals("denied:outside_work_area", Guardrails.checkPour(true, false, none, none).code(), "no home, no lava");
+        assertEquals("failed:lava_near_player", Guardrails.checkPour(true, false, 10, 4).code());
+        assertEquals("failed:lava_near_player", Guardrails.checkPour(true, false, 10, 0.5).code());
+        assertEquals("failed:own_block", Guardrails.checkPour(true, true, 10, none).code());
+    }
+
+    @Test
     void tokenCapAndKillSwitch() {
         Guardrails g = new Guardrails(Settings.of(b -> b.sessionTokenCap = 1000), () -> now);
         g.recordTokens(999);

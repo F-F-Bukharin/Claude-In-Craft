@@ -67,4 +67,16 @@ public sealed interface Action {
 
     /** Digs a 1-wide, 2-high tunnel {@code length} steps north, south, east or west, or a staircase down (DigPlan). */
     record Dig(String direction, int length) implements Action {}
+
+    /** Turns dirt, grass or a path block into farmland with a hoe from the inventory. */
+    record Till(int x, int y, int z) implements Action {}
+
+    /** Plants {@code item} (a short id) in the block above the soil block at x, y, z (Farming.fits). */
+    record Plant(int x, int y, int z, String item) implements Action {}
+
+    /** Harvests every ripe crop within {@code radius} of a point, picks up the drops and replants from the inventory. */
+    record Harvest(int x, int y, int z, int radius) implements Action {}
+
+    /** Pours a water or lava bucket at a position, or fills an empty bucket from the source there (Guardrails.checkPour). */
+    record UseBucket(int x, int y, int z) implements Action {}
 }
