@@ -38,15 +38,16 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
    - M5. `claude: stop` while it flees. It halts within a second.
    - Known: a hostile in a cave far below still counts (XZ distance), so the body may take a short flee. The 30 s re-arm per mob bounds it.
    - Watch in M2: a creeper whose fuse flickers (lost sight, or the body at the 3 to 7 block edge) now triggers a flee on each re-light.
-8. Piece 1 follow-ups, from the final review. None blocks the in-game checks.
-   - The model never hears a reflex's own outcome (`failed:no_escape`, `ok:no_threats`, `hazard_*`, a denied swing). Add a note when a `reflex-` entry ends in an error.
-   - `abandon()` spares every level-3 entry, including the model's prio-3 calls for a dropped order; a leftover prio-3 `stop` would cancel the next order's batch. Spare only `reflex-` entries.
-   - A second reflex during one model call overwrites the first in `interruptInFlight`. Append instead.
-   - `follow_player` has no hazard check. Share MoveHandle's probe.
-   - The prompt should say to give an approach and its attack the same prio, since higher levels run first.
-   - A slab, stair or carpet walkway over a drop can read as `hazard_drop` at low HP.
-   - A hit from beyond `hostile_range` (a ghast) builds a flee that scraps routine work, then returns `ok:no_threats`.
-   - FIXED 23 Oct: `"prio": null` now counts as absent (test `nullPrioMeansTheDefault`).
+8. Piece 1 follow-ups, from the final review. All FIXED 23 Oct (212 unit tests green; each new test was checked to fail without its fix).
+   - The model hears a failed reflex: `Reflex <tool>: <code>` during an order (tests `aFailedReflexIsReportedToTheModelDuringAnOrder`, `anOkReflexAddsNoOutcomeNote`). `ok:no_threats` is not an error, so it stays silent.
+   - `abandon()` spares only `reflex-` entries, through the queue's new `cancelIf` (tests `aDroppedOrdersWaitingSafetyCallNeverRunsButAReflexStillDoes`, `cancelIf*`).
+   - Every interrupt during one model call reaches the model; `interruptInFlight` is a list (test `everyInterruptDuringOneCallReachesTheModel`).
+   - `follow_player` uses MoveHandle's probe and fails with `hazard_lava`, `hazard_fire` or `hazard_drop`. Game code, compile-checked only.
+   - The prompt says to give an approach and its attack the same prio.
+   - A slab, stair or carpet at the probed feet counts as ground, so no drop is counted under it. Game code, compile-checked only.
+   - No flee reflex for a threat outside `hostile_range` (the ghast case); the model gets the normal interrupt. A lit creeper still flees (tests `fleeStancesDoNothingOutsideFleeRange`, `aLitCreeperFleesEvenOutsideFleeRange`).
+   - `"prio": null` counts as absent (test `nullPrioMeansTheDefault`).
+   - In game, try: `C follow me` and walk along a lava pool edge (it should stop with `hazard_lava`); walk it along a slab bridge over a drop at low HP; get hit by a ghast from far away while it works (routine work should not be scrapped).
 9. Claude Brain screen, in game (merged into dev). Right-click the body.
    - B1. As an allowlisted player or an op, right-click Claude. A chest opens, titled `Claude Brain: order from <you>: "..."`. The running action comes first (lime dye), then the waiting ones (paper), each named by its tool and with its priority.
    - B2. As anyone else, right-click Claude. Nothing happens.
@@ -63,14 +64,14 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
    - In game, try: `C mine the log in front of you`; `C get 10 logs`; `C craft planks and sticks`, then a wooden pickaxe away from and next to a crafting table; with raw iron and coal next to a furnace, `C smelt the iron`, then `take` the ingots; `C dig down 15` (it stops before lava and reports ores seen); `C put your logs in the chest`; let it get hungry with bread in its inventory; `C follow me`; `C go do your thing, I'll call you` (about one `autonomy goal #n` log line a minute), then `C come here` (it should resume afterwards), then `C stop`.
    - Helper: warm sessions are merged. Measured with the real prompt: opening turns 1.7 to 4.9 s, follow-up turns about 2 to 3.4 s, against 7.7 s cold before. Most of what's left is Haiku's thinking, which this CLI can't turn off (`MAX_THINKING_TOKENS`, `alwaysThinkingEnabled` and `CLAUDE_CODE_DISABLE_THINKING` were all tried).
    - Fixed: Haiku called game actions as native tools on 4 of 4 opening turns, which wasted a round trip and often ended in "I can't move". The rendered prompt now says StructuredOutput is the only tool and lists actions compactly. Measured afterwards: 0 of 24.
-   - **Known bridge bugs, open**, from a fresh review of the warm sessions (verdict: ship after fixes). Fix 1 and 2 before relying on it:
-     1. The turn timeout doesn't cover the stdin write: a cold child stalled before reading stdin can hang the brain thread. `/cp stop` or a new order kills it.
-     2. A `reset()` during an opening's start is lost, so `/cp stop` right after an order doesn't stop that model call.
-     3. FIXED 23 Oct (untested on Linux and macOS): `isClaude` also matches by command line (`--input-format stream-json` plus `--system-prompt-file`) when the path is a resolved symlink or node.
-     4. `reset()` does a process walk and pid-file I/O on the server thread.
-     5. The idle sweep can race a turn's start.
-     6. FIXED 23 Oct: the scrub now also removes `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY` and `AWS_BEARER_TOKEN_BEDROCK` (test `scrubRemovesTheCloudProviderSwitches`).
-     - Branch `fix/warm-sessions` (commit 3328d70) holds an unfinished, untested start on these. It was stopped to save usage; check it before reusing it.
+   - Bridge bugs from the warm-session review. All FIXED 23 Oct (tests in `ClaudeCodeSessionsTest`, each checked to fail without its fix):
+     1. The stdin write runs on its own thread under the turn timeout (`aStdinThatNeverDrainsIsATimeoutAndTheProcessIsKilled`).
+     2. A `reset()` while an opening starts is no longer lost (`aResetWhileTheOpeningStartsIsNotLost`). Left: a reset in the microseconds between `claimCurrent()` and `take()` on the brain thread is not seen; the loop's epoch already ignores that reply, so the cost is one wasted call.
+     3. `isClaude` also matches by command line (untested on Linux and macOS).
+     4. `reset()` hands the kill to a daemon thread, so the server thread does no process walk or pid-file I/O (`aResetKillsOffTheCallingThread`).
+     5. `send()` and `take()` claim the session under the lock, so the idle sweep can't stop it before the turn (`aClaimedSessionIsNotSweptBeforeItsTurnStarts`).
+     6. The scrub removes the cloud-provider switches (`scrubRemovesTheCloudProviderSwitches`).
+     - Branch `fix/warm-sessions` (3328d70, on F's machine, never pushed) is superseded by this; check it before deleting.
    - The system prompt now points to gather and dig for anything beyond a block or two (23 Oct).
    - Autonomy says a failed goal call once, not every interval, until a goal works again (23 Oct; test `aGoalFailureIsSaidOnceUntilAGoalWorksAgain`, checked to fail without the fix).
    - Gather no longer stops at once with `inventory_full` when no slot is empty but a partial stack of the target has room (23 Oct; game-side, no unit test).

@@ -241,4 +241,5 @@ COMPILED means the code compiles against forge-1.20.1-47.4.28 with official mapp
 - 22 Oct 2026: piece 1 built (priority list and reflexes): queue levels 1 to 3, `prio` on every tool, the `flee` tool, code reflexes, and moves that refuse lava, fire and deadly drops. `./gradlew build` is green with 118 unit tests. In-game checks M1 to M5 are in the handoff.
 - 22 Oct 2026: piece 1 merged into dev with the Claude Code brain (`brain = "claude_code"`). `./gradlew build` is green with 125 unit tests.
 - 22 Oct 2026: Claude Brain screen built and merged into dev: right-click the body for a read-only chest of the queue, for the players who may use `/cp`. `./gradlew build` is green with 127 unit tests. Not in game yet.
+- 23 Oct 2026: piece 1 follow-ups and warm-session bugs 1, 2, 4 and 5 fixed (handoff items 8 and 11). `./gradlew build` is green with 212 unit tests.
 - Next: F runs the Phase 0 checks against this code. Spike A is `/cp spawn` plus `C come here`; Spike B is `/cp keycheck` with a bad key. Details in the handoff.
