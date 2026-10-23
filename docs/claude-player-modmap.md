@@ -54,7 +54,9 @@ Paths are under `src/main/java/com/example/claudeplayer/` unless noted. Everythi
 | `body/NullConnection.java` | Packet-dropping connection, wrapped in an EmbeddedChannel |
 | `body/AgentBody.java` | Spawn, despawn, death, respawn, restore after a restart |
 | `body/AgentData.java` | SavedData: home, caution level, spawned and dead flags |
-| `body/SnapshotBuilder.java` | Builds StateSnapshot; world lookups the rest of the game side shares |
+| `body/SnapshotBuilder.java` | Builds StateSnapshot, including the map's block sampler and markers; world lookups the rest of the game side shares |
+| `core/WorldMap.java` | Top-down text map at feet level (17 by 17 in world_state, up to 49 by 49 via `look`): floor, steps, drops, walls, trees, fluids, containers, players, hostiles |
+| `core/chat/ChatLines.java` | Caps the body's chat at two lines of 100 characters, split at a sentence end or a space |
 | `body/ActionExecutor.java` | Runs world actions; Guardrails and CautionPolicy before any effect |
 | `nav/Navigator.java` | Steers the body along paths planned by an off-world zombie |
 | `nav/MoveHandle.java`, `nav/FollowHandle.java` | move_to (refuses lava, fire and deadly drops) and follow_player |
@@ -209,7 +211,7 @@ Dev launch: `./gradlew runClient -Pquickstart="World"` passes `--quickPlaySingle
 
 ## TOOLS (what Claude can call)
 Gated by `tool_phase` (default 2).
-- Phases 1 and 2, on by default: `get_state`, `move_to(x, y, z)`, `flee` (phase 1; `ok` with `no_threats`, or `failed:no_escape`), `say(text)`, `wait(seconds)`, `stop`; memory `note(subject, text)`, `remember(subject, text)`, `forget(subject)`; `inspect_container(x, y, z)` (phase 2, notes the contents in short-term memory).
+- Phases 1 and 2, on by default: `get_state`, `look(radius)` (phase 1; the world_state map at radius 4 to 24), `move_to(x, y, z)`, `flee` (phase 1; `ok` with `no_threats`, or `failed:no_escape`), `say(text)`, `wait(seconds)`, `stop`; memory `note(subject, text)`, `remember(subject, text)`, `forget(subject)`; `inspect_container(x, y, z)` (phase 2, notes the contents in short-term memory).
 - Phase 3: `follow_player(name, seconds)`. Phase 4: `attack_entity(entity_id)`, behind CautionPolicy.
 - Phase 6, stubs: `mine_block`, `place_block`, `equip`, `craft`. The work-area check is live; the edit itself returns `failed:not_implemented`.
 - Never tools: change caution level, edit the allowlist, run commands, touch config. ToolParseTest checks it.

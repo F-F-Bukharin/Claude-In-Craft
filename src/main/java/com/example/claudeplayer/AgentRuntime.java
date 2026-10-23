@@ -18,6 +18,7 @@ import com.example.claudeplayer.core.brain.DemoBrain;
 import com.example.claudeplayer.core.brain.PromptBuilder;
 import com.example.claudeplayer.core.brain.ToolSchemas;
 import com.example.claudeplayer.core.chat.ChatIntake;
+import com.example.claudeplayer.core.chat.ChatLines;
 import com.example.claudeplayer.core.chat.Conversation;
 import com.example.claudeplayer.core.memory.JsonMemoryFile;
 import com.example.claudeplayer.core.memory.Memory;
@@ -184,10 +185,12 @@ public final class AgentRuntime {
 
     /** Chat as the body. */
     public void say(String text) {
-        String clean = WorldText.clean(text, 256);
-        if (clean.isEmpty()) return;
-        conversation.add(settings.bodyName(), clean);
-        server.getPlayerList().broadcastSystemMessage(Component.literal("<" + settings.bodyName() + "> " + clean), false);
+        List<String> lines = ChatLines.fit(WorldText.clean(text, 256));
+        if (lines.isEmpty()) return;
+        conversation.add(settings.bodyName(), String.join(" ", lines));
+        for (String line : lines) {
+            server.getPlayerList().broadcastSystemMessage(Component.literal("<" + settings.bodyName() + "> " + line), false);
+        }
     }
 
     /** A gray system line in chat. */

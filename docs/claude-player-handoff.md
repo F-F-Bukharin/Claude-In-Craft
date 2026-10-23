@@ -52,6 +52,11 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
    - B2. As anyone else, right-click Claude. Nothing happens.
    - B3. While a level 3 flee runs, open the chest. The flee shows as running, and any paused level 2 action shows as paused (clock, "resumes after a reflex"). Clicks in the chest move nothing.
    - Watch in B1: the title can run past the chest's edge; the order text is cut at 30 characters.
+10. Map view and short chat (23 Oct, F reported long chat and a blind Claude). Every world_state now carries `map` (17 by 17, at feet level) and `map_origin`. The `look` tool gives up to 49 by 49. Chat is capped at two lines of 100 characters in code, and the prompt asks for 15 words at most.
+   - V1. `claude: what do you see?` Its answer should match the terrain around it: trees, water, walls.
+   - V2. Build a wall of 2 blocks with one gap, stand behind it, and say `claude: come here`. It should route through the gap.
+   - V3. Ask for something wordy (`claude: tell me about yourself`). Chat shows at most two lines.
+   - Not done: the Blockman status block pinned to each turn (spec section 7), and the flee issues, which wait on F's description of how flees failed.
 
 ## Risks to watch
 - API cost during busy play (plan §3 and §9). Watch the token count in `/cp status`.

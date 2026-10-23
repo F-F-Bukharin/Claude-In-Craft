@@ -2,6 +2,7 @@ package com.example.claudeplayer.body;
 
 import com.example.claudeplayer.AgentRuntime;
 import com.example.claudeplayer.core.StateSnapshot;
+import com.example.claudeplayer.core.WorldMap;
 import com.example.claudeplayer.core.safety.Reflexes;
 import com.example.claudeplayer.core.safety.WorldText;
 import java.util.ArrayList;
@@ -16,6 +17,9 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.tags.FluidTags;
+import net.minecraft.world.Container;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
@@ -23,6 +27,7 @@ import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.Vec3;
 
 /** Builds the immutable {@link StateSnapshot} from the live world, plus the lookups other game code shares. */
@@ -32,8 +37,40 @@ public final class SnapshotBuilder {
     private static final int MAX_PLAYERS = 10;
     private static final int MAX_SLOTS = 12;
     private static final int MAX_BLOCK_TYPES = 12;
+    /** world_state.map is 17 by 17; the look tool asks for more. */
+    public static final int MAP_RADIUS = 8;
+    private static final int MARKER_HEIGHT = 6; // players and mobs this far above or below still show
 
     private SnapshotBuilder() {}
+
+    /** The top-down map around the body, with players (P) and hostile mobs (!) drawn on it. */
+    public static WorldMap.View map(ServerPlayer body, int radius, double hostileRange) {
+        ServerLevel world = body.serverLevel();
+        BlockPos feet = body.blockPosition();
+        List<WorldMap.Marker> markers = new ArrayList<>();
+        for (ServerPlayer o : world.players()) {
+            if (o != body && Math.abs(o.getY() - body.getY()) <= MARKER_HEIGHT) {
+                markers.add(new WorldMap.Marker(o.getBlockX(), o.getBlockZ(), 'P'));
+            }
+        }
+        for (Mob m : hostilesXZ(body, Math.max(radius * 1.5, hostileRange))) {
+            if (Math.abs(m.getY() - body.getY()) <= MARKER_HEIGHT) markers.add(new WorldMap.Marker(m.getBlockX(), m.getBlockZ(), '!'));
+        }
+        BlockPos.MutableBlockPos probe = new BlockPos.MutableBlockPos();
+        return WorldMap.render((x, y, z) -> kind(world, probe.set(x, y, z)), feet.getX(), feet.getY(), feet.getZ(), radius, markers);
+    }
+
+    private static WorldMap.Kind kind(ServerLevel world, BlockPos pos) {
+        if (!world.isLoaded(pos)) return WorldMap.Kind.UNKNOWN; // never load chunks just to draw the map
+        BlockState state = world.getBlockState(pos);
+        FluidState fluid = state.getFluidState();
+        if (fluid.is(FluidTags.LAVA)) return WorldMap.Kind.LAVA;
+        if (fluid.is(FluidTags.WATER)) return WorldMap.Kind.WATER;
+        if (state.isAir()) return WorldMap.Kind.OPEN;
+        if (state.is(BlockTags.LOGS) || state.is(BlockTags.LEAVES)) return WorldMap.Kind.TREE;
+        if (state.hasBlockEntity() && world.getBlockEntity(pos) instanceof Container) return WorldMap.Kind.CONTAINER;
+        return state.getCollisionShape(world, pos).isEmpty() ? WorldMap.Kind.OPEN : WorldMap.Kind.SOLID;
+    }
 
     public static StateSnapshot build(AgentRuntime rt) {
         StateSnapshot.Vec home = home(rt);
@@ -61,7 +98,8 @@ public final class SnapshotBuilder {
         return new StateSnapshot(true, false, vec(p.position()), world.dimension().location().toString(),
                 p.getDirection().getSerializedName(), p.getHealth(), p.getMaxHealth(), p.getFoodData().getFoodLevel(),
                 p.getMainHandItem().isEmpty() ? "empty" : itemId(p.getMainHandItem()), armor, inventory, hostiles, players,
-                blocksAround(world, p.blockPosition()), world.getDayTime() % 24000, weather, level, home,
+                blocksAround(world, p.blockPosition()), map(p, MAP_RADIUS, rt.settings().hostileRange()),
+                world.getDayTime() % 24000, weather, level, home,
                 rt.queue().runningTool(), rt.queue().waitingCount());
     }
 

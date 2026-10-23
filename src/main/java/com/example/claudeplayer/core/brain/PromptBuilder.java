@@ -1,6 +1,7 @@
 package com.example.claudeplayer.core.brain;
 
 import com.example.claudeplayer.core.Settings;
+import com.example.claudeplayer.core.WorldMap;
 import com.example.claudeplayer.core.chat.Conversation;
 import com.example.claudeplayer.core.safety.CautionLevel;
 import com.example.claudeplayer.core.safety.WorldText;
@@ -34,6 +35,7 @@ public final class PromptBuilder {
                 .replace("{{action_timeout}}", String.valueOf(settings.actionTimeoutSeconds()))
                 .replace("{{trigger}}", settings.trigger())
                 .replace("{{short_minutes}}", String.valueOf(settings.shortTermMinutes()))
+                .replace("{{map_key}}", WorldMap.KEY)
                 .replace("{{levels}}", levels.toString().stripTrailing());
     }
 

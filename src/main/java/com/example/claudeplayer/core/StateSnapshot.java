@@ -15,7 +15,7 @@ public record StateSnapshot(
         Vec pos, String dimension, String facing,
         float health, float maxHealth, int food,
         String mainHand, List<String> armor, List<Stack> inventory,
-        List<Mob> hostiles, List<Seen> players, Map<String, Integer> blocks,
+        List<Mob> hostiles, List<Seen> players, Map<String, Integer> blocks, WorldMap.View map,
         long timeOfDay, String weather,
         int level, Vec home, String running, int waiting) {
 
@@ -30,10 +30,10 @@ public record StateSnapshot(
     /** No body in the world: never spawned, despawned, or dead. */
     public static StateSnapshot absent(boolean dead, int level, Vec home) {
         return new StateSnapshot(false, dead, null, null, null, 0, 0, 0, null, List.of(), List.of(), List.of(),
-                List.of(), Map.of(), 0, null, level, home, null, 0);
+                List.of(), Map.of(), null, 0, null, level, home, null, 0);
     }
 
-    /** Compact JSON for the prompt; a busy scene stays under 2 KB. */
+    /** Compact JSON for the prompt; a busy scene stays under 2.5 KB with the map. */
     public String toJson() {
         JsonObject o = new JsonObject();
         o.addProperty("level", level);
@@ -80,6 +80,15 @@ public record StateSnapshot(
         JsonObject near = new JsonObject();
         for (Map.Entry<String, Integer> e : blocks.entrySet()) near.addProperty(e.getKey(), e.getValue());
         o.add("blocks_near", near);
+        if (map != null) {
+            JsonArray origin = new JsonArray();
+            origin.add(map.originX());
+            origin.add(map.originZ());
+            o.add("map_origin", origin);
+            JsonArray rows = new JsonArray();
+            map.rows().forEach(rows::add);
+            o.add("map", rows);
+        }
         o.addProperty("time", timeOfDay);
         o.addProperty("weather", weather);
         JsonObject queue = new JsonObject();

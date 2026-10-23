@@ -42,12 +42,15 @@ public final class ToolSchemas {
         // v1
         add("get_state", 1, "Get a fresh world snapshot. Every message already ends with one; use this mid-batch to re-check.",
                 in -> new Action.GetState());
+        add("look", 1, "See farther: the same top-down map as world_state.map, with a radius of 4 to 24 blocks instead of 8. A radius of 24 is about 900 tokens, so ask for what you need.",
+                in -> new Action.Look(in.integer("radius", 4, 24)),
+                integer("radius", "Blocks from you to the map's edge, 4 to 24."));
         add("move_to", 1, "Walk to a block position. Holds the queue until you arrive, there is no path (failed:no_path) or the action times out (failed:timeout).",
                 in -> new Action.MoveTo(in.number("x", -3e7, 3e7), in.number("y", -64, 320), in.number("z", -3e7, 3e7)),
                 number("x", "Target x."), number("y", "Target y, at your feet."), number("z", "Target z."));
-        add("say", 1, "Say something in chat as yourself. Keep it short.",
+        add("say", 1, "Say something in chat as yourself: 15 words at most, only when a player needs to know.",
                 in -> new Action.Say(in.text("text", 200)),
-                text("text", "What to say. Longer than 200 characters gets cut."));
+                text("text", "What to say. Chat shows two lines of 100 characters at most; the rest is cut."));
         add("wait", 1, "Do nothing for 0.1 to 10 seconds. Holds the queue.",
                 in -> new Action.Wait(in.number("seconds", 0.1, 10)),
                 number("seconds", "How long, 0.1 to 10."));

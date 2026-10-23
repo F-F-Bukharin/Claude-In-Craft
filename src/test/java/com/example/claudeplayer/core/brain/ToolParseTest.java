@@ -35,6 +35,7 @@ class ToolParseTest {
         assertEquals(new Action.Stop(), v1.parse("stop", json("{}")).action());
         assertEquals(new Action.Note("chest@1,2,3", "15 oak_log"), v1.parse("note", json("{\"subject\":\"chest@1,2,3\",\"text\":\"15 oak_log\"}")).action());
         assertEquals(new Action.InspectContainer(1, 2, 3), v1.parse("inspect_container", json("{\"x\":1,\"y\":2,\"z\":3}")).action());
+        assertEquals(new Action.Look(16), v1.parse("look", json("{\"radius\":16}")).action());
     }
 
     @Test
@@ -44,6 +45,7 @@ class ToolParseTest {
         assertEquals("failed:bad_input:seconds", error(v1, "wait", "{\"seconds\":99}"));
         assertEquals("failed:bad_input:text", error(v1, "say", "{\"text\":\"   \"}"));
         assertEquals("failed:bad_input:x", error(v1, "inspect_container", "{\"x\":1.5,\"y\":2,\"z\":3}"));
+        assertEquals("failed:bad_input:radius", error(v1, "look", "{\"radius\":99}"));
     }
 
     @Test
@@ -67,7 +69,7 @@ class ToolParseTest {
             assertEquals("object", def.getAsJsonObject("input_schema").get("type").getAsString());
             names.add(def.get("name").getAsString());
         }
-        assertEquals(List.of("get_state", "move_to", "say", "wait", "stop", "flee", "note", "remember", "forget", "inspect_container"), names);
+        assertEquals(List.of("get_state", "look", "move_to", "say", "wait", "stop", "flee", "note", "remember", "forget", "inspect_container"), names);
     }
 
     @Test

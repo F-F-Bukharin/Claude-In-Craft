@@ -8,6 +8,9 @@ public sealed interface Action {
     // v1
     record GetState() implements Action {}
 
+    /** A wider top-down map than world_state.map (executed in the game). */
+    record Look(int radius) implements Action {}
+
     record MoveTo(double x, double y, double z) implements Action {}
 
     record Say(String text) implements Action {}

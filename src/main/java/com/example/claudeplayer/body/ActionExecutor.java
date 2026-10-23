@@ -45,6 +45,9 @@ public final class ActionExecutor implements ActionRunner {
         AgentPlayer p = rt.body().player();
         if (p == null) return Handle.done(ActionResult.failed("no_body"));
         if (action instanceof Action.GetState) return Handle.done(ActionResult.ok(SnapshotBuilder.build(rt).toJson()));
+        if (action instanceof Action.Look look) {
+            return Handle.done(ActionResult.ok(SnapshotBuilder.map(p, look.radius(), rt.settings().hostileRange()).text()));
+        }
         if (action instanceof Action.Say say) {
             rt.say(say.text());
             return Handle.done(ActionResult.ok());
