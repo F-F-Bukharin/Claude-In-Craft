@@ -44,5 +44,9 @@ public sealed interface Action {
 
     record Equip(String item) implements Action {}
 
+    /** Crafts {@code count} items from the inventory (executed in the game). */
     record Craft(String item, int count) implements Action {}
+
+    /** Loads up to {@code count} of an item and enough fuel into a furnace nearby; doesn't wait for it to finish. */
+    record Smelt(String item, int count) implements Action {}
 }

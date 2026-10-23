@@ -32,7 +32,7 @@ import net.minecraft.world.phys.Vec3;
  */
 public final class ActionExecutor implements ActionRunner {
     public static final double ATTACK_REACH = 3.0;
-    private static final double CONTAINER_REACH = 6.0;
+    static final double CONTAINER_REACH = 6.0;
 
     private final AgentRuntime rt;
 
@@ -64,7 +64,9 @@ public final class ActionExecutor implements ActionRunner {
         if (action instanceof Action.AttackEntity a) return Handle.done(attack(p, a.entityId()));
         if (action instanceof Action.MineBlock b) return Handle.done(blockEdit(b.x(), b.y(), b.z()));
         if (action instanceof Action.PlaceBlock b) return Handle.done(blockEdit(b.x(), b.y(), b.z()));
-        // equip and craft land with the v2 tools (phase 6)
+        if (action instanceof Action.Craft c) return Crafting.start(p, c);
+        if (action instanceof Action.Smelt s) return Handle.done(Smelting.load(rt, p, s));
+        // equip lands with the v2 tools (phase 6)
         return Handle.done(ActionResult.failed("not_implemented"));
     }
 

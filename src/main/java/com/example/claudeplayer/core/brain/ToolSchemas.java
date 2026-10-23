@@ -87,9 +87,13 @@ public final class ToolSchemas {
         add("equip", 6, "Move an item from your inventory to your main hand.",
                 in -> new Action.Equip(in.text("item", 64)),
                 text("item", "Item id, for example minecraft:stone_sword."));
-        add("craft", 6, "Craft an item from what's in your inventory.",
+        add("craft", 2, "Craft an item from your inventory, 0.25 s per craft. 2x2 recipes work anywhere; bigger ones need a crafting table within 4.5 blocks (failed:needs_crafting_table). failed:missing lists what you lack.",
                 in -> new Action.Craft(in.text("item", 64), in.integer("count", 1, 64)),
-                text("item", "Item id to make."), integer("count", "How many, 1 to 64."));
+                text("item", "Item id to make, for example oak_planks or minecraft:stick."),
+                integer("count", "How many items you want, 1 to 64. Crafts as often as needed, so 4 oak_planks is one craft."));
+        add("smelt", 2, "Load a furnace, smoker or blast furnace within 6 blocks with an item from your inventory and enough fuel (coal or charcoal first, then planks, then logs). Returns at once with when it will be ready and notes it in short-term memory; collect the output later with take.",
+                in -> new Action.Smelt(in.text("item", 64), in.integer("count", 1, 64)),
+                text("item", "Item id to smelt or cook, for example raw_iron, oak_log or beef."), integer("count", "How many, 1 to 64."));
     }
 
     /** The enabled tools in a fixed order; a stable list keeps the prompt cache valid. */

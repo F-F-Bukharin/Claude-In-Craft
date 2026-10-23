@@ -36,6 +36,8 @@ class ToolParseTest {
         assertEquals(new Action.Note("chest@1,2,3", "15 oak_log"), v1.parse("note", json("{\"subject\":\"chest@1,2,3\",\"text\":\"15 oak_log\"}")).action());
         assertEquals(new Action.InspectContainer(1, 2, 3), v1.parse("inspect_container", json("{\"x\":1,\"y\":2,\"z\":3}")).action());
         assertEquals(new Action.Look(16), v1.parse("look", json("{\"radius\":16}")).action());
+        assertEquals(new Action.Craft("oak_planks", 4), v1.parse("craft", json("{\"item\":\"oak_planks\",\"count\":4}")).action());
+        assertEquals(new Action.Smelt("minecraft:raw_iron", 8), v1.parse("smelt", json("{\"item\":\"minecraft:raw_iron\",\"count\":\"8\"}")).action());
     }
 
     @Test
@@ -46,6 +48,11 @@ class ToolParseTest {
         assertEquals("failed:bad_input:text", error(v1, "say", "{\"text\":\"   \"}"));
         assertEquals("failed:bad_input:x", error(v1, "inspect_container", "{\"x\":1.5,\"y\":2,\"z\":3}"));
         assertEquals("failed:bad_input:radius", error(v1, "look", "{\"radius\":99}"));
+        assertEquals("failed:bad_input:count", error(v1, "craft", "{\"item\":\"stick\",\"count\":65}"));
+        assertEquals("failed:bad_input:count", error(v1, "craft", "{\"item\":\"stick\",\"count\":0}"));
+        assertEquals("failed:bad_input:item", error(v1, "craft", "{\"count\":1}"));
+        assertEquals("failed:bad_input:count", error(v1, "smelt", "{\"item\":\"raw_iron\",\"count\":2.5}"));
+        assertEquals("failed:bad_input:item", error(v1, "smelt", "{\"item\":\" \",\"count\":1}"));
     }
 
     @Test
@@ -69,7 +76,8 @@ class ToolParseTest {
             assertEquals("object", def.getAsJsonObject("input_schema").get("type").getAsString());
             names.add(def.get("name").getAsString());
         }
-        assertEquals(List.of("get_state", "look", "move_to", "say", "wait", "stop", "flee", "note", "remember", "forget", "inspect_container"), names);
+        assertEquals(List.of("get_state", "look", "move_to", "say", "wait", "stop", "flee", "note", "remember", "forget", "inspect_container",
+                "craft", "smelt"), names);
     }
 
     @Test
