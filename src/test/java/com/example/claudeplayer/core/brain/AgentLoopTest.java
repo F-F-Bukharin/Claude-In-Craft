@@ -206,6 +206,27 @@ class AgentLoopTest {
     }
 
     @Test
+    void cacheReadsWeighATenth() {
+        assertEquals(270, new Brain.Usage(100, 20, 50, 1000).weighted());
+        assertEquals(1170, new Brain.Usage(100, 20, 50, 1000).total(), "total still counts everything");
+    }
+
+    @Test
+    void cacheReadsAloneDontTripTheTokenCap() {
+        build(b -> b.sessionTokenCap = 1000);
+        Brain.Reply cached = tools(say("t1"));
+        script.add(new Brain.Reply(cached.id(), cached.content(), cached.toolCalls(), cached.text(), cached.stopReason(),
+                new Brain.Usage(100, 20, 0, 5000))); // 5120 in all, 620 weighted
+        script.add(text("Done!"));
+        loop.startOrder("F", "say hi");
+        pump();
+        ticks(1);
+        assertEquals(2, requests.size(), "the second call went out");
+        assertEquals(List.of("Done!"), said);
+        assertTrue(notices.isEmpty(), notices.toString());
+    }
+
+    @Test
     void stopCancelsTheQueueAndALateReplyIsIgnored() {
         build(b -> {});
         script.add(tools(move("m")));
@@ -352,6 +373,34 @@ class AgentLoopTest {
         pump();
         assertEquals(1, requests.size());
         assertTrue(lastText(0).contains("fuse lit. Reflex: flee."), lastText(0));
+    }
+
+    @Test
+    void aQuietReflexDuringAnOrderCallsNoModelAndLeavesTheBatchWaiting() {
+        build(b -> {});
+        script.add(tools(call("m", "move_to", "{\"x\":5,\"y\":64,\"z\":5,\"prio\":2}")));
+        script.add(text("unused"));
+        loop.startOrder("F", "walk");
+        pump();
+        ticks(3);
+        loop.reflexQuiet(List.of(new Action.Flee()));
+        pump();
+        assertEquals(1, requests.size(), "no interrupt for a chase re-fire");
+        ticks(10);
+        assertEquals("move_to", queue.runningTool(), "m restarted after the flee");
+        assertEquals(1, requests.size(), "the batch waits for m");
+    }
+
+    @Test
+    void aQuietReflexWhileIdleStartsNoReactionButRuns() {
+        build(b -> {}); // idle_reactions on
+        script.add(text("unused"));
+        loop.reflexQuiet(List.of(new Action.MoveTo(9, 64, 9)));
+        pump();
+        ticks(2);
+        assertEquals("move_to", queue.runningTool());
+        assertEquals(0, requests.size());
+        assertFalse(loop.active());
     }
 
     @Test

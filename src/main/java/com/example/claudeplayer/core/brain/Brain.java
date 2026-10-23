@@ -21,6 +21,11 @@ public interface Brain {
         public long total() {
             return (long) input + output + cacheWrite + cacheRead;
         }
+
+        /** What the session token cap counts: cache reads cost about a tenth of other tokens. */
+        public long weighted() {
+            return (long) input + output + cacheWrite + cacheRead / 10;
+        }
     }
 
     /** {@code content} is the raw assistant content; it goes back into the transcript unchanged (thinking included). */
