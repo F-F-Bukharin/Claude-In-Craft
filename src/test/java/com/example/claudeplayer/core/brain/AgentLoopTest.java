@@ -760,7 +760,7 @@ class AgentLoopTest {
         ticks(3);
         assertEquals(0, requests.size());
         assertFalse(loop.autonomous());
-        assertEquals(List.of("Session token cap reached (1000). Autonomy off."), notices);
+        assertEquals(List.of("Token cap reached (1000 per hour). Autonomy off."), notices);
     }
 
     @Test

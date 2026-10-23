@@ -328,7 +328,7 @@ public final class AgentLoop implements ActionQueue.Listener {
             case OK -> {}
             case TOKEN_CAP -> {
                 autonomyOff();
-                host.notice("Session token cap reached (" + settings.sessionTokenCap() + "). Autonomy off.");
+                host.notice("Token cap reached (" + settings.sessionTokenCap() + " per hour). Autonomy off.");
                 return;
             }
             default -> {
@@ -485,7 +485,9 @@ public final class AgentLoop implements ActionQueue.Listener {
                 return;
             }
             case TOKEN_CAP -> {
-                end("Session token cap reached (" + settings.sessionTokenCap() + "). No more model calls until the server restarts.");
+                long minutes = Math.max(1, (guardrails.capFreesInMillis() + 59_999) / 60_000);
+                end("Token cap reached (" + settings.sessionTokenCap() + " per hour). Calls resume in about " + minutes
+                        + " min, or an op can run /cp resetcap.");
                 return;
             }
             case HALTED -> {

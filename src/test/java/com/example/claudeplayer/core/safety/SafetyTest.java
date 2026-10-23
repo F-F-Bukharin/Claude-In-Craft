@@ -45,6 +45,50 @@ class SafetyTest {
     }
 
     @Test
+    void tokensRecordedAnHourAgoNoLongerCount() {
+        Guardrails g = new Guardrails(Settings.of(b -> b.sessionTokenCap = 1000), () -> now);
+        g.recordTokens(900);
+        now += 61 * 60_000;
+        assertEquals(0, g.tokensUsed());
+        assertEquals(Guardrails.Check.OK, g.allowCall());
+    }
+
+    @Test
+    void theCapIsPerRollingHourAndFreesWhenTheOldestTokensAgeOut() {
+        Guardrails g = new Guardrails(Settings.of(b -> b.sessionTokenCap = 1000), () -> now);
+        g.recordTokens(600);
+        now = 10 * 60_000;
+        g.recordTokens(400);
+        assertEquals(Guardrails.Check.TOKEN_CAP, g.allowCall());
+        assertEquals(50 * 60_000L, g.capFreesInMillis(), "the oldest entry ages out at 60 minutes");
+        now = 60 * 60_000;
+        assertEquals(Guardrails.Check.OK, g.allowCall());
+        assertEquals(0, g.capFreesInMillis());
+    }
+
+    @Test
+    void capFreesOnlyWhenEnoughOldTokensHaveAgedOut() {
+        Guardrails g = new Guardrails(Settings.of(b -> b.sessionTokenCap = 1000), () -> now);
+        g.recordTokens(400);
+        now = 10 * 60_000;
+        g.recordTokens(600);
+        now = 20 * 60_000;
+        g.recordTokens(500);
+        assertEquals(50 * 60_000L, g.capFreesInMillis(), "the first entry alone is not enough; the second frees it at 70 minutes");
+    }
+
+    @Test
+    void resetTokensClearsTheWindow() {
+        Guardrails g = new Guardrails(Settings.of(b -> b.sessionTokenCap = 1000), () -> now);
+        g.recordTokens(1000);
+        assertEquals(Guardrails.Check.TOKEN_CAP, g.allowCall());
+        g.resetTokens();
+        assertEquals(Guardrails.Check.OK, g.allowCall());
+        assertEquals(0, g.tokensUsed());
+        assertEquals(0, g.capFreesInMillis());
+    }
+
+    @Test
     void naturalBlocksBreakAnywhere() {
         assertEquals("ok", Guardrails.checkBreak(false, false, true, false).code());
         assertEquals("ok", Guardrails.checkBreak(false, false, true, true).code());

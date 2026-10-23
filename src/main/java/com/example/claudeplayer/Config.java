@@ -68,7 +68,8 @@ public final class Config {
     private static final ForgeConfigSpec.IntValue MAX_CALLS_PER_MINUTE = B
             .defineInRange("max_calls_per_minute", D.maxCallsPerMinute(), 1, 120);
     private static final ForgeConfigSpec.LongValue SESSION_TOKEN_CAP = B
-            .comment("Model calls stop once this many tokens were used since the server started.")
+            .comment("Weighted tokens (cache reads count a tenth) allowed per rolling hour; at the cap, model calls wait",
+                    "until older tokens age out or /cp resetcap.")
             .defineInRange("session_token_cap", D.sessionTokenCap(), 1_000L, Long.MAX_VALUE);
     private static final ForgeConfigSpec.IntValue HOSTILE_RANGE = B
             .defineInRange("hostile_range", D.hostileRange(), 2, 64);
