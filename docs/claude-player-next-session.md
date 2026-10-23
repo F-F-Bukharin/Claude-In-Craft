@@ -5,12 +5,13 @@ For the next Claude session, on any account. Read this first, then `CLAUDE.md`, 
 ## Where things stand
 
 - **GitHub:** `dev` and `main` are both at `1669171`.
-- **Local `dev` is ahead of GitHub and not pushed.** Its tip is `cea6e4b`, and it holds:
+- **Local `dev` is ahead of GitHub and not pushed.** Its tip is `47b343a` (plus docs), and it holds:
   - level gaze while walking, and crops and farmland on the map (`fix/gaze-and-crops`);
   - the Brain panel as a live text screen (`feat/claude-brain-text-gui`, built by its own session);
   - `till`, `plant`, `harvest` and `use_bucket` (`feat/farming-buckets`);
-  - text vision, the `see` tool (`feat/text-vision`).
-  - `./gradlew build` is green with 240 tests.
+  - text vision, the `see` tool (`feat/text-vision`);
+  - the combat routine, `fight` with auto-gear (`feat/combat-routine`).
+  - `./gradlew build` is green with 253 tests.
   - Push only after F says so. F's flow: pull `dev`, push `dev`, fast-forward `main`.
 - **Gradle needs Java 17:** `export JAVA_HOME="/c/Program Files/Eclipse Adoptium/jdk-17.0.20.101-hotspot"`. The PATH Java is a 32-bit Java 8 that breaks Gradle.
 - **F's test profile:** `C:\Users\Huntress\curseforge\minecraft\Instances\Claude-In-Craft`.
@@ -25,11 +26,18 @@ Builders were running in git worktrees under `.claude/worktrees/`. Each was told
 
 | Branch (base) | What | Report | State |
 |---|---|---|---|
-| `feat/combat-routine` (78c0e13) | `fight(entity_id)`, a routine like an iron golem: it gears up (best weapon, armor and shield, picked in core `Gear`), walks to the target and swings when the cooldown is ready, with no model call per swing. `CautionPolicy.check` runs before every swing, and a denial ends the fight, which is what limits the chase per level. Reflex FIGHT queues `Fight`. | `combat-report.md` | running |
+| `feat/combat-routine` (78c0e13) | `fight(entity_id)`, a routine like an iron golem: it gears up (best weapon, armor and shield, picked in core `Gear`), walks to the target and swings when the cooldown is ready, with no model call per swing. `CautionPolicy.check` runs before every swing, and a denial ends the fight, which is what limits the chase per level. Reflex FIGHT queues `Fight`. It also stops on lava, fire or a deadly drop. | (none; summary below) | **merged into local `dev` as 47b343a; build green, 253 tests** |
 | `feat/glance-model-side` (78c0e13) | Glance part 1: `Action.Glance`, the `glance` tool, the core `VisionGate` (15 s cooldown, one per turn), a PNG payload on `ActionResult`, image blocks in `tool_result`, the image surviving an early report, ApiBrain logs without base64, and ClaudeCodeBrain's warm session sending real image blocks. The executor returns `failed:no_client` until part 2. | `glance-model-report.md` | running |
 | `fix/chase-heard` (old base, before the merges) | Review fixes for the chase rule. F1 is committed (`93d292f`: only a mob the model heard about can chase). F2 (a NONE decision rechecks after 10 ticks) is half done in `chase-heard-wip-F2.patch` in the scratchpad. F3 (a test for `reflexQuiet`'s `checkProgress`) and F4 (the Guardrails javadoc, and `/cp status` saying "weighted tokens") are not started. | none | stopped; rebase onto `dev` first |
 
-Merge order: `feat/glance-model-side` and `feat/combat-routine` into `dev`. Both add entries to `Action`, `ToolSchemas`, `ActionExecutor`, the prompt, the per-phase tool lists in `ToolParseTest` and the tool count in `ApiBrainTest`; resolve those by keeping both. Build green, then install.
+Combat follow-ups:
+- The modmap still needs two lines:
+  - SYSTEMS 9: "A FIGHT queues `fight` (the routine) at level 3."
+  - TOOLS phase 4: "`attack_entity` (one swing) and `fight` (gear up, walk and swing until it ends), behind CautionPolicy; only flee, stop, attack_entity and fight may ask for prio 3."
+- In-game checks: a zombie at each caution level 0 to 5 (0 chases up to 16, 2 holds within 6, 3 and 4 fight only adjacent with no way out, 5 never fights); gear swaps (a sword from the bag, a better chestplate, a shield into an empty off-hand); a player beside a zombie is never hit.
+- Watch: at levels 3 and 4, a mob stepping back past 2 blocks ends the fight, and the chase rule may loop flee and fight. An elytra or carved pumpkin gets swapped for real armor.
+
+Merge order: `feat/glance-model-side` into `dev`. Both add entries to `Action`, `ToolSchemas`, `ActionExecutor`, the prompt, the per-phase tool lists in `ToolParseTest` and the tool count in `ApiBrainTest`; resolve those by keeping both. Build green, then install.
 
 Proven: Claude Code with the brain's lockdown flags takes a base64 PNG image block over stream-json mid-session, and Haiku 5.5 reads it. Image tokens are about w×h/750, so 320×180 is about 80 tokens.
 
