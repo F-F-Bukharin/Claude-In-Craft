@@ -93,10 +93,13 @@ final class MoveHandle implements ActionRunner.Handle {
         BlockPos feet = BlockPos.containing(body.position().add(dx / length * PROBE_AHEAD, 0, dz / length * PROBE_AHEAD));
         BlockPos below = feet.below();
         int depth = 0;
-        while (depth < MAX_DROP && level.getBlockState(below).getCollisionShape(level, below).isEmpty()
-                && level.getFluidState(below).isEmpty()) {
-            depth++;
-            below = below.below();
+        // A slab, stair or carpet at the feet is solid ground the body stands on, so there is no drop to count.
+        if (level.getBlockState(feet).getCollisionShape(level, feet).isEmpty()) {
+            while (depth < MAX_DROP && level.getBlockState(below).getCollisionShape(level, below).isEmpty()
+                    && level.getFluidState(below).isEmpty()) {
+                depth++;
+                below = below.below();
+            }
         }
         boolean water = level.getFluidState(below).is(FluidTags.WATER);
         return Reflexes.hazard(id(level.getBlockState(feet)), id(level.getBlockState(feet.below())), depth, water, body.getHealth());
