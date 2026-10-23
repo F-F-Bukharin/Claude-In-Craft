@@ -75,7 +75,7 @@ public final class DamageWatcher {
         }
         long now = rt.ticks();
         if (pending == null && now % SCAN_TICKS == 0) {
-            for (Mob mob : SnapshotBuilder.hostilesXZ(p, rt.settings().hostileRange())) {
+            for (Mob mob : SnapshotBuilder.hostiles(p, rt.settings().hostileRange())) {
                 boolean lit = SnapshotBuilder.litCreeper(mob);
                 if (!lit && mob instanceof Creeper) fuses.forget("lit:" + mob.getId()); // a re-lit fuse is a new one
                 if (lit ? fuses.report("lit:" + mob.getId(), now) : threats.report("near:" + mob.getId(), now)) {
@@ -124,7 +124,7 @@ public final class DamageWatcher {
         double distance = threat == null ? 0 : p.distanceTo(threat);
         return new CautionPolicy.Situation(threat != null && SnapshotBuilder.isHostile(threat),
                 threat instanceof Player, distance, distance <= 2.0, p.getHealth() / p.getMaxHealth(),
-                rt.escape().escapeExists(p, SnapshotBuilder.hostilesXZ(p, rt.settings().hostileRange())), hurtWhileFleeing());
+                rt.escape().escapeExists(p, SnapshotBuilder.hostiles(p, rt.settings().hostileRange())), hurtWhileFleeing());
     }
 
     private static String describe(Entity e) {

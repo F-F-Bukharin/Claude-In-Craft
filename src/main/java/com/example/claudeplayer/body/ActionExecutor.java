@@ -89,7 +89,7 @@ public final class ActionExecutor implements ActionRunner {
 
     /** Runs to the first reachable spot on the side away from the nearest hostile. */
     private Handle flee(AgentPlayer p) {
-        List<Mob> threats = SnapshotBuilder.hostilesXZ(p, rt.settings().hostileRange());
+        List<Mob> threats = SnapshotBuilder.hostiles(p, rt.settings().hostileRange());
         if (threats.isEmpty()) return Handle.done(ActionResult.ok("no_threats"));
         Vec3 dest = rt.escape().destination(p, threats);
         if (dest == null) return Handle.done(ActionResult.failed("no_escape"));
