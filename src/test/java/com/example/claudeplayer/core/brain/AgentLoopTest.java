@@ -745,6 +745,23 @@ class AgentLoopTest {
     }
 
     @Test
+    void everyTurnEndsWithTheStatusBlock() {
+        build(b -> {});
+        memory.note("step", "1/2 say hello");
+        script.add(tools(say("s1")));
+        script.add(text("Done."));
+        loop.startOrder("F", "greet");
+        pump();
+        ticks(40);
+        assertEquals(2, requests.size());
+        for (int r = 0; r < 2; r++) {
+            String text = lastText(r);
+            assertTrue(text.endsWith("</status>"), text);
+            assertTrue(text.contains("ORDER: \"greet\" (from F) | STEP: 1/2 say hello\n"), text);
+        }
+    }
+
+    @Test
     void theBundledPromptFillsEveryPlaceholder() {
         String system = new PromptBuilder(Settings.DEFAULTS, PromptBuilder.loadTemplate(null)).system();
         assertFalse(system.contains("{{"), system);

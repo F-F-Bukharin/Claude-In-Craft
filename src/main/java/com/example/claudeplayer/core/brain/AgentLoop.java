@@ -466,7 +466,8 @@ public final class AgentLoop implements ActionQueue.Listener {
                 return;
             }
         }
-        String state = host.snapshot().toJson();
+        StateSnapshot snapshot = host.snapshot();
+        String state = snapshot.toJson();
         String text;
         if (opening == null) {
             text = prompts.updateTurn(notes, state);
@@ -477,6 +478,7 @@ public final class AgentLoop implements ActionQueue.Listener {
         } else {
             text = prompts.orderTurn(opening.player(), opening.text(), host.recentChat(), memory.render(), notes, state);
         }
+        text += "\n" + PromptBuilder.status(goal ? "own goal" : orderText, orderFrom, step(), snapshot, queue.snapshot());
         JsonArray content = pendingResults; // tool_result blocks must come first in the turn
         content.add(textBlock(text));
         messages.add(message("user", content));
@@ -486,6 +488,12 @@ public final class AgentLoop implements ActionQueue.Listener {
         finalText = null;
         mustReport = false;
         send();
+    }
+
+    /** The model's own progress line for the status block: its short-term note with subject step, or null. */
+    private String step() {
+        return memory.shortTerm().stream().filter(e -> e.subject().equals("step")).map(Memory.Entry::text)
+                .findFirst().orElse(null);
     }
 
     private void send() {
