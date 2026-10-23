@@ -4,15 +4,15 @@ For the next Claude session, on any account. Read this first, then `CLAUDE.md`, 
 
 ## Where things stand
 
-- **GitHub:** `dev` and `main` are both at `1669171`.
-- **Local `dev` is ahead of GitHub and not pushed.** Its tip is `47b343a` (plus docs), and it holds:
+- **GitHub:** `dev` is pushed at `60c0881` (23 Oct). `main` stays at `1669171` until F says to fast-forward it.
+- **`dev` holds, on top of `main`:**
   - level gaze while walking, and crops and farmland on the map (`fix/gaze-and-crops`);
   - the Brain panel as a live text screen (`feat/claude-brain-text-gui`, built by its own session);
   - `till`, `plant`, `harvest` and `use_bucket` (`feat/farming-buckets`);
   - text vision, the `see` tool (`feat/text-vision`);
   - the combat routine, `fight` with auto-gear (`feat/combat-routine`).
   - `./gradlew build` is green with 253 tests.
-  - Push only after F says so. F's flow: pull `dev`, push `dev`, fast-forward `main`.
+  - F's flow: pull `dev`, push `dev`, fast-forward `main` on F's word.
 - **Gradle needs Java 17:** `export JAVA_HOME="/c/Program Files/Eclipse Adoptium/jdk-17.0.20.101-hotspot"`. The PATH Java is a 32-bit Java 8 that breaks Gradle.
 - **F's test profile:** `C:\Users\Huntress\curseforge\minecraft\Instances\Claude-In-Craft`.
   - Its jar is from `1669171`, not current `dev`.
