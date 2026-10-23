@@ -27,6 +27,9 @@ import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.BedBlock;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.CropBlock;
+import net.minecraft.world.level.block.NetherWartBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.block.state.BlockState;
@@ -73,7 +76,22 @@ public final class SnapshotBuilder {
         if (state.isAir()) return WorldMap.Kind.OPEN;
         if (state.is(BlockTags.LOGS) || state.is(BlockTags.LEAVES)) return WorldMap.Kind.TREE;
         if (state.hasBlockEntity() && world.getBlockEntity(pos) instanceof Container) return WorldMap.Kind.CONTAINER;
+        if (state.is(Blocks.FARMLAND)) return WorldMap.Kind.FARMLAND;
+        WorldMap.Kind crop = crop(state);
+        if (crop != null) return crop;
         return state.getCollisionShape(world, pos).isEmpty() ? WorldMap.Kind.OPEN : WorldMap.Kind.SOLID;
+    }
+
+    /** Wheat, carrots, potatoes, beetroots and nether wart: ripe at the block's maximum age. Null for anything else. */
+    @Nullable
+    private static WorldMap.Kind crop(BlockState state) {
+        if (state.getBlock() instanceof CropBlock crop) { // wheat, carrots, potatoes, beetroots
+            return WorldMap.crop(crop.getAge(state), crop.getMaxAge());
+        }
+        if (state.is(Blocks.NETHER_WART)) {
+            return WorldMap.crop(state.getValue(NetherWartBlock.AGE), NetherWartBlock.MAX_AGE);
+        }
+        return null;
     }
 
     public static StateSnapshot build(AgentRuntime rt) {

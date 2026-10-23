@@ -43,6 +43,28 @@ class WorldMapTest {
     }
 
     @Test
+    void marksCropsAndBareFarmland() {
+        put(0, 63, 0, Kind.FARMLAND);
+        assertEquals('=', at(0, 0), "farmland with nothing on it");
+        put(0, 64, 0, WorldMap.crop(7, 7));
+        assertEquals('W', at(0, 0), "ripe");
+        put(0, 64, 0, WorldMap.crop(3, 7));
+        assertEquals('w', at(0, 0), "growing");
+        put(1, 63, 0, Kind.SOLID);
+        put(1, 64, 0, Kind.CROP_RIPE);
+        assertEquals('W', at(1, 0), "nether wart on soul sand needs no farmland");
+        assertTrue(WorldMap.KEY.contains("W ripe crop") && WorldMap.KEY.contains("w growing crop") && WorldMap.KEY.contains("= bare farmland"));
+    }
+
+    @Test
+    void ripeAtMaxAge() {
+        assertEquals(Kind.CROP_GROWING, WorldMap.crop(0, 7));
+        assertEquals(Kind.CROP_GROWING, WorldMap.crop(2, 3), "beetroot and nether wart top out at 3");
+        assertEquals(Kind.CROP_RIPE, WorldMap.crop(3, 3));
+        assertEquals(Kind.CROP_RIPE, WorldMap.crop(7, 7));
+    }
+
+    @Test
     void readsFluidsTreesContainersAndUnknown() {
         put(0, 63, 1, Kind.WATER);
         assertEquals('~', at(0, 1));

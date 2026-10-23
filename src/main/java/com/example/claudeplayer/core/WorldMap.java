@@ -11,7 +11,9 @@ import java.util.List;
  */
 public final class WorldMap {
     /** One block as the map cares about it. */
-    public enum Kind { OPEN, SOLID, WATER, LAVA, TREE, CONTAINER, UNKNOWN }
+    public enum Kind { OPEN, SOLID, WATER, LAVA, TREE, CONTAINER, UNKNOWN,
+        /** Walkable crops (no collision) and the farmland they grow on; farmland is solid ground. */
+        CROP_RIPE, CROP_GROWING, FARMLAND }
 
     @FunctionalInterface
     public interface Sampler {
@@ -29,9 +31,14 @@ public final class WorldMap {
     }
 
     public static final String KEY = ". floor at your level, + one block up (jump), - one block down, v drop of 2 or more, "
-            + "# wall, T tree, ~ water, L lava, C container, @ you, P player, ! hostile, space unknown";
+            + "# wall, T tree, ~ water, L lava, C container, W ripe crop, w growing crop, = bare farmland, @ you, P player, ! hostile, space unknown";
 
     private WorldMap() {}
+
+    /** A crop is ripe once its age reaches the block's maximum; the game side feeds the age and max age. */
+    public static Kind crop(int age, int maxAge) {
+        return age >= maxAge ? Kind.CROP_RIPE : Kind.CROP_GROWING;
+    }
 
     /** Markers outside the square are skipped; {@code @} marks the centre and wins over everything. */
     public static View render(Sampler s, int cx, int feetY, int cz, int radius, List<Marker> markers) {
@@ -61,7 +68,11 @@ public final class WorldMap {
         if (feet == Kind.LAVA || below == Kind.LAVA) return 'L';
         if (feet == Kind.WATER || below == Kind.WATER) return '~';
         if (feet == Kind.CONTAINER || head == Kind.CONTAINER) return 'C';
+        if ((feet == Kind.CROP_RIPE || feet == Kind.CROP_GROWING) && head == Kind.OPEN) {
+            return feet == Kind.CROP_RIPE ? 'W' : 'w';
+        }
         if (feet == Kind.OPEN && head == Kind.OPEN) {
+            if (below == Kind.FARMLAND) return '=';
             if (solid(below)) return '.';
             Kind two = s.at(x, y - 2, z);
             if (two == Kind.LAVA) return 'L';
@@ -74,6 +85,6 @@ public final class WorldMap {
     }
 
     private static boolean solid(Kind k) {
-        return k == Kind.SOLID || k == Kind.TREE || k == Kind.CONTAINER;
+        return k == Kind.SOLID || k == Kind.TREE || k == Kind.CONTAINER || k == Kind.FARMLAND;
     }
 }
