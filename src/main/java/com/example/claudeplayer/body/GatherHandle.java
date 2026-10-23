@@ -244,8 +244,12 @@ final class GatherHandle implements ActionRunner.Handle {
         return gained;
     }
 
-    /** No empty slot, and no stack of what is being gathered with room left. */
+    /**
+     * No empty slot, and no stack of what is being gathered with room left. Before the first dig the drops aren't
+     * known yet, so a partial stack of them could still have room: not full until then.
+     */
     private boolean inventoryFull() {
+        if (yield.isEmpty()) return false;
         for (ItemStack s : body.getInventory().items) {
             if (s.isEmpty() || yield.contains(SnapshotBuilder.itemId(s)) && s.getCount() < s.getMaxStackSize()) return false;
         }
