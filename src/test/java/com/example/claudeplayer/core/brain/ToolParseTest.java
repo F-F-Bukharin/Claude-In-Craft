@@ -77,6 +77,20 @@ class ToolParseTest {
     }
 
     @Test
+    void gatherAndDigParse() {
+        assertEquals(new Action.Gather("log", 16), v1.parse("gather", json("{\"target\":\"log\",\"count\":16}")).action());
+        assertEquals(new Action.Gather("iron_ore", 256), v1.parse("gather", json("{\"target\":\"minecraft:Iron_Ore\",\"count\":\"256\"}")).action());
+        assertEquals(new Action.Dig("down", 15), v1.parse("dig", json("{\"direction\":\"Down\",\"length\":15}")).action());
+        assertEquals(new Action.Dig("north", 1), v1.parse("dig", json("{\"direction\":\"north\",\"length\":1}")).action());
+        assertEquals("failed:bad_input:count", error(v1, "gather", "{\"target\":\"log\",\"count\":257}"));
+        assertEquals("failed:bad_input:count", error(v1, "gather", "{\"target\":\"log\",\"count\":0}"));
+        assertEquals("failed:bad_input:target", error(v1, "gather", "{\"count\":4}"));
+        assertEquals("failed:bad_input:direction", error(v1, "dig", "{\"direction\":\"up\",\"length\":4}"));
+        assertEquals("failed:bad_input:length", error(v1, "dig", "{\"direction\":\"east\",\"length\":33}"));
+        assertEquals("failed:bad_input:length", error(v1, "dig", "{\"direction\":\"east\"}"));
+    }
+
+    @Test
     void longChatIsCutNotRejected() {
         Action.Say say = (Action.Say) v1.parse("say", json("{\"text\":\"" + "a".repeat(500) + "\"}")).action();
         assertEquals(200, say.text().length());
@@ -98,7 +112,8 @@ class ToolParseTest {
             names.add(def.get("name").getAsString());
         }
         assertEquals(List.of("get_state", "look", "move_to", "say", "wait", "stop", "flee", "note", "remember", "forget", "inspect_container",
-                "store", "take", "eat", "follow_player", "mine_block", "place_block", "equip", "craft", "smelt"), names);
+                "store", "take", "eat", "follow_player", "mine_block", "place_block", "equip", "craft", "smelt",
+                "gather", "dig"), names);
     }
 
     @Test
