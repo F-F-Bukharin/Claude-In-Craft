@@ -43,6 +43,48 @@ class WorldMapTest {
     }
 
     @Test
+    void marksCropsAndBareFarmland() {
+        put(0, 63, 0, Kind.FARMLAND);
+        assertEquals('=', at(0, 0), "farmland with nothing on it");
+        put(0, 64, 0, WorldMap.crop(7, 7));
+        assertEquals('W', at(0, 0), "ripe");
+        put(0, 64, 0, WorldMap.crop(3, 7));
+        assertEquals('w', at(0, 0), "growing");
+        put(1, 63, 0, Kind.SOLID);
+        put(1, 64, 0, Kind.CROP_RIPE);
+        assertEquals('W', at(1, 0), "nether wart on soul sand needs no farmland");
+        assertTrue(WorldMap.KEY.contains("W ripe crop") && WorldMap.KEY.contains("w growing crop") && WorldMap.KEY.contains("= bare farmland"));
+    }
+
+    @Test
+    void cropsOneStepBelowOrAboveStillShow() {
+        put(0, 62, 0, Kind.FARMLAND);
+        put(0, 63, 0, Kind.CROP_RIPE);
+        assertEquals('W', at(0, 0), "field one block down is a crop, not a drop");
+        put(1, 61, 1, Kind.FARMLAND);
+        put(1, 62, 1, Kind.CROP_GROWING);
+        put(1, 63, 1, Kind.OPEN);
+        assertEquals('w', at(1, 1), "two down still in the window");
+        put(2, 65, 0, Kind.CROP_GROWING);
+        put(2, 64, 0, Kind.SOLID);
+        assertEquals('w', at(2, 0), "one up");
+        put(3, 64, 1, Kind.CROP_RIPE);
+        put(3, 63, 1, Kind.FARMLAND);
+        put(3, 62, 1, Kind.CROP_GROWING);
+        assertEquals('W', at(3, 1), "feet level wins over a deeper crop");
+        put(4, 60, 0, Kind.CROP_RIPE);
+        assertEquals('.', at(4, 0), "three down is outside the window");
+    }
+
+    @Test
+    void ripeAtMaxAge() {
+        assertEquals(Kind.CROP_GROWING, WorldMap.crop(0, 7));
+        assertEquals(Kind.CROP_GROWING, WorldMap.crop(2, 3), "beetroot and nether wart top out at 3");
+        assertEquals(Kind.CROP_RIPE, WorldMap.crop(3, 3));
+        assertEquals(Kind.CROP_RIPE, WorldMap.crop(7, 7));
+    }
+
+    @Test
     void readsFluidsTreesContainersAndUnknown() {
         put(0, 63, 1, Kind.WATER);
         assertEquals('~', at(0, 1));
