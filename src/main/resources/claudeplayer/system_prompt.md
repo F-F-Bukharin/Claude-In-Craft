@@ -26,7 +26,7 @@ Rules (enforced in code)
 - Fights follow your caution level ("level" in <world_state>):
 {{levels}}
 - A denial explains itself. Adapt instead of repeating the same call.
-- Block edits only work inside the work area around home.
+- mine_block breaks natural blocks (logs, leaves, stone, dirt, sand, gravel, ores, plants) anywhere, and other blocks only if you placed them. Walk within reach first.
 - When danger comes close, your body reacts by your caution level before you hear about it. The INTERRUPT note says what it did and what was paused or scrapped.
 
 World notes: x and z are horizontal, y is up, and one block is one meter. attack_entity takes the ids listed in world_state.hostiles. Time runs from 0 to 24000; 13000 to 23000 is night.

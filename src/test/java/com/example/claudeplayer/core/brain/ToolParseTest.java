@@ -36,6 +36,9 @@ class ToolParseTest {
         assertEquals(new Action.Note("chest@1,2,3", "15 oak_log"), v1.parse("note", json("{\"subject\":\"chest@1,2,3\",\"text\":\"15 oak_log\"}")).action());
         assertEquals(new Action.InspectContainer(1, 2, 3), v1.parse("inspect_container", json("{\"x\":1,\"y\":2,\"z\":3}")).action());
         assertEquals(new Action.Look(16), v1.parse("look", json("{\"radius\":16}")).action());
+        assertEquals(new Action.MineBlock(4, -10, 7), v1.parse("mine_block", json("{\"x\":4,\"y\":-10,\"z\":7}")).action());
+        assertEquals(new Action.PlaceBlock(4, 65, 7, "dirt"), v1.parse("place_block", json("{\"x\":4,\"y\":65,\"z\":7,\"item\":\"dirt\"}")).action());
+        assertEquals(new Action.Equip("minecraft:iron_pickaxe"), v1.parse("equip", json("{\"item\":\"minecraft:iron_pickaxe\"}")).action());
         assertEquals(new Action.Craft("oak_planks", 4), v1.parse("craft", json("{\"item\":\"oak_planks\",\"count\":4}")).action());
         assertEquals(new Action.Smelt("minecraft:raw_iron", 8), v1.parse("smelt", json("{\"item\":\"minecraft:raw_iron\",\"count\":\"8\"}")).action());
     }
@@ -63,6 +66,9 @@ class ToolParseTest {
         assertEquals("failed:bad_input:text", error(v1, "say", "{\"text\":\"   \"}"));
         assertEquals("failed:bad_input:x", error(v1, "inspect_container", "{\"x\":1.5,\"y\":2,\"z\":3}"));
         assertEquals("failed:bad_input:radius", error(v1, "look", "{\"radius\":99}"));
+        assertEquals("failed:bad_input:y", error(v1, "mine_block", "{\"x\":4,\"y\":999,\"z\":7}"));
+        assertEquals("failed:bad_input:item", error(v1, "place_block", "{\"x\":4,\"y\":65,\"z\":7}"));
+        assertEquals("failed:bad_input:item", error(v1, "equip", "{\"item\":\"  \"}"));
         assertEquals("failed:bad_input:count", error(v1, "craft", "{\"item\":\"stick\",\"count\":65}"));
         assertEquals("failed:bad_input:count", error(v1, "craft", "{\"item\":\"stick\",\"count\":0}"));
         assertEquals("failed:bad_input:item", error(v1, "craft", "{\"count\":1}"));
@@ -92,7 +98,7 @@ class ToolParseTest {
             names.add(def.get("name").getAsString());
         }
         assertEquals(List.of("get_state", "look", "move_to", "say", "wait", "stop", "flee", "note", "remember", "forget", "inspect_container",
-                "store", "take", "eat", "follow_player", "craft", "smelt"), names);
+                "store", "take", "eat", "follow_player", "mine_block", "place_block", "equip", "craft", "smelt"), names);
     }
 
     @Test

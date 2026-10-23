@@ -14,7 +14,7 @@ public record Settings(
         String bodyName, String trigger, List<String> ordersAllowlist, int defaultLevel,
         double actionsPerSecond, int actionTimeoutSeconds, int batchSize, int prefetchAt,
         int maxSteps, int maxCallsPerMinute, long sessionTokenCap,
-        int breakRadius, int hostileRange, int escapeDistance, int escapeMaxSteps,
+        int hostileRange, int escapeDistance, int escapeMaxSteps,
         int toolPhase, boolean idleReactions, boolean reflexes, boolean autoEat,
         int shortTermCapacity, int shortTermMinutes, int longTermCapacity) {
 
@@ -66,7 +66,6 @@ public record Settings(
         public int maxSteps = 8;
         public int maxCallsPerMinute = 12;
         public long sessionTokenCap = 200_000;
-        public int breakRadius = 32;
         public int hostileRange = 16;
         public int escapeDistance = 8;
         public int escapeMaxSteps = 12;
@@ -81,7 +80,7 @@ public record Settings(
         public Settings build() {
             return new Settings(brain, claudeCodePath, claudeCodeTimeoutSeconds, model, apiKeyEnv, effort, maxTokens, requestTimeoutSeconds, promptCaching, logPrompts,
                     bodyName, trigger, ordersAllowlist, defaultLevel, actionsPerSecond, actionTimeoutSeconds,
-                    batchSize, prefetchAt, maxSteps, maxCallsPerMinute, sessionTokenCap, breakRadius, hostileRange,
+                    batchSize, prefetchAt, maxSteps, maxCallsPerMinute, sessionTokenCap, hostileRange,
                     escapeDistance, escapeMaxSteps, toolPhase, idleReactions, reflexes, autoEat,
                     shortTermCapacity, shortTermMinutes, longTermCapacity);
         }
