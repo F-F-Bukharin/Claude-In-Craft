@@ -23,6 +23,23 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
   - Option B is built, at F's request: `brain = "claude_code"` (the default) runs F's `claude -p` on their subscription. It runs with `--tools ""`, `--setting-sources ""`, `--strict-mcp-config`, a replaced system prompt (file), and a `--json-schema` for `{say, calls}`. `--bare` is avoided because it ignores the subscription login. It runs in `%TEMP%/claudeplayer-claude-code`, so no CLAUDE.md is loaded. A real two-turn order took 3 to 4 s per turn. `brain = "api"` restores the Messages API.
   - The game ran in a CurseForge instance ("Claude-In-Craft 1.20.1"). Quickstart, the demo, stop, keycheck, death and respawn all worked.
 
+## Playtest 1 (22 Oct, CurseForge)
+
+| # | Found | Status |
+|---|---|---|
+| 1 | Claude couldn't see player coordinates | Fixed on dev: players carry `pos` |
+| 2 | No follow command | `follow_player` unlocks at `tool_phase` 3; F set 3 in the profile config |
+| 3 | Long replies cut off at 256 characters | Fixed on dev: 600 |
+| 4 | No mining, crafting or placing | Open: phase-6 stubs, a later feature piece |
+| 5 | Each order forgets the last conversation | Open: by design; notes and memories carry facts across orders |
+| 6 | Mobs far below or above set off flees (XZ-only radius) | Fixed on dev: 16 blocks straight-line (F's call) |
+| 7 | A chasing zombie hit Claude after one flee | Fixed on dev: quiet re-flee every 2 s within 6 blocks |
+| 8 | Claude didn't know where the chest was | Fixed on dev: `points` lists nearby containers, beds and crafting tables |
+| 9 | No way to take or deposit items | Open: a later feature (with #4) |
+| 10 | Ender chest read as "tool not available" | Fixed on dev: `failed:ender_chest_personal` plus a prompt line |
+| 11 | Claude repeated its own wrong "tool isn't available" | Fixed on dev: the prompt says the tool list is the truth |
+| 12 | Token cap hit after about 32 calls (cache reads at full weight) | Fixed on dev: cache reads count a tenth |
+
 ## Still to do, in order
 1. F answers D1 to D8 ("yes to all" is fine).
 2. F runs `./gradlew runClient` and opens a single-player world with cheats on. Once a world named "Claude Test" exists, `./gradlew runClient -Pquickstart="Claude Test"` does steps 2 and 3 in one go.
@@ -36,7 +53,7 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
    - M3. Start a long `claude: walk to <x y z>`, then pour lava onto the path ahead of the body (vanilla paths route around existing lava). The body halts at the edge, and the move reports `failed:hazard_lava`.
    - M4. Give an order with routine steps, then spawn a zombie. The routine steps come back `scrapped`, and a prio-2 move resumes afterwards.
    - M5. `claude: stop` while it flees. It halts within a second.
-   - Known: a hostile in a cave far below still counts (XZ distance), so the body may take a short flee. The 30 s re-arm per mob bounds it.
+   - Known: the reflex radius is 16 blocks in a straight line, so a hostile in a cave 10 blocks below still counts. The 30 s re-arm per mob bounds it.
    - Watch in M2: a creeper whose fuse flickers (lost sight, or the body at the 3 to 7 block edge) now triggers a flee on each re-light.
 8. Piece 1 follow-ups, from the final review. None blocks the in-game checks.
    - The model never hears a reflex's own outcome (`failed:no_escape`, `ok:no_threats`, `hazard_*`, a denied swing). Add a note when a `reflex-` entry ends in an error.
@@ -58,6 +75,15 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
    - A short START HERE: import, run the setup, open a world, `/cp quickstart`, `/cp keycheck`.
    - Learn from Claudefox's `claude-in-zen/friends/` and its review notes U1 (don't present an unsigned build as normal), E6 (don't assume `.local\bin`) and U2 (show which account is signed in). Never ship F's own login or keys.
    - Brainstorm it with F first. A standalone launcher app is possible, but a CurseForge export does the same job with far less to maintain.
+11. Playtest 1 fixes, in game (on dev). Paste the relevant `latest.log` lines here.
+   - R1. At level 4 or 5, a skeleton in a cave 20+ blocks below, or 17+ blocks away in a straight line on a hill, triggers no flee. A zombie 10 blocks away on flat ground still does (`reflex FLEE`).
+   - R2. A zombie that keeps chasing after the first flee: the body flees again within about 2 s of the flee ending, before the zombie lands a hit, and the log shows a second `reflex FLEE` for the same `#id`, and no extra Claude chat line for the re-flee. The second flee leaves no new INTERRUPT in the transcript, and no reaction call while idle.
+   - R3. At a HOLD level (level 3, zombie at 5 blocks, full HP), the zombie standing nearby causes no repeated interrupts (one `near:` interrupt only).
+   - R4. `claude: what's in the ender chest` gets an explanation that ender chests are personal, not "tool not available".
+   - R5. A long order runs past 32 calls without "Session token cap reached" when most input is cache reads.
+   - P1. `claude: come here` walks to you.
+   - P2. `claude: what's in the chest` names its contents without being told where it is.
+   - With `tool_phase` 3: P3. `claude: follow me` follows for up to 60 s.
 
 ## Risks to watch
 - API cost during busy play (plan §3 and §9). Watch the token count in `/cp status`.

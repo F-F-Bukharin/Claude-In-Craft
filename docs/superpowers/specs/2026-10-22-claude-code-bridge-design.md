@@ -31,6 +31,7 @@ Success: `claude: come here` runs on the subscription with no key set. A creeper
   - **Revised 22 Oct, confirmed by F:** what carries over from Claudefox is one warm `claude` per chat on stream-json, the idle stop, `--resume` and the lockdown. The tool server and the separate helper process don't. `ClaudeCodeBrain` already gets tool calls through `--json-schema`, so a helper process would only add a local channel to secure. F asked for pieces 3 and 4 to build on that brain.
 
 - Confirmed by F with the spec (22 Oct): `brain` defaults to `claude_code` (dev already does this); "16 blocks horizontally" is XZ distance with no vertical cap; the bridge is written in Java (it is now Java inside the mod).
+- 22 Oct playtest: the reflex radius is 16 blocks straight-line; XZ is kept only for the think-harder gate.
 
 ## 3. Facts the design rests on
 
@@ -118,7 +119,8 @@ Not kept from the first version: dispatching each tool call as it streams. With 
 - Code reflexes always enqueue at 3.
 
 **Reflexes** run on the server thread in the tick that sees the danger. No model call comes first:
-- **Hostile.** Within 16 blocks horizontally (XZ distance, Y ignored): `CautionPolicy.advise` picks FIGHT, HOLD, FLEE or FLEE_AND_CALL_FOR_HELP, and the reflex enqueues that at level 3. A creeper with a lit fuse is FLEE at every level. `ThreatTracker` still debounces.
+- **Hostile.** Within 16 blocks in a straight line, height included (F, 22 Oct playtest): `CautionPolicy.advise` picks FIGHT, HOLD, FLEE or FLEE_AND_CALL_FOR_HELP, and the reflex enqueues that at level 3. A creeper with a lit fuse is FLEE at every level. `ThreatTracker` still debounces.
+  - Chase rule: while no level 3 action is running or waiting, a hostile within 6 blocks (3D) re-runs the reflex decision at most once per mob every 2 s (`Reflexes.chaseDue`). It is delivered only when the decision is FLEE or FIGHT, and only with `reflexes` on. A re-fire only queues its moves (`AgentLoop.reflexQuiet`): no interrupt and no idle reaction. Only the first reflex for a threat tells the model.
   - FIGHT is a single swing, and only when the threat is within attack reach (3 blocks). Farther away, Claude is told and plans the approach.
   - FIGHT while attacks are off (`tool_phase` < 4) becomes FLEE.
   - Players and non-hostile mobs never trigger a reflex.
@@ -197,7 +199,7 @@ Already on dev: `brain` (`claude_code`), `claude_code_path` (empty), `claude_cod
 | `spare_process` | true | Keep one idle `claude` ready |
 | `idle_stop_minutes` | 10 | Stop an idle session |
 
-`hostileRange` (16) stays the radius, now measured on XZ for the reflex and the think-harder gate.
+`hostileRange` (16) stays the radius, measured in a straight line for the reflex, and on XZ (Y ignored) only for the think-harder gate.
 
 ## 11. Spikes, before building pieces 3 and 4
 
@@ -214,7 +216,7 @@ Each one is a short script against the real CLI, with `ClaudeCodeBrain`'s own fl
 
 ## 12. Testing
 
-- **Pure core (JUnit, as today):** priority ordering, preempt, scrap and pause; `prio` clamping; reflex verdicts for each caution level, the lit creeper and hazards; XZ distance; Blockman block rendering and `WorldText` in it; think-harder gate, timeout and y/n intake; ledger thresholds, once-per-window and re-arm; the transcript-tail diff and the prefix check.
+- **Pure core (JUnit, as today):** priority ordering, preempt, scrap and pause; `prio` clamping; reflex verdicts for each caution level, the lit creeper and hazards; the chase rule (`chaseDue`); XZ distance; Blockman block rendering and `WorldText` in it; think-harder gate, timeout and y/n intake; ledger thresholds, once-per-window and re-arm; the transcript-tail diff and the prefix check.
 - **Sessions (JUnit, test flag on):** a fake `claude` (a small Java main behind a script that `claude_code_path` points to) replays recorded stream-json from the spikes. Tests cover:
   - only the new turn is sent, and a prefix mismatch restarts the session;
   - the spare handoff and the spare rebuilt on a prompt or effort change;

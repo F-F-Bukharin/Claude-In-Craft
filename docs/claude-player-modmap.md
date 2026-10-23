@@ -49,7 +49,7 @@ Paths are under `src/main/java/com/example/claudeplayer/` unless noted. Everythi
 | `core/safety/Guardrails.java` | Kill switch, call rate, token cap, break radius |
 | `core/safety/WorldText.java` | Sanitizes and quotes names, signs and chat |
 | `core/safety/ThreatTracker.java` | Interrupt debounce: one per threat, at most one per 5 s |
-| `core/safety/Reflexes.java` | Pure: fight or flee by caution level, lit creepers, lava, fire and deadly drops |
+| `core/safety/Reflexes.java` | Pure: fight or flee by caution level, the chase rule, lit creepers, lava, fire and deadly drops |
 | `body/AgentPlayer.java` | The body: a server-driven ServerPlayer (Carpet-style), not Forge's FakePlayer |
 | `body/NullConnection.java` | Packet-dropping connection, wrapped in an EmbeddedChannel |
 | `body/AgentBody.java` | Spawn, despawn, death, respawn, restore after a restart |
@@ -60,7 +60,7 @@ Paths are under `src/main/java/com/example/claudeplayer/` unless noted. Everythi
 | `nav/MoveHandle.java`, `nav/FollowHandle.java` | move_to (refuses lava, fire and deadly drops) and follow_player |
 | `nav/EscapePlanner.java` | "Does a retreat path exist?" for the policy, and where `flee` runs to: straight away from the nearest threat first |
 | `event/ServerEvents.java` | Forge event wiring; right-click on the body opens the Brain screen |
-| `event/DamageWatcher.java` | Threat scan every 2 ticks and hits: reflexes and interrupts; help calls at level 5 |
+| `event/DamageWatcher.java` | Threat scan every 2 ticks (3D, `hostile_range`), the quiet chase re-flee, and hits: reflexes and interrupts; help calls at level 5 |
 | `command/CpCommands.java` | `/cp` subcommands |
 | `gui/BrainMenu.java` | Claude Brain screen: a read-only chest of the queue (running, then waiting; paused marked), opened by right-clicking the body. Server side only |
 | `src/main/resources/claudeplayer/system_prompt.md` | System prompt; `config/claudeplayer_system_prompt.md` overrides it |
@@ -79,7 +79,7 @@ Tests live in `src/test/java/com/example/claudeplayer/`: PurityTest; `core/act/A
 
 ### 3. State snapshot
 - Built on the server thread at each message to the model and for each `get_state` call. Immutable. Sent as compact JSON, target under 2 KB. Threat scans run separately, every 2 ticks, in DamageWatcher.
-- Contents: position, dimension, facing; HP and food; held item and armor; top inventory slots; up to 10 nearest hostiles (type, distance, HP); up to 10 nearby players (name, distance); block summary within 3 tiles (counts by type); time of day and weather; caution level; queue state (running action, actions still waiting).
+- Contents: position, dimension, facing; HP and food; held item and armor; top inventory slots; up to 10 nearest hostiles (type, distance, HP); up to 10 nearby players (name, distance, `pos`); block summary within 3 tiles (counts by type); `points` (up to 12 nearest containers, ender chests, crafting tables and bed heads, each with block id and x, y, z, listed after `blocks_near`); time of day and weather; caution level; queue state (running action, actions still waiting).
 
 ### 4. Brain loop (background thread)
 - Request: POST `https://api.anthropic.com/v1/messages`, with `model`, `max_tokens` (key, default 4096 because thinking counts against it), `output_config.effort`, the system prompt from PromptBuilder, and tools from ToolSchemas. Cache breakpoints sit on the system block and on the newest turn. The user turn carries the order or updates, the newest snapshot, and recent chat.
@@ -125,7 +125,7 @@ public record Verdict(boolean allowed, String reason) {}
 ### 7. Guardrails
 - Kill switch: `/cp stop` or `claude: stop` cancels the queue, halts the loop, and blocks model calls until the next allowlisted order.
 - Call rate: at most `max_calls_per_minute`.
-- Token cap: when `session_token_cap` is reached, calls stop and chat says so. Resets on server restart.
+- Token cap: when `session_token_cap` is reached, calls stop and chat says so. Resets on server restart. Cache reads count at a tenth (`Brain.Usage.weighted()`); `total()` is unchanged for logs.
 - Step cap: `max_steps` tool rounds per order.
 - Break and place only within `break_radius` of home.
 - Unknown tool names are denied with `denied:unknown_tool`.
@@ -136,10 +136,11 @@ public record Verdict(boolean allowed, String reason) {}
 - Each tick, move_to probes 0.8 blocks ahead of the body. Lava, fire, or a drop that would kill refuses the move: the body halts and the move fails with `failed:hazard_lava`, `hazard_fire` or `hazard_drop`. A drop onto water is safe.
 
 ### 9. Interrupts
-- Interrupts: a threat (a hostile within `hostile_range` on XZ at any height, or any hit on the body), a new order, or `stop`.
+- Interrupts: a threat (a hostile within `hostile_range` in a straight line, height included, or any hit on the body), a new order, or `stop`.
 - With `reflexes` on, code acts first. `Reflexes.decide` turns the level's stance into `flee` or one `attack_entity` swing (only within 3 blocks, and only at `tool_phase` 4 or higher), queued at level 3. A lit creeper is always fled from. Players and non-hostile mobs never trigger a reflex. The interrupt then tells Claude what ran, what was paused and what was scrapped; otherwise the queue is left alone. HOLD, or FIGHT out of reach, is an interrupt with no reflex.
 - With `reflexes` off, a threat interrupt cancels everything below level 3, sends results at once (unfinished actions report `cancelled`), and starts a new message.
 - Threat interrupts are debounced: one per threat, and no more than one every 5 seconds. Lit creepers have their own tracker with no gap. The scan runs every 2 ticks.
+- Chase rule: with `reflexes` on and no level 3 running or waiting, a hostile within 6 blocks re-runs the reflex decision at most once per mob every 2 s. A FLEE or FIGHT is queued as a reflex; NONE sends nothing. The rule is quiet: only the first reflex for a threat (the `near:`, `lit:` and `hit:` paths) tells the model. A re-fire only queues its level 3 actions, with no interrupt and no reaction call (`AgentLoop.reflexQuiet`).
 - Reflexes still run after `claude: stop`; no model call follows while the kill switch is on.
 - An interrupt during a model call: the reply's tool calls are answered `cancelled` and the interrupt goes out with them. With no order running, an interrupt starts a reaction turn (`idle_reactions`), unless the kill switch is on.
 - Each interrupt carries the caution policy's advice (fight, hold, flee, flee and call for help).
@@ -209,7 +210,7 @@ Dev launch: `./gradlew runClient -Pquickstart="World"` passes `--quickPlaySingle
 
 ## TOOLS (what Claude can call)
 Gated by `tool_phase` (default 2).
-- Phases 1 and 2, on by default: `get_state`, `move_to(x, y, z)`, `flee` (phase 1; `ok` with `no_threats`, or `failed:no_escape`), `say(text)`, `wait(seconds)`, `stop`; memory `note(subject, text)`, `remember(subject, text)`, `forget(subject)`; `inspect_container(x, y, z)` (phase 2, notes the contents in short-term memory).
+- Phases 1 and 2, on by default: `get_state`, `move_to(x, y, z)`, `flee` (phase 1; `ok` with `no_threats`, or `failed:no_escape`), `say(text)`, `wait(seconds)`, `stop`; memory `note(subject, text)`, `remember(subject, text)`, `forget(subject)`; `inspect_container(x, y, z)` (phase 2, notes the contents in short-term memory; reads containers listed in `world_state.points`, within 6 blocks; an ender chest fails with `failed:ender_chest_personal`). `move_to` to a player uses the `pos` in `world_state.players`.
 - Phase 3: `follow_player(name, seconds)`. Phase 4: `attack_entity(entity_id)`, behind CautionPolicy.
 - Phase 6, stubs: `mine_block`, `place_block`, `equip`, `craft`. The work-area check is live; the edit itself returns `failed:not_implemented`.
 - Never tools: change caution level, edit the allowlist, run commands, touch config. ToolParseTest checks it.
@@ -237,4 +238,5 @@ COMPILED means the code compiles against forge-1.20.1-47.4.28 with official mapp
 - 22 Oct 2026: piece 1 built (priority list and reflexes): queue levels 1 to 3, `prio` on every tool, the `flee` tool, code reflexes, and moves that refuse lava, fire and deadly drops. `./gradlew build` is green with 118 unit tests. In-game checks M1 to M5 are in the handoff.
 - 22 Oct 2026: piece 1 merged into dev with the Claude Code brain (`brain = "claude_code"`). `./gradlew build` is green with 125 unit tests.
 - 22 Oct 2026: Claude Brain screen built and merged into dev: right-click the body for a read-only chest of the queue, for the players who may use `/cp`. `./gradlew build` is green with 127 unit tests. Not in game yet.
+- 22 Oct 2026: playtest 1 fixes on dev: player positions and nearby points of interest in the snapshot, replies up to 600 characters, a 16-block straight-line reflex radius, a quiet 2 s re-flee while chased, `ender_chest_personal`, cache reads counted at a tenth for the token cap, and prompt rules. `./gradlew build` is green with 134 unit tests. Not checked in game yet.
 - Next: F runs the Phase 0 checks against this code. Spike A is `/cp spawn` plus `claude: come here`; Spike B is `/cp keycheck` with a bad key. Details in the handoff.
