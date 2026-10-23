@@ -42,6 +42,23 @@ class ApiBrainTest {
     }
 
     @Test
+    void picturesPassThroughButNeverReachTheLog() {
+        String b64 = java.util.Base64.getEncoder().encodeToString(new byte[1234]);
+        JsonArray messages = JsonParser.parseString("[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\","
+                + "\"tool_use_id\":\"t1\",\"content\":[{\"type\":\"image\",\"source\":{\"type\":\"base64\","
+                + "\"media_type\":\"image/png\",\"data\":\"" + b64 + "\"}},{\"type\":\"text\",\"text\":\"ok\"}]},"
+                + "{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"" + b64 + "\"}},"
+                + "{\"type\":\"text\",\"text\":\"update\"}]}]").getAsJsonArray();
+        JsonObject body = ApiBrain.requestBody(new Brain.Request("You are Claude.", new JsonArray(), messages), Settings.DEFAULTS);
+        assertTrue(body.toString().contains(b64), "the API gets the picture unchanged");
+        String logged = ApiBrain.logged(body);
+        assertFalse(logged.contains(b64), logged);
+        assertFalse(logged.contains("AAAAAAAA"), "no base64 at all");
+        assertEquals(2, logged.split("<png 1234 bytes>", -1).length - 1, logged);
+        assertTrue(body.toString().contains(b64), "redacting the log leaves the request alone");
+    }
+
+    @Test
     void cachingAndEffortCanBeTurnedOff() {
         JsonObject body = ApiBrain.requestBody(request(), Settings.of(b -> {
             b.promptCaching = false;

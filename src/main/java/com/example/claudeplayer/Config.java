@@ -104,6 +104,13 @@ public final class Config {
     private static final ForgeConfigSpec.IntValue AUTONOMY_INTERVAL = B
             .comment("While autonomous (\"C go do your thing\"), at least this many seconds between goals, each one model call.")
             .defineInRange("autonomy_interval_seconds", D.autonomyIntervalSeconds(), 15, 3600);
+    private static final ForgeConfigSpec.IntValue VISION_COOLDOWN = B
+            .comment("Seconds after a glance before the next one may run (one per model turn at most). A 320x180 picture is about 77 tokens.")
+            .defineInRange("vision_cooldown_seconds", D.visionCooldownSeconds(), 0, 3600);
+    private static final ForgeConfigSpec.IntValue VISION_WIDTH = B
+            .comment("Width in pixels of a glance picture.").defineInRange("vision_width", D.visionWidth(), 64, 640);
+    private static final ForgeConfigSpec.IntValue VISION_HEIGHT = B
+            .comment("Height in pixels of a glance picture.").defineInRange("vision_height", D.visionHeight(), 64, 640);
 
     static final ForgeConfigSpec SPEC = B.build();
 
@@ -144,6 +151,9 @@ public final class Config {
             b.longTermCapacity = MEMORY_LONG_CAPACITY.get();
             b.claudeCodeIdleMinutes = CLAUDE_CODE_IDLE.get();
             b.autonomyIntervalSeconds = AUTONOMY_INTERVAL.get();
+            b.visionCooldownSeconds = VISION_COOLDOWN.get();
+            b.visionWidth = VISION_WIDTH.get();
+            b.visionHeight = VISION_HEIGHT.get();
         });
     }
 

@@ -97,7 +97,7 @@ public final class ClaudeCodeBrain implements Brain {
             session = sessions.take(command);
             from = 0;
         }
-        session.write(userLine(renderTranscript(messages, from)));
+        session.write(userLine(renderContent(messages, from)));
         sessions.refill(command); // the next spare starts while the model thinks
         Reply reply;
         try {
@@ -236,12 +236,26 @@ public final class ClaudeCodeBrain implements Brain {
 
     /** Only the messages from {@code from} on; earlier ones still name the tools their results refer to. */
     static String renderTranscript(JsonArray messages, int from) {
+        StringBuilder sb = new StringBuilder();
+        for (JsonElement b : renderContent(messages, from)) {
+            if (!Images.isImage(b)) sb.append(string(b.getAsJsonObject(), "text"));
+        }
+        return sb.toString();
+    }
+
+    /**
+     * The same text as one text block; the tail's pictures (glance) split it into text and image blocks where
+     * they occur. Without pictures the line is exactly what plain text gave, so a warm session's cache holds.
+     */
+    static JsonArray renderContent(JsonArray messages, int from) {
         Map<String, String> toolNames = new HashMap<>();
+        JsonArray blocks = new JsonArray();
         StringBuilder sb = new StringBuilder();
         StringBuilder skipped = new StringBuilder(); // already read: rendered only to learn tool names
         for (int i = 0; i < messages.size(); i++) {
             if (!messages.get(i).isJsonObject()) continue;
             StringBuilder to = i < from ? skipped : sb;
+            JsonArray images = i < from ? null : blocks;
             JsonObject message = messages.get(i).getAsJsonObject();
             boolean assistant = string(message, "role").equals("assistant");
             to.append(assistant ? "[you]\n" : "[game]\n");
@@ -250,18 +264,24 @@ public final class ClaudeCodeBrain implements Brain {
                 to.append(content.getAsString()).append('\n');
             } else if (content != null && content.isJsonArray()) {
                 for (JsonElement b : content.getAsJsonArray()) {
-                    if (b.isJsonObject()) renderBlock(b.getAsJsonObject(), toolNames, to);
+                    if (b.isJsonObject()) renderBlock(b.getAsJsonObject(), toolNames, to, images);
                 }
             }
             to.append('\n');
         }
-        return sb.append("Answer with your next step as JSON.").toString();
+        blocks.add(textBlock(sb.append("Answer with your next step as JSON.").toString()));
+        return blocks;
     }
 
     /** One stream-json user line carrying {@code text}. */
     static String userLine(String text) {
         JsonArray content = new JsonArray();
         content.add(textBlock(text));
+        return userLine(content);
+    }
+
+    /** One stream-json user line carrying these content blocks. */
+    static String userLine(JsonArray content) {
         JsonObject message = new JsonObject();
         message.addProperty("role", "user");
         message.add("content", content);
@@ -280,7 +300,8 @@ public final class ClaudeCodeBrain implements Brain {
         return seen.size();
     }
 
-    private static void renderBlock(JsonObject block, Map<String, String> toolNames, StringBuilder sb) {
+    /** {@code images}: where the tail's pictures go, after the text so far; null for an already-read message. */
+    private static void renderBlock(JsonObject block, Map<String, String> toolNames, StringBuilder sb, JsonArray images) {
         switch (string(block, "type")) {
             case "text" -> sb.append(string(block, "text")).append('\n');
             case "tool_use" -> {
@@ -292,9 +313,21 @@ public final class ClaudeCodeBrain implements Brain {
                 String name = toolNames.getOrDefault(string(block, "tool_use_id"), "tool");
                 sb.append("result of ").append(name).append(block.has("is_error") ? " (error)" : "").append(": ")
                         .append(resultText(block.get("content"))).append('\n');
+                if (block.get("content") instanceof JsonArray parts) {
+                    for (JsonElement part : parts) if (Images.isImage(part)) picture(part.getAsJsonObject(), sb, images);
+                }
             }
+            case "image" -> picture(block, sb, images);
             default -> { } // thinking and other blocks don't exist on this path
         }
+    }
+
+    /** Ends the text so far as its own block, then the picture. */
+    private static void picture(JsonObject image, StringBuilder sb, JsonArray images) {
+        if (images == null) return;
+        if (sb.length() > 0) images.add(textBlock(sb.toString()));
+        sb.setLength(0);
+        images.add(image.deepCopy());
     }
 
     /** Turns the CLI's {@code --output-format json} result into a Reply, or the right BrainException. */

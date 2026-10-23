@@ -137,6 +137,9 @@ public final class ToolSchemas {
         add("use_bucket", 2, "Use a bucket on a block within 4.5 blocks of your eyes. With a water or lava bucket: pour it there and keep the empty bucket. With an empty bucket: fill it from the water or lava source there. Lava pours only within 32 blocks of home (denied:outside_work_area) and never within 4 blocks of another player (failed:lava_near_player). Fails with no_bucket, no_source, too_far, own_block (where you stand) or not_poured.",
                 in -> new Action.UseBucket(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000)),
                 integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."));
+        // vision
+        add("glance", 2, "Take a low-res picture of what you see right now. For important moments: a rare or valuable target, or a player asking you to look. It has a cooldown.",
+                in -> new Action.Glance());
     }
 
     /** The enabled tools in a fixed order; a stable list keeps the prompt cache valid. */
