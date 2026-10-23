@@ -107,8 +107,9 @@ public final class DamageWatcher {
                 : CautionPolicy.advise(level, s).name().toLowerCase(Locale.ROOT).replace('_', ' ');
         String reason = what + " Caution level " + level.number() + " (" + level.title + ") says: " + stance + ".";
         if (threat == null) return new Pending(reason, List.of());
+        boolean inFleeRange = SnapshotBuilder.hostilesXZ(p, rt.settings().hostileRange()).contains(threat);
         Reflexes.Move move = Reflexes.decide(level, s, lit, rt.settings().toolPhase() >= 4,
-                ActionExecutor.ATTACK_REACH);
+                ActionExecutor.ATTACK_REACH, inFleeRange);
         List<Action> actions = switch (move) {
             case FLEE -> List.of(new Action.Flee());
             case FIGHT -> List.of(new Action.AttackEntity(threat.getId()));

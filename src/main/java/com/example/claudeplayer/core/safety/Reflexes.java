@@ -18,15 +18,18 @@ public final class Reflexes {
         return Math.sqrt(dx * dx + dz * dz);
     }
 
-    /** The reflex move for a threat; FIGHT only when the target is within reach, otherwise Claude plans the approach. */
+    /** The reflex move: FIGHT only within reach, FLEE only within hostile_range (inFleeRange), else NONE for Claude. */
     public static Move decide(CautionLevel level, CautionPolicy.Situation s, boolean litCreeper, boolean attacksEnabled,
-                              double reach) {
+                              double reach, boolean inFleeRange) {
         if (litCreeper) return Move.FLEE;
         if (s.targetPlayer() || !s.targetHostile()) return Move.NONE;
         return switch (CautionPolicy.advise(level, s)) {
-            case FLEE, FLEE_AND_CALL_FOR_HELP -> Move.FLEE;
+            case FLEE, FLEE_AND_CALL_FOR_HELP -> inFleeRange ? Move.FLEE : Move.NONE;
             case HOLD -> Move.NONE;
-            case FIGHT -> !attacksEnabled ? Move.FLEE : s.distance() <= reach ? Move.FIGHT : Move.NONE;
+            case FIGHT -> {
+                if (!attacksEnabled) yield inFleeRange ? Move.FLEE : Move.NONE;
+                yield s.distance() <= reach ? Move.FIGHT : Move.NONE;
+            }
         };
     }
 

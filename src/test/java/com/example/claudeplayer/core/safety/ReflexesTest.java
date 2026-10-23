@@ -22,31 +22,46 @@ class ReflexesTest {
     @Test
     void aLitCreeperMeansFleeAtEveryLevel() {
         for (CautionLevel level : CautionLevel.values()) {
-            assertEquals(Reflexes.Move.FLEE, Reflexes.decide(level, s(2, 1.0, true), true, true, 3.0), level.name());
+            assertEquals(Reflexes.Move.FLEE, Reflexes.decide(level, s(2, 1.0, true), true, true, 3.0, true), level.name());
         }
     }
 
     @Test
     void fleeStancesFlee() {
-        assertEquals(Reflexes.Move.FLEE, Reflexes.decide(CautionLevel.INNOCENT, s(10, 1.0, true), false, true, 3.0));
-        assertEquals(Reflexes.Move.FLEE, Reflexes.decide(CautionLevel.INNOCENT, s(10, 0.2, true), false, true, 3.0), "flee and call for help");
-        assertEquals(Reflexes.Move.FLEE, Reflexes.decide(CautionLevel.REASONABLE, s(8, 1.0, true), false, true, 3.0));
+        assertEquals(Reflexes.Move.FLEE, Reflexes.decide(CautionLevel.INNOCENT, s(10, 1.0, true), false, true, 3.0, true));
+        assertEquals(Reflexes.Move.FLEE, Reflexes.decide(CautionLevel.INNOCENT, s(10, 0.2, true), false, true, 3.0, true), "flee and call for help");
+        assertEquals(Reflexes.Move.FLEE, Reflexes.decide(CautionLevel.REASONABLE, s(8, 1.0, true), false, true, 3.0, true));
+    }
+
+    @Test
+    void fleeStancesDoNothingOutsideFleeRange() {
+        assertEquals(Reflexes.Move.NONE, Reflexes.decide(CautionLevel.INNOCENT, s(10, 1.0, true), false, true, 3.0, false), "a ghast far away");
+        assertEquals(Reflexes.Move.NONE, Reflexes.decide(CautionLevel.INNOCENT, s(10, 0.2, true), false, true, 3.0, false), "flee and call for help");
+        assertEquals(Reflexes.Move.NONE, Reflexes.decide(CautionLevel.REASONABLE, s(8, 1.0, true), false, true, 3.0, false));
+    }
+
+    @Test
+    void aLitCreeperFleesEvenOutsideFleeRange() {
+        for (CautionLevel level : CautionLevel.values()) {
+            assertEquals(Reflexes.Move.FLEE, Reflexes.decide(level, s(10, 1.0, true), true, true, 3.0, false), level.name());
+        }
     }
 
     @Test
     void fightOnlyWithinReach() {
-        assertEquals(Reflexes.Move.FIGHT, Reflexes.decide(CautionLevel.READY, s(2.5, 1.0, true), false, true, 3.0));
-        assertEquals(Reflexes.Move.NONE, Reflexes.decide(CautionLevel.READY, s(5, 1.0, true), false, true, 3.0), "Claude plans the approach");
+        assertEquals(Reflexes.Move.FIGHT, Reflexes.decide(CautionLevel.READY, s(2.5, 1.0, true), false, true, 3.0, true));
+        assertEquals(Reflexes.Move.NONE, Reflexes.decide(CautionLevel.READY, s(5, 1.0, true), false, true, 3.0, true), "Claude plans the approach");
     }
 
     @Test
     void fightWithoutAttacksBecomesFlee() {
-        assertEquals(Reflexes.Move.FLEE, Reflexes.decide(CautionLevel.READY, s(2.5, 1.0, true), false, false, 3.0));
+        assertEquals(Reflexes.Move.FLEE, Reflexes.decide(CautionLevel.READY, s(2.5, 1.0, true), false, false, 3.0, true));
+        assertEquals(Reflexes.Move.NONE, Reflexes.decide(CautionLevel.READY, s(2.5, 1.0, true), false, false, 3.0, false), "outside flee range");
     }
 
     @Test
     void holdDoesNothing() {
-        assertEquals(Reflexes.Move.NONE, Reflexes.decide(CautionLevel.READY, s(10, 1.0, true), false, true, 3.0));
+        assertEquals(Reflexes.Move.NONE, Reflexes.decide(CautionLevel.READY, s(10, 1.0, true), false, true, 3.0, true));
     }
 
     @Test
@@ -54,8 +69,8 @@ class ReflexesTest {
         CautionPolicy.Situation player = new CautionPolicy.Situation(false, true, 1.5, true, 1.0, true, false);
         CautionPolicy.Situation wolf = new CautionPolicy.Situation(false, false, 1.5, true, 1.0, true, false);
         for (CautionLevel level : CautionLevel.values()) {
-            assertEquals(Reflexes.Move.NONE, Reflexes.decide(level, player, false, true, 3.0), level.name());
-            assertEquals(Reflexes.Move.NONE, Reflexes.decide(level, wolf, false, true, 3.0), level.name());
+            assertEquals(Reflexes.Move.NONE, Reflexes.decide(level, player, false, true, 3.0, true), level.name());
+            assertEquals(Reflexes.Move.NONE, Reflexes.decide(level, wolf, false, true, 3.0, true), level.name());
         }
     }
 
@@ -63,7 +78,7 @@ class ReflexesTest {
     void aPlayerFlaggedHostileStillGetsNoReflex() {
         CautionPolicy.Situation player = new CautionPolicy.Situation(true, true, 1.5, true, 1.0, true, false);
         for (CautionLevel level : CautionLevel.values()) {
-            assertEquals(Reflexes.Move.NONE, Reflexes.decide(level, player, false, true, 3.0), level.name());
+            assertEquals(Reflexes.Move.NONE, Reflexes.decide(level, player, false, true, 3.0, true), level.name());
         }
     }
 
