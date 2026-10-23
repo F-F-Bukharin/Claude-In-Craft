@@ -27,9 +27,9 @@ import org.slf4j.Logger;
  * Turns hits and approaching hostiles into reflexes and loop interrupts, debounced by {@link ThreatTracker} (one
  * per threat, at most one every 5 s; lit creepers have their own tracker with no gap). {@link Reflexes} picks the
  * move; it is held here and delivered on the next runtime tick, never from inside another entity's tick. A mob
- * that keeps chasing within {@link Reflexes#CHASE_RANGE} gets the decision re-run ({@link Reflexes#chaseDue}),
- * delivered only when it yields a move, and quietly: only the first reflex for a threat tells the model. At caution
- * level 5 it also calls for help below 30% HP.
+ * the model heard about that keeps chasing within {@link Reflexes#CHASE_RANGE} gets the decision re-run
+ * ({@link Reflexes#chaseDue}), delivered only when it yields a move, and quietly: only the first reflex for a threat
+ * tells the model. At caution level 5 it also calls for help below 30% HP.
  */
 public final class DamageWatcher {
     private static final Logger LOG = LogUtils.getLogger();
@@ -37,13 +37,21 @@ public final class DamageWatcher {
     private static final int HURT_WINDOW_TICKS = 60;
     private static final int HELP_COOLDOWN_TICKS = 300;
 
-    /** {@code quiet}: a chase re-fire, which only queues its actions; the model heard about the threat already. */
-    private record Pending(String reason, List<Action> actions, boolean quiet) {}
+    private static final int REARM_TICKS = 600;
+
+    /**
+     * {@code quiet}: a chase re-fire, which only queues its actions; the model heard about the threat already.
+     * {@code threat}: the mob's id, null without an attacker.
+     */
+    private record Pending(String reason, List<Action> actions, boolean quiet, @Nullable Integer threat) {}
 
     private final AgentRuntime rt;
-    private final ThreatTracker threats = new ThreatTracker(100, 600);
+    private final ThreatTracker threats = new ThreatTracker(100, REARM_TICKS);
     private final ThreatTracker fuses = new ThreatTracker(0, 60);
     private final Map<Integer, Long> chased = new HashMap<>(); // mob id -> tick its decision last ran
+    // mob id -> tick last seen, for mobs whose first reflex reached the model; kept on the threats' re-arm horizon
+    // (not dropped on leaving range), since their near: key stays reported that long
+    private final Map<Integer, Long> heard = new HashMap<>();
     private long lastHurt = -1_000;
     private long lastHelp = -1_000;
     private boolean hurtWhileMoving;
@@ -83,6 +91,8 @@ public final class DamageWatcher {
         if (pending == null && now % SCAN_TICKS == 0) {
             List<Mob> near = SnapshotBuilder.hostiles(p, rt.settings().hostileRange());
             chased.keySet().retainAll(near.stream().map(Entity::getId).collect(Collectors.toSet())); // gone or out of range
+            for (Mob mob : near) heard.computeIfPresent(mob.getId(), (id, seen) -> now);
+            heard.values().removeIf(seen -> now - seen > REARM_TICKS);
             boolean levelThree = rt.queue().snapshot().stream().anyMatch(i -> i.entry().prio() == 3); // running or next
             for (Mob mob : near) {
                 boolean lit = SnapshotBuilder.litCreeper(mob);
@@ -94,12 +104,12 @@ public final class DamageWatcher {
                     break;
                 }
                 if (rt.settings().reflexes() && Reflexes.chaseDue(p.distanceTo(mob), now,
-                        chased.getOrDefault(mob.getId(), Long.MIN_VALUE / 2), levelThree)) {
+                        chased.getOrDefault(mob.getId(), Long.MIN_VALUE / 2), heard.containsKey(mob.getId()), levelThree)) {
                     chased.put(mob.getId(), now);
                     Pending chase = react(p, String.format(Locale.ROOT, "%s is still chasing, %.1f blocks away%s.",
                             describe(mob), p.distanceTo(mob), lit ? ", fuse lit" : ""), mob);
                     if (!chase.actions().isEmpty()) { // a HOLD stays quiet, or a mob near the body would spam the model
-                        pending = new Pending(chase.reason(), chase.actions(), true);
+                        pending = new Pending(chase.reason(), chase.actions(), true, chase.threat());
                         break;
                     }
                 }
@@ -108,6 +118,7 @@ public final class DamageWatcher {
         if (pending != null) {
             Pending due = pending;
             pending = null;
+            if (due.threat() != null) heard.put(due.threat(), now); // a near:, lit: or hit: report reached the model
             if (due.actions().isEmpty() || !rt.settings().reflexes()) rt.loop().interrupt(due.reason());
             else if (due.quiet()) rt.loop().reflexQuiet(due.actions());
             else rt.loop().reflex(due.reason(), due.actions());
@@ -127,7 +138,7 @@ public final class DamageWatcher {
         String stance = lit ? "flee (fuse lit)" // matches the reflex, never "fight" a lit creeper
                 : CautionPolicy.advise(level, s).name().toLowerCase(Locale.ROOT).replace('_', ' ');
         String reason = what + " Caution level " + level.number() + " (" + level.title + ") says: " + stance + ".";
-        if (threat == null) return new Pending(reason, List.of(), false);
+        if (threat == null) return new Pending(reason, List.of(), false, null);
         Reflexes.Move move = Reflexes.decide(level, s, lit, rt.settings().toolPhase() >= 4);
         List<Action> actions = switch (move) {
             case FLEE -> List.of(new Action.Flee());
@@ -137,7 +148,7 @@ public final class DamageWatcher {
         if (!actions.isEmpty() && rt.settings().reflexes()) {
             LOG.info("reflex {} for {} #{}", move, SnapshotBuilder.typeId(threat), threat.getId());
         }
-        return new Pending(reason, actions, false);
+        return new Pending(reason, actions, false, threat.getId());
     }
 
     private CautionPolicy.Situation situation(AgentPlayer p, @Nullable Entity threat) {

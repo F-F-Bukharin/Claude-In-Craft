@@ -39,10 +39,11 @@ public final class Reflexes {
 
     /**
      * The chase rule: a flee ends after about 10 blocks and a threat is reported once, so a mob that keeps up gets
-     * the decision re-run while no level 3 action is running, at most once per mob every 2 s.
+     * the decision re-run while no level 3 action is running, at most once per mob every 2 s. Only a mob the model
+     * {@code heard} about (its first reflex was delivered) can chase: a re-fire tells the model nothing.
      */
-    public static boolean chaseDue(double distance, long now, long lastFired, boolean levelThreeRunning) {
-        return distance <= CHASE_RANGE && !levelThreeRunning && now - lastFired >= CHASE_GAP_TICKS;
+    public static boolean chaseDue(double distance, long now, long lastFired, boolean heard, boolean levelThreeRunning) {
+        return heard && distance <= CHASE_RANGE && !levelThreeRunning && now - lastFired >= CHASE_GAP_TICKS;
     }
 
     /** "lava", "fire" or "drop" when the spot is deadly, null when safe. A fall of n blocks deals n - 3 damage. */

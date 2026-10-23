@@ -84,12 +84,18 @@ class ReflexesTest {
 
     @Test
     void aChaseIsDueWithinSixBlocksEveryTwoSeconds() {
-        assertTrue(Reflexes.chaseDue(4.0, 1000, 900, false), "in range and due");
-        assertTrue(Reflexes.chaseDue(6.0, 1000, 900, false), "6 blocks is in range");
-        assertFalse(Reflexes.chaseDue(6.5, 1000, 900, false), "too far");
-        assertFalse(Reflexes.chaseDue(4.0, 1000, 900, true), "a level 3 is running");
-        assertFalse(Reflexes.chaseDue(4.0, 1000, 961, false), "fired 39 ticks ago");
-        assertTrue(Reflexes.chaseDue(4.0, 1000, 960, false), "fired 40 ticks ago");
+        assertTrue(Reflexes.chaseDue(4.0, 1000, 900, true, false), "in range and due");
+        assertTrue(Reflexes.chaseDue(6.0, 1000, 900, true, false), "6 blocks is in range");
+        assertFalse(Reflexes.chaseDue(6.5, 1000, 900, true, false), "too far");
+        assertFalse(Reflexes.chaseDue(4.0, 1000, 900, true, true), "a level 3 is running");
+        assertFalse(Reflexes.chaseDue(4.0, 1000, 961, true, false), "fired 39 ticks ago");
+        assertTrue(Reflexes.chaseDue(4.0, 1000, 960, true, false), "fired 40 ticks ago");
+    }
+
+    @Test
+    void aMobTheModelNeverHeardAboutNeverChases() {
+        assertFalse(Reflexes.chaseDue(1.0, 1000, Long.MIN_VALUE / 2, false, false), "never stamped, right next to the body");
+        assertFalse(Reflexes.chaseDue(4.0, 1000, 900, false, false), "in range and past the gap");
     }
 
     @Test
