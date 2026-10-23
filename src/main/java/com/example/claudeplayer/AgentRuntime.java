@@ -184,7 +184,7 @@ public final class AgentRuntime {
 
     /** Chat as the body. */
     public void say(String text) {
-        String clean = WorldText.clean(text, 256);
+        String clean = WorldText.clean(text, 600);
         if (clean.isEmpty()) return;
         conversation.add(settings.bodyName(), clean);
         server.getPlayerList().broadcastSystemMessage(Component.literal("<" + settings.bodyName() + "> " + clean), false);

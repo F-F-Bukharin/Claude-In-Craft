@@ -16,6 +16,7 @@ public record StateSnapshot(
         float health, float maxHealth, int food,
         String mainHand, List<String> armor, List<Stack> inventory,
         List<Mob> hostiles, List<Seen> players, Map<String, Integer> blocks,
+        List<Poi> points,
         long timeOfDay, String weather,
         int level, Vec home, String running, int waiting) {
 
@@ -25,12 +26,15 @@ public record StateSnapshot(
 
     public record Mob(int id, String type, String name, double distance, float health, Vec pos) {}
 
-    public record Seen(String name, double distance) {}
+    /** A notable block (container, ender chest, crafting table, bed) with its block position. */
+    public record Poi(String block, int x, int y, int z) {}
+
+    public record Seen(String name, double distance, Vec pos) {}
 
     /** No body in the world: never spawned, despawned, or dead. */
     public static StateSnapshot absent(boolean dead, int level, Vec home) {
         return new StateSnapshot(false, dead, null, null, null, 0, 0, 0, null, List.of(), List.of(), List.of(),
-                List.of(), Map.of(), 0, null, level, home, null, 0);
+                List.of(), Map.of(), List.of(), 0, null, level, home, null, 0);
     }
 
     /** Compact JSON for the prompt; a busy scene stays under 2 KB. */
@@ -74,12 +78,25 @@ public record StateSnapshot(
             JsonObject j = new JsonObject();
             j.addProperty("name", p.name());
             j.addProperty("dist", round(p.distance()));
+            j.add("pos", vec(p.pos()));
             seen.add(j);
         }
         o.add("players", seen);
         JsonObject near = new JsonObject();
         for (Map.Entry<String, Integer> e : blocks.entrySet()) near.addProperty(e.getKey(), e.getValue());
         o.add("blocks_near", near);
+        JsonArray pts = new JsonArray();
+        for (Poi p : points) {
+            JsonObject j = new JsonObject();
+            j.addProperty("block", p.block());
+            JsonArray at = new JsonArray();
+            at.add(p.x());
+            at.add(p.y());
+            at.add(p.z());
+            j.add("pos", at);
+            pts.add(j);
+        }
+        o.add("points", pts);
         o.addProperty("time", timeOfDay);
         o.addProperty("weather", weather);
         JsonObject queue = new JsonObject();

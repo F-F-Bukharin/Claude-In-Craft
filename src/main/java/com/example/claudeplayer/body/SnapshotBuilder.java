@@ -21,7 +21,11 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.entity.monster.Creeper;
+import net.minecraft.world.Container;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.BedBlock;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
@@ -32,6 +36,7 @@ public final class SnapshotBuilder {
     private static final int MAX_PLAYERS = 10;
     private static final int MAX_SLOTS = 12;
     private static final int MAX_BLOCK_TYPES = 12;
+    private static final int MAX_POINTS = 12;
 
     private SnapshotBuilder() {}
 
@@ -55,13 +60,13 @@ public final class SnapshotBuilder {
                 .toList();
         List<StateSnapshot.Seen> players = world.players().stream().filter(o -> o != p)
                 .sorted(Comparator.comparingDouble(p::distanceToSqr)).limit(MAX_PLAYERS)
-                .map(o -> new StateSnapshot.Seen(WorldText.clean(o.getGameProfile().getName(), WorldText.NAME_MAX), p.distanceTo(o)))
+                .map(o -> new StateSnapshot.Seen(WorldText.clean(o.getGameProfile().getName(), WorldText.NAME_MAX), p.distanceTo(o), vec(o.position())))
                 .toList();
         String weather = world.isThundering() ? "thunder" : world.isRaining() ? "rain" : "clear";
         return new StateSnapshot(true, false, vec(p.position()), world.dimension().location().toString(),
                 p.getDirection().getSerializedName(), p.getHealth(), p.getMaxHealth(), p.getFoodData().getFoodLevel(),
                 p.getMainHandItem().isEmpty() ? "empty" : itemId(p.getMainHandItem()), armor, inventory, hostiles, players,
-                blocksAround(world, p.blockPosition()), world.getDayTime() % 24000, weather, level, home,
+                blocksAround(world, p.blockPosition()), pointsAround(world, p.blockPosition()), world.getDayTime() % 24000, weather, level, home,
                 rt.queue().runningTool(), rt.queue().waitingCount());
     }
 
@@ -123,6 +128,29 @@ public final class SnapshotBuilder {
         counts.entrySet().stream().sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
                 .limit(MAX_BLOCK_TYPES).forEach(e -> top.put(e.getKey(), e.getValue()));
         return top;
+    }
+
+    /** Containers, ender chests, crafting tables and beds (head part) in the same cube, nearest first. */
+    private static List<StateSnapshot.Poi> pointsAround(ServerLevel world, BlockPos center) {
+        List<BlockPos> found = new ArrayList<>();
+        BlockPos from = center.offset(-BLOCK_RADIUS, -BLOCK_RADIUS, -BLOCK_RADIUS);
+        BlockPos to = center.offset(BLOCK_RADIUS, BLOCK_RADIUS, BLOCK_RADIUS);
+        for (BlockPos pos : BlockPos.betweenClosed(from, to)) {
+            BlockState state = world.getBlockState(pos);
+            if (!state.isAir() && notable(world, pos, state)) found.add(pos.immutable());
+        }
+        found.sort(Comparator.comparingDouble(pos -> pos.distSqr(center)));
+        return found.stream().limit(MAX_POINTS)
+                .map(pos -> new StateSnapshot.Poi(BuiltInRegistries.BLOCK.getKey(world.getBlockState(pos).getBlock()).toString(), pos.getX(), pos.getY(), pos.getZ()))
+                .toList();
+    }
+
+    private static boolean notable(ServerLevel world, BlockPos pos, BlockState state) {
+        String id = blockId(state);
+        if (id.endsWith("_bed")) return state.getBlock() instanceof BedBlock && state.getValue(BedBlock.PART) == BedPart.HEAD;
+        if (id.equals("ender_chest") || id.equals("crafting_table")) return true;
+        BlockEntity entity = state.hasBlockEntity() ? world.getBlockEntity(pos) : null;
+        return entity instanceof Container;
     }
 
     private static String shortId(ResourceLocation id) {
