@@ -107,8 +107,10 @@ public final class AgentRuntime {
         PromptBuilder prompts = new PromptBuilder(settings,
                 PromptBuilder.loadTemplate(configDir.resolve("claudeplayer_system_prompt.md")));
         Brain backend = settings.usesApi() ? brain : claudeCode;
+        ToolSchemas tools = new ToolSchemas(settings.toolPhase());
         this.loop = new AgentLoop(settings, new DemoBrain(backend), brainThread, this::onMainThread, queue, guardrails, prompts,
-                new ToolSchemas(settings.toolPhase()), memory, new LoopHost());
+                tools, memory, new LoopHost());
+        if (!settings.usesApi()) brainThread.execute(() -> claudeCode.prewarm(prompts.system(), tools.definitions()));
         LOG.info("Claude Player ready: brain {}, model {}, caution level {}, {} allowlisted, {} long-term memories",
                 settings.brain(), settings.model(), level().number(), Config.allowlist().size(), memory.longTerm().size());
     }
@@ -363,6 +365,7 @@ public final class AgentRuntime {
         loop.stop();
         body.despawnForShutdown();
         brainThread.shutdownNow();
+        claudeCode.close();
     }
 
     private final class LoopHost implements AgentLoop.Host {

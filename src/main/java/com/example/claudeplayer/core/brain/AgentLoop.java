@@ -426,11 +426,12 @@ public final class AgentLoop implements ActionQueue.Listener {
     }
 
     /**
-     * Drops the order quietly: cancels the queue below level 3 and forgets the transcript. A reply still in flight
-     * is ignored.
+     * Drops the order quietly: cancels the queue below level 3, forgets the transcript and lets the brain release
+     * the order's session. A reply still in flight is ignored.
      */
     private void abandon() {
         epoch++;
+        brain.reset();
         orderFrom = null;
         orderText = null;
         opening = null;

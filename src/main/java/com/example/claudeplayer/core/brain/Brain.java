@@ -12,6 +12,9 @@ public interface Brain {
     /** Blocking. Background threads only, never the server thread. */
     Reply send(Request request) throws BrainException;
 
+    /** The order was dropped: release whatever the backend keeps for it. Any thread; must not block. */
+    default void reset() {}
+
     /** {@code messages} is a Messages API transcript; the loop hands each call its own copy. */
     record Request(String system, JsonArray tools, JsonArray messages) {}
 

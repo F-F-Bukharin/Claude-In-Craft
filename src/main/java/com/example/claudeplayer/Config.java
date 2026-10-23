@@ -96,6 +96,9 @@ public final class Config {
     private static final ForgeConfigSpec.IntValue MEMORY_LONG_CAPACITY = B
             .comment("Long-term memories kept per world (saved in <world>/claudeplayer/memory.json).")
             .defineInRange("memory_long_capacity", D.longTermCapacity(), 1, 1024);
+    private static final ForgeConfigSpec.IntValue CLAUDE_CODE_IDLE = B
+            .comment("Minutes a warm Claude Code process (an order's session, or the spare kept for the next order) may sit unused before it is stopped.")
+            .defineInRange("claude_code_idle_minutes", D.claudeCodeIdleMinutes(), 1, 1440);
 
     static final ForgeConfigSpec SPEC = B.build();
 
@@ -134,6 +137,7 @@ public final class Config {
             b.shortTermCapacity = MEMORY_SHORT_CAPACITY.get();
             b.shortTermMinutes = MEMORY_SHORT_MINUTES.get();
             b.longTermCapacity = MEMORY_LONG_CAPACITY.get();
+            b.claudeCodeIdleMinutes = CLAUDE_CODE_IDLE.get();
         });
     }
 
