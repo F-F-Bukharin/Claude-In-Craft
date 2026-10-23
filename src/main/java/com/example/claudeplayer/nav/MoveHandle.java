@@ -59,7 +59,7 @@ final class MoveHandle implements ActionRunner.Handle {
         }
         while (node < path.getNodeCount() && reached(body, path.getNode(node))) node++;
         Vec3 point = node < path.getNodeCount() ? center(path.getNode(node)) : target;
-        String hazard = hazardAhead(point);
+        String hazard = hazardAhead(body, point);
         if (hazard != null) {
             Navigator.halt(body);
             return ActionResult.failed("hazard_" + hazard);
@@ -84,7 +84,7 @@ final class MoveHandle implements ActionRunner.Handle {
     }
 
     /** Looks at the block the body is about to step into: "lava", "fire", "drop", or null when it is safe. */
-    private @Nullable String hazardAhead(Vec3 point) {
+    static @Nullable String hazardAhead(ServerPlayer body, Vec3 point) {
         double dx = point.x - body.getX();
         double dz = point.z - body.getZ();
         double length = Reflexes.horizontal(dx, dz);

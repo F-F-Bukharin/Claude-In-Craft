@@ -74,6 +74,7 @@ public final class ActionExecutor implements ActionRunner {
         if (action instanceof Action.Eat e) return EatHandle.start(p, e.auto());
         if (action instanceof Action.FollowPlayer f) return follow(p, f);
         if (action instanceof Action.AttackEntity a) return Handle.done(attack(p, a.entityId()));
+        if (action instanceof Action.Fight f) return FightHandle.start(rt, p, f);
         if (action instanceof Action.MineBlock b) return MineHandle.start(rt, p, new BlockPos(b.x(), b.y(), b.z()), true);
         if (action instanceof Action.PlaceBlock b) return Handle.done(place(p, new BlockPos(b.x(), b.y(), b.z()), b.item()));
         if (action instanceof Action.Equip e) return Handle.done(equip(p, e.item()));
