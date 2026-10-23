@@ -175,8 +175,7 @@ public final class AgentLoop implements ActionQueue.Listener {
      * is on; the actions run either way.
      */
     public void reflex(String reason, List<Action> actions) {
-        List<ActionQueue.Entry> entries = new ArrayList<>();
-        for (Action a : actions) entries.add(new ActionQueue.Entry("reflex-" + ++reflexCount, reflexTool(a), a, 3));
+        List<ActionQueue.Entry> entries = reflexEntries(actions);
         ActionQueue.Preemption displaced = enqueue(entries);
         String did = " Reflex: " + entries.stream().map(ActionQueue.Entry::tool).collect(Collectors.joining(", ")) + ".";
         if (orderFrom == null) {
@@ -184,6 +183,22 @@ public final class AgentLoop implements ActionQueue.Listener {
             return;
         }
         report("INTERRUPT: " + reason + did + listed(" Paused: ", displaced.paused()) + listed(" Scrapped: ", displaced.scrapped()));
+    }
+
+    /**
+     * A later reflex for a threat the model already heard about: queues {@code actions} at level 3 and tells no
+     * one. No note and no reaction; scrapped calls still reach the model as {@code scrapped} when their batch reports.
+     */
+    public void reflexQuiet(List<Action> actions) {
+        if (actions.isEmpty()) return;
+        enqueue(reflexEntries(actions));
+        checkProgress(); // a batch the preempt finished reports as usual
+    }
+
+    private List<ActionQueue.Entry> reflexEntries(List<Action> actions) {
+        List<ActionQueue.Entry> entries = new ArrayList<>();
+        for (Action a : actions) entries.add(new ActionQueue.Entry("reflex-" + ++reflexCount, reflexTool(a), a, 3));
+        return entries;
     }
 
     /** Kill switch: cancel everything, drop the order, block model calls until the next order. */

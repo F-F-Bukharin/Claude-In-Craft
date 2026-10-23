@@ -29,7 +29,8 @@ import org.slf4j.Logger;
  * per threat, at most one every 5 s; lit creepers have their own tracker with no gap). {@link Reflexes} picks the
  * move; it is held here and delivered on the next runtime tick, never from inside another entity's tick. A mob
  * that keeps chasing within {@link Reflexes#CHASE_RANGE} gets the decision re-run ({@link Reflexes#chaseDue}),
- * delivered only when it yields a move. At caution level 5 it also calls for help below 30% HP.
+ * delivered only when it yields a move, and quietly: only the first reflex for a threat tells the model. At caution
+ * level 5 it also calls for help below 30% HP.
  */
 public final class DamageWatcher {
     private static final Logger LOG = LogUtils.getLogger();
@@ -37,7 +38,8 @@ public final class DamageWatcher {
     private static final int HURT_WINDOW_TICKS = 60;
     private static final int HELP_COOLDOWN_TICKS = 300;
 
-    private record Pending(String reason, List<Action> actions) {}
+    /** {@code quiet}: a chase re-fire, which only queues its actions; the model heard about the threat already. */
+    private record Pending(String reason, List<Action> actions, boolean quiet) {}
 
     private final AgentRuntime rt;
     private final ThreatTracker threats = new ThreatTracker(100, 600);
@@ -98,7 +100,7 @@ public final class DamageWatcher {
                     Pending chase = react(p, String.format(Locale.ROOT, "%s is still chasing, %.1f blocks away%s.",
                             describe(mob), p.distanceTo(mob), lit ? ", fuse lit" : ""), mob);
                     if (!chase.actions().isEmpty()) { // a HOLD stays quiet, or a mob near the body would spam the model
-                        pending = chase;
+                        pending = new Pending(chase.reason(), chase.actions(), true);
                         break;
                     }
                 }
@@ -107,8 +109,9 @@ public final class DamageWatcher {
         if (pending != null) {
             Pending due = pending;
             pending = null;
-            if (!due.actions().isEmpty() && rt.settings().reflexes()) rt.loop().reflex(due.reason(), due.actions());
-            else rt.loop().interrupt(due.reason());
+            if (due.actions().isEmpty() || !rt.settings().reflexes()) rt.loop().interrupt(due.reason());
+            else if (due.quiet()) rt.loop().reflexQuiet(due.actions());
+            else rt.loop().reflex(due.reason(), due.actions());
         }
     }
 
@@ -125,7 +128,7 @@ public final class DamageWatcher {
         String stance = lit ? "flee (fuse lit)" // matches the reflex, never "fight" a lit creeper
                 : CautionPolicy.advise(level, s).name().toLowerCase(Locale.ROOT).replace('_', ' ');
         String reason = what + " Caution level " + level.number() + " (" + level.title + ") says: " + stance + ".";
-        if (threat == null) return new Pending(reason, List.of());
+        if (threat == null) return new Pending(reason, List.of(), false);
         Reflexes.Move move = Reflexes.decide(level, s, lit, rt.settings().toolPhase() >= 4,
                 ActionExecutor.ATTACK_REACH);
         List<Action> actions = switch (move) {
@@ -136,7 +139,7 @@ public final class DamageWatcher {
         if (!actions.isEmpty() && rt.settings().reflexes()) {
             LOG.info("reflex {} for {} #{}", move, SnapshotBuilder.typeId(threat), threat.getId());
         }
-        return new Pending(reason, actions);
+        return new Pending(reason, actions, false);
     }
 
     private CautionPolicy.Situation situation(AgentPlayer p, @Nullable Entity threat) {

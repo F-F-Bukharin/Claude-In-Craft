@@ -376,6 +376,34 @@ class AgentLoopTest {
     }
 
     @Test
+    void aQuietReflexDuringAnOrderCallsNoModelAndLeavesTheBatchWaiting() {
+        build(b -> {});
+        script.add(tools(call("m", "move_to", "{\"x\":5,\"y\":64,\"z\":5,\"prio\":2}")));
+        script.add(text("unused"));
+        loop.startOrder("F", "walk");
+        pump();
+        ticks(3);
+        loop.reflexQuiet(List.of(new Action.Flee()));
+        pump();
+        assertEquals(1, requests.size(), "no interrupt for a chase re-fire");
+        ticks(10);
+        assertEquals("move_to", queue.runningTool(), "m restarted after the flee");
+        assertEquals(1, requests.size(), "the batch waits for m");
+    }
+
+    @Test
+    void aQuietReflexWhileIdleStartsNoReactionButRuns() {
+        build(b -> {}); // idle_reactions on
+        script.add(text("unused"));
+        loop.reflexQuiet(List.of(new Action.MoveTo(9, 64, 9)));
+        pump();
+        ticks(2);
+        assertEquals("move_to", queue.runningTool());
+        assertEquals(0, requests.size());
+        assertFalse(loop.active());
+    }
+
+    @Test
     void aNewOrderKeepsARunningReflexAndStopEndsIt() {
         build(b -> b.idleReactions = false);
         loop.reflex("zombie #7 is 2.0 blocks away.", List.of(new Action.MoveTo(9, 64, 9)));
