@@ -113,6 +113,12 @@ class ToolParseTest {
     }
 
     @Test
+    void glanceTakesNoArguments() {
+        assertEquals(new Action.Glance(), v1.parse("glance", json("{}")).action());
+        assertEquals("denied:unknown_tool", error(new ToolSchemas(1), "glance", "{}"), "a phase 2 tool");
+    }
+
+    @Test
     void unknownAndLaterPhaseToolsAreDenied() {
         assertEquals("denied:unknown_tool", error(v1, "fly", "{}"));
         assertEquals("denied:unknown_tool", error(v1, "attack_entity", "{\"entity_id\":42}"));
@@ -129,7 +135,7 @@ class ToolParseTest {
         }
         assertEquals(List.of("get_state", "look", "move_to", "say", "wait", "stop", "flee", "note", "remember", "forget", "inspect_container",
                 "store", "take", "eat", "follow_player", "mine_block", "place_block", "equip", "craft", "smelt",
-                "gather", "dig", "till", "plant", "harvest", "use_bucket"), names);
+                "gather", "dig", "till", "plant", "harvest", "use_bucket", "glance"), names);
     }
 
     @Test

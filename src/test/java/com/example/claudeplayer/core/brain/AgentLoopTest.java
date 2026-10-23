@@ -49,9 +49,13 @@ class AgentLoopTest {
         return (Brain.Reply) next;
     };
 
-    /** move_to runs until cancelled; everything else finishes at once. */
+    private static final byte[] PNG = {(byte) 0x89, 'P', 'N', 'G', 1, 2, 3};
+    private static final String PNG_B64 = java.util.Base64.getEncoder().encodeToString(PNG);
+
+    /** move_to runs until cancelled; glance returns a picture; everything else finishes at once. */
     private final ActionRunner runner = action ->
-            action instanceof Action.MoveTo ? () -> null : ActionRunner.Handle.done(ActionResult.ok());
+            action instanceof Action.MoveTo ? () -> null
+                    : ActionRunner.Handle.done(action instanceof Action.Glance ? ActionResult.picture(PNG) : ActionResult.ok());
 
     private final AgentLoop.Host host = new AgentLoop.Host() {
         @Override
@@ -190,6 +194,85 @@ class AgentLoopTest {
         ticks(100);
         assertEquals(List.of("All done."), said);
         assertEquals(2, requests.size(), "late ok results don't cost another round");
+    }
+
+    private static Brain.ToolCall glance(String id) {
+        return call(id, "glance", "{}");
+    }
+
+    private static JsonObject image(JsonElement block) {
+        JsonObject b = block.getAsJsonObject();
+        assertEquals("image", b.get("type").getAsString(), b.toString());
+        JsonObject source = b.getAsJsonObject("source");
+        assertEquals("base64", source.get("type").getAsString());
+        assertEquals("image/png", source.get("media_type").getAsString());
+        assertEquals(PNG_B64, source.get("data").getAsString());
+        return b;
+    }
+
+    @Test
+    void aGlanceResultIsAPictureThenItsCode() {
+        build(b -> {});
+        script.add(tools(glance("g1")));
+        script.add(text("I see it."));
+        loop.startOrder("F", "look at this");
+        pump();
+        ticks(1);
+        JsonObject result = lastTurn(1).get(0).getAsJsonObject();
+        assertEquals("tool_result", result.get("type").getAsString());
+        JsonArray content = result.getAsJsonArray("content");
+        assertEquals(2, content.size());
+        image(content.get(0));
+        assertEquals("ok", content.get(1).getAsJsonObject().get("text").getAsString());
+        assertEquals(List.of("I see it."), said);
+    }
+
+    @Test
+    void oneGlancePerTurnAndThenACooldown() {
+        build(b -> {}); // vision_cooldown_seconds 15
+        script.add(tools(glance("g1"), glance("g2")));
+        script.add(tools(glance("g3")));
+        script.add(text("Done."));
+        loop.startOrder("F", "look twice");
+        pump();
+        ticks(1);
+        assertEquals("denied:one_per_turn", lastTurn(1).get(1).getAsJsonObject().get("content").getAsString(), "the second glance of the reply");
+        assertTrue(lastTurn(1).get(0).getAsJsonObject().get("content").isJsonArray(), "the first one ran");
+        ticks(1);
+        assertEquals(List.of("denied:cooldown"), results(2));
+        now += 15_000;
+        script.add(tools(glance("g4")));
+        script.add(text("Seen."));
+        loop.startOrder("F", "look again");
+        pump();
+        ticks(20); // the queue's action rate
+        assertTrue(lastTurn(4).get(0).getAsJsonObject().get("content").isJsonArray(), "the cooldown ran out");
+    }
+
+    @Test
+    void aGlanceReportedEarlyBringsItsPictureToTheNextTurn() {
+        build(b -> {}); // prefetch_at 4: six calls report once two have finished
+        script.add(tools(say("a"), say("b"), say("c"), say("d"), say("e"), glance("g")));
+        script.add(text("Looking."));
+        script.add(text("Diamonds!"));
+        loop.startOrder("F", "chatter, then look");
+        pump();
+        for (int i = 0; i < 100 && requests.size() < 2; i++) ticks(1);
+        assertEquals("queued", results(1).get(5));
+        ticks(100);
+        assertEquals(3, requests.size(), "the late picture costs a round: the model asked to look");
+        JsonArray turn = lastTurn(2);
+        image(turn.get(0));
+        assertTrue(lastText(2).contains("glance g: ok"), lastText(2));
+        assertEquals(List.of("Diamonds!"), said);
+        assertEquals(requests.get(1).messages(), copyOfFirst(requests.get(2).messages(), requests.get(1).messages().size()),
+                "the transcript only grows");
+    }
+
+    private static JsonArray copyOfFirst(JsonArray a, int n) {
+        JsonArray out = new JsonArray();
+        for (int i = 0; i < n; i++) out.add(a.get(i));
+        return out;
     }
 
     @Test

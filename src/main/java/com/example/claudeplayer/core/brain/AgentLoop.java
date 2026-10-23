@@ -5,6 +5,7 @@ import com.example.claudeplayer.core.StateSnapshot;
 import com.example.claudeplayer.core.act.Action;
 import com.example.claudeplayer.core.act.ActionQueue;
 import com.example.claudeplayer.core.act.ActionResult;
+import com.example.claudeplayer.core.act.VisionGate;
 import com.example.claudeplayer.core.chat.Conversation;
 import com.example.claudeplayer.core.memory.Memory;
 import com.example.claudeplayer.core.safety.Guardrails;
@@ -111,6 +112,8 @@ public final class AgentLoop implements ActionQueue.Listener {
     private JsonArray messages = new JsonArray();
     private final Map<String, Call> pending = new HashMap<>();
     private JsonArray pendingResults = new JsonArray();
+    private JsonArray lateImages = new JsonArray(); // pictures of calls reported early; they lead the next turn's text
+    private final VisionGate vision;
     private final List<String> notes = new ArrayList<>();
     private Batch batch;
     private boolean inFlight;
@@ -143,6 +146,7 @@ public final class AgentLoop implements ActionQueue.Listener {
         this.memory = memory;
         this.host = host;
         this.clockMillis = clockMillis;
+        this.vision = new VisionGate(settings.visionCooldownSeconds(), clockMillis);
         queue.setListener(this);
     }
 
@@ -295,6 +299,10 @@ public final class AgentLoop implements ActionQueue.Listener {
         if (call.reportedEarly) {
             notes.add(call.name + " " + call.id + ": " + result.code());
             if (result.isError()) mustReport = true;
+            if (result.png() != null) {
+                lateImages.add(Images.block(result.png()));
+                mustReport = true; // the model asked to look: the picture must reach it
+            }
         } else {
             call.result = result;
         }
@@ -370,6 +378,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     private void startBatch(List<Brain.ToolCall> calls) {
         Batch next = new Batch();
         List<ActionQueue.Entry> entries = new ArrayList<>();
+        vision.newTurn();
         for (int i = 0; i < calls.size(); i++) {
             Brain.ToolCall tc = calls.get(i);
             Call call = new Call(tc.id(), tc.name());
@@ -382,6 +391,13 @@ public final class AgentLoop implements ActionQueue.Listener {
             if (parsed.error() != null) {
                 call.result = parsed.error();
                 continue;
+            }
+            if (parsed.action() instanceof Action.Glance) {
+                String denied = vision.admit();
+                if (denied != null) {
+                    call.result = ActionResult.denied(denied);
+                    continue;
+                }
             }
             if (parsed.prioLowered()) {
                 notes.add(tc.name() + " " + tc.id() + ": prio_lowered to 2 (prio 3 is only for flee, stop and attack_entity)");
@@ -471,9 +487,11 @@ public final class AgentLoop implements ActionQueue.Listener {
             text = prompts.orderTurn(opening.player(), opening.text(), host.recentChat(), memory.render(), notes, state);
         }
         JsonArray content = pendingResults; // tool_result blocks must come first in the turn
+        content.addAll(lateImages);
         content.add(textBlock(text));
         messages.add(message("user", content));
         pendingResults = new JsonArray();
+        lateImages = new JsonArray();
         notes.clear();
         opening = null;
         finalText = null;
@@ -574,6 +592,7 @@ public final class AgentLoop implements ActionQueue.Listener {
         messages = new JsonArray();
         pending.clear();
         pendingResults = new JsonArray();
+        lateImages = new JsonArray();
         notes.clear();
         batch = null;
         inFlight = false;
@@ -647,7 +666,15 @@ public final class AgentLoop implements ActionQueue.Listener {
         JsonObject b = new JsonObject();
         b.addProperty("type", "tool_result");
         b.addProperty("tool_use_id", id);
-        b.addProperty("content", r.data() == null ? r.code() : r.code() + "\n" + r.data());
+        String text = r.data() == null ? r.code() : r.code() + "\n" + r.data();
+        if (r.png() == null) {
+            b.addProperty("content", text);
+        } else { // a picture first, then its code
+            JsonArray content = new JsonArray();
+            content.add(Images.block(r.png()));
+            content.add(textBlock(text));
+            b.add("content", content);
+        }
         if (r.isError()) b.addProperty("is_error", true);
         return b;
     }

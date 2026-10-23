@@ -79,4 +79,7 @@ public sealed interface Action {
 
     /** Pours a water or lava bucket at a position, or fills an empty bucket from the source there (Guardrails.checkPour). */
     record UseBucket(int x, int y, int z) implements Action {}
+
+    /** A low-res picture of what the body sees, gated by VisionGate (once per turn, then a cooldown). */
+    record Glance() implements Action {}
 }
