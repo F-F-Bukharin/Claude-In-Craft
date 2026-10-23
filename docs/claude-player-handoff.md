@@ -38,7 +38,7 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
    - M5. `claude: stop` while it flees. It halts within a second.
    - Known: a hostile in a cave far below still counts (XZ distance), so the body may take a short flee. The 30 s re-arm per mob bounds it.
    - Watch in M2: a creeper whose fuse flickers (lost sight, or the body at the 3 to 7 block edge) now triggers a flee on each re-light.
-8. Piece 1 follow-ups, from the final review. All FIXED 23 Oct (212 unit tests green; each new test was checked to fail without its fix).
+8. Piece 1 follow-ups, from the final review. All FIXED 23 Oct (now 224 unit tests green; each new test was checked to fail without its fix).
    - The model hears a failed reflex: `Reflex <tool>: <code>` during an order (tests `aFailedReflexIsReportedToTheModelDuringAnOrder`, `anOkReflexAddsNoOutcomeNote`). `ok:no_threats` is not an error, so it stays silent.
    - `abandon()` spares only `reflex-` entries, through the queue's new `cancelIf` (tests `aDroppedOrdersWaitingSafetyCallNeverRunsButAReflexStillDoes`, `cancelIf*`).
    - Every interrupt during one model call reaches the model; `interruptInFlight` is a list (test `everyInterruptDuringOneCallReachesTheModel`).
@@ -58,7 +58,8 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
    - V2. Build a wall of 2 blocks with one gap, stand behind it, and say `claude: come here`. It should route through the gap.
    - V3. Ask for something wordy (`claude: tell me about yourself`). Chat shows at most two lines.
    - Trigger (23 Oct, F's choice): the default is now `C`, case-sensitive and followed by a space, ':' or ','. `Claude:` (the body name plus a colon) always works too. Existing config files keep their saved `trigger` until it is edited.
-   - Not done: the Blockman status block pinned to each turn (spec section 7), and the flee issues, which wait on F's description of how flees failed.
+   - Blockman status block (spec section 7): DONE 23 Oct. Every user turn ends with `<status>` (ORDER, STEP from the model's `step` note, position, HP, food, threats, queue); the prompt says to stop and say why when the next action doesn't serve ORDER (tests `StatusBlockTest`, `everyTurnEndsWithTheStatusBlock`). In game, try a two-step order and check that the model keeps a `step` note.
+   - Not done: caveman (spec section 7), which needs the usage ledger (section 8); and the flee issues, which wait on F's description of how flees failed.
 
 11. Skills, autonomy and the faster helper (23 Oct, merged into dev; 196 unit tests green; nothing tried in game yet). F's choices: natural blocks anywhere and man-made only if Claude placed them; autonomy calls the model only between goals, at most once a minute; after an order, autonomy resumes.
    - In game, try: `C mine the log in front of you`; `C get 10 logs`; `C craft planks and sticks`, then a wooden pickaxe away from and next to a crafting table; with raw iron and coal next to a furnace, `C smelt the iron`, then `take` the ingots; `C dig down 15` (it stops before lava and reports ores seen); `C put your logs in the chest`; let it get hungry with bread in its inventory; `C follow me`; `C go do your thing, I'll call you` (about one `autonomy goal #n` log line a minute), then `C come here` (it should resume afterwards), then `C stop`.
@@ -75,7 +76,7 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
    - The system prompt now points to gather and dig for anything beyond a block or two (23 Oct).
    - Autonomy says a failed goal call once, not every interval, until a goal works again (23 Oct; test `aGoalFailureIsSaidOnceUntilAGoalWorksAgain`, checked to fail without the fix).
    - Gather no longer stops at once with `inventory_full` when no slot is empty but a partial stack of the target has room (23 Oct; game-side, no unit test).
-   - Next latency win: let a reply mark the order done, so a simple order ("come here", "say hi") skips the report turn. That's one model call instead of two.
+   - Latency win: DONE 23 Oct. The Claude Code reply schema has `done`; when a done reply's calls all come back ok with no interrupt, the order ends on its `say` text, so "come here" or "say hi" costs one model call. Any failure or interrupt still reports (tests `aDoneReply*`, `doneMarksTheReplyAndOnlyATrueBooleanCounts`). The Messages API brain never sets it. In game, check that `C come here` logs one `claude code reply` line, not two.
 
 ## Claude Code facts (spikes from spec section 11, run 23 Oct with claude.exe 2.1.299, Haiku 5.5, effort low)
 - S1, yes: in one `--input-format stream-json --output-format stream-json --verbose --json-schema` session, every turn's `result` carries `structured_output`. The cache works across turns: cache_read went 1615, then 1725, then 2033.
