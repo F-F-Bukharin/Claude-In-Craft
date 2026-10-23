@@ -357,7 +357,7 @@ public final class AgentLoop implements ActionQueue.Listener {
             fail(error);
             return;
         }
-        guardrails.recordTokens(reply.usage().total());
+        guardrails.recordTokens(reply.usage().weighted());
         JsonArray content = reply.content();
         if (content.isEmpty()) content = single(textBlock("(no reply)")); // the API rejects empty assistant turns
         messages.add(message("assistant", content));

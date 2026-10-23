@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.example.claudeplayer.core.Settings;
+import com.example.claudeplayer.core.brain.Brain;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 
@@ -34,6 +35,13 @@ class SafetyTest {
         g.resume();
         g.recordTokens(1);
         assertEquals(Guardrails.Check.TOKEN_CAP, g.allowCall());
+    }
+
+    @Test
+    void cacheReadsCountATenthTowardTheCap() {
+        assertEquals(60, new Brain.Usage(10, 20, 30, 0).weighted());
+        assertEquals(160, new Brain.Usage(10, 20, 30, 1000).weighted(), "1000 cache reads weigh 100");
+        assertEquals(61, new Brain.Usage(10, 20, 30, 1).weighted(), "a tenth rounds up");
     }
 
     @Test

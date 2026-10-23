@@ -33,6 +33,11 @@ public interface Brain {
         public long total() {
             return (long) input + output + cacheWrite + cacheRead;
         }
+
+        /** Cache reads cost about a tenth of fresh input, so they count a tenth toward the token cap. */
+        public long weighted() {
+            return (long) input + output + cacheWrite + (long) Math.ceil(cacheRead / 10.0);
+        }
     }
 
     /**
