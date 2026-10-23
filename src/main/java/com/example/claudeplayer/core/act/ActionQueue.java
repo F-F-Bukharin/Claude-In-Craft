@@ -3,6 +3,7 @@ package com.example.claudeplayer.core.act;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Predicate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -110,6 +111,22 @@ public final class ActionQueue {
             finish(ActionResult.cancelled());
         }
         for (int l = Math.min(prio - 1, LEVELS); l >= 1; l--) drain(level(l), ActionResult.cancelled());
+    }
+
+    /** Cancels the running entry if it matches, and every waiting one that matches at any level; each reports {@code cancelled}. */
+    public void cancelIf(Predicate<Entry> which) {
+        if (running != null && which.test(running)) {
+            cancelHandle();
+            finish(ActionResult.cancelled());
+        }
+        for (int l = LEVELS; l >= 1; l--) {
+            List<Entry> dropped = level(l).stream().filter(which).toList();
+            level(l).removeIf(which);
+            for (Entry e : dropped) {
+                if (e == pausedEntry) pausedEntry = null;
+                listener.onFinished(e, ActionResult.cancelled());
+            }
+        }
     }
 
     public boolean idle() {

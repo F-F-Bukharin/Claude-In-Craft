@@ -37,7 +37,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Priorities: each call runs at its {@code prio} level. A reflex is code acting first: its actions go in at
  * level 3, which scraps routine work and pauses level 2, and the model then hears what the body did and what was
- * displaced. A dropped order leaves level 3 running, so a flee outlives the order that was interrupted.
+ * displaced. A dropped order leaves its reflexes running, so a flee outlives the order that was interrupted.
  *
  * <p>Autonomy: while it is on and nothing else runs, a goal turn starts at most once per
  * {@code autonomy_interval_seconds}. A goal is one model call: its tool calls run and the goal ends without a
@@ -544,8 +544,8 @@ public final class AgentLoop implements ActionQueue.Listener {
     }
 
     /**
-     * Drops the order quietly: cancels the queue below level 3, forgets the transcript and lets the brain release
-     * the order's session. A reply still in flight is ignored.
+     * Drops the order quietly: cancels the order's queued calls but not the reflexes, forgets the transcript and lets
+     * the brain release the order's session. A reply still in flight is ignored.
      */
     private void abandon() {
         epoch++;
@@ -555,7 +555,7 @@ public final class AgentLoop implements ActionQueue.Listener {
         opening = null;
         goal = false;
         goalText = null;
-        quietly(() -> queue.cancelBelow(3));
+        quietly(() -> queue.cancelIf(e -> !e.callId().startsWith("reflex-")));
         messages = new JsonArray();
         pending.clear();
         pendingResults = new JsonArray();

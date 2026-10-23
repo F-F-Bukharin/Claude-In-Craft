@@ -49,9 +49,16 @@ class AgentLoopTest {
         return (Brain.Reply) next;
     };
 
-    /** move_to runs until cancelled; everything else finishes at once. */
-    private final ActionRunner runner = action ->
-            action instanceof Action.MoveTo ? () -> null : ActionRunner.Handle.done(ActionResult.ok());
+    private final List<String> ran = new ArrayList<>(); // the action classes the runner started, in order
+    private ActionResult fleeResult = ActionResult.ok();
+
+    /** move_to runs until cancelled; flee ends with {@code fleeResult}; everything else finishes at once. */
+    private final ActionRunner runner = action -> {
+        ran.add(action.getClass().getSimpleName());
+        if (action instanceof Action.MoveTo) return () -> null;
+        if (action instanceof Action.Flee) return ActionRunner.Handle.done(fleeResult);
+        return ActionRunner.Handle.done(ActionResult.ok());
+    };
 
     private final AgentLoop.Host host = new AgentLoop.Host() {
         @Override
@@ -602,6 +609,23 @@ class AgentLoopTest {
         assertEquals(0, requests.size());
         assertFalse(loop.autonomous());
         assertEquals(List.of("Session token cap reached (1000). Autonomy off."), notices);
+    }
+
+    @Test
+    void aDroppedOrdersWaitingSafetyCallNeverRunsButAReflexStillDoes() {
+        build(b -> b.idleReactions = false);
+        loop.reflex("zombie #7 is 2.0 blocks away.", List.of(new Action.MoveTo(9, 64, 9)));
+        ticks(1); // the reflex's move starts and holds level 3
+        script.add(tools(call("f", "flee", "{\"prio\":3}")));
+        loop.startOrder("F", "run");
+        pump();
+        assertEquals(1, queue.waitingCount(), "the model's flee waits behind the reflex");
+        script.add(text("Again."));
+        loop.startOrder("F", "again"); // drops the first order
+        pump();
+        ticks(250); // the reflex's move times out after 200 ticks
+        assertEquals(List.of("MoveTo"), ran, "the dropped order's flee never ran; the reflex did");
+        assertEquals(List.of("Again."), said);
     }
 
     @Test
