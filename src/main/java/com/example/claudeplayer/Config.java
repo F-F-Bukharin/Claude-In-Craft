@@ -105,6 +105,29 @@ public final class Config {
             .comment("While autonomous (\"C go do your thing\"), at least this many seconds between goals, each one model call.")
             .defineInRange("autonomy_interval_seconds", D.autonomyIntervalSeconds(), 15, 3600);
 
+    private static final List<String> EFFORTS = List.of("low", "medium", "high", "xhigh", "max");
+    private static final ForgeConfigSpec.ConfigValue<String> CLAUDE_EFFORT = B
+            .comment("Claude Code's --effort on normal turns: low, medium, high, xhigh or max. The API brain keeps effort.")
+            .defineInList("claude_effort", D.claudeEffort(), EFFORTS);
+    private static final ForgeConfigSpec.ConfigValue<String> CLAUDE_THINK_EFFORT = B
+            .comment("Claude Code's --effort for an order the ordering player switched to think-harder.")
+            .defineInList("claude_think_effort", D.claudeThinkEffort(), EFFORTS);
+    private static final ForgeConfigSpec.ConfigValue<List<? extends String>> THINK_HARDER_PHRASES = B
+            .comment("An order containing one of these (any case) offers the think-harder effort for that order.")
+            .defineListAllowEmpty("think_harder_phrases", D.thinkHarderPhrases(), o -> o instanceof String);
+    private static final ForgeConfigSpec.IntValue THINK_HARDER_TIMEOUT = B
+            .comment("Seconds the think-harder offer waits for y or n; no answer counts as no.")
+            .defineInRange("think_harder_timeout_seconds", D.thinkHarderTimeoutSeconds(), 5, 300);
+    private static final ForgeConfigSpec.ConfigValue<List<? extends Double>> USAGE_WARN_AT = B
+            .comment("Claude Code usage fractions (0 to 1) that post a chat warning, once per window each.")
+            .defineList("usage_warn_at", D.usageWarnAt(), o -> o instanceof Double d && d > 0 && d <= 1);
+    private static final ForgeConfigSpec.DoubleValue CAVEMAN_AT = B
+            .comment("From this usage fraction on, the caveman skill's rules join the prompt. Above 1 turns caveman off.")
+            .defineInRange("caveman_at", D.cavemanAt(), 0.0, 2.0);
+    private static final ForgeConfigSpec.ConfigValue<String> CAVEMAN_SKILL_PATH = B
+            .comment("The caveman SKILL.md to read. Empty looks under ~/.claude/skills/ for the newest caveman skill.")
+            .define("caveman_skill_path", D.cavemanSkillPath());
+
     static final ForgeConfigSpec SPEC = B.build();
 
     private Config() {}
@@ -144,6 +167,13 @@ public final class Config {
             b.longTermCapacity = MEMORY_LONG_CAPACITY.get();
             b.claudeCodeIdleMinutes = CLAUDE_CODE_IDLE.get();
             b.autonomyIntervalSeconds = AUTONOMY_INTERVAL.get();
+            b.claudeEffort = CLAUDE_EFFORT.get();
+            b.claudeThinkEffort = CLAUDE_THINK_EFFORT.get();
+            b.thinkHarderPhrases = List.copyOf(THINK_HARDER_PHRASES.get());
+            b.thinkHarderTimeoutSeconds = THINK_HARDER_TIMEOUT.get();
+            b.usageWarnAt = List.copyOf(USAGE_WARN_AT.get());
+            b.cavemanAt = CAVEMAN_AT.get();
+            b.cavemanSkillPath = CAVEMAN_SKILL_PATH.get();
         });
     }
 

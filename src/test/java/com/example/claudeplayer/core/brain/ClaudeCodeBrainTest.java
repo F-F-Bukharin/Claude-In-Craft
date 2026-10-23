@@ -29,9 +29,19 @@ class ClaudeCodeBrainTest {
         assertTrue(cmd.contains("--strict-mcp-config"), "no MCP servers");
         assertTrue(cmd.contains("--no-session-persistence"));
         assertEquals("claude-haiku-5-5", cmd.get(cmd.indexOf("--model") + 1));
-        assertEquals("low", cmd.get(cmd.indexOf("--effort") + 1));
+        assertEquals("high", cmd.get(cmd.indexOf("--effort") + 1), "claude_effort, not the API brain's effort");
         assertEquals(ClaudeCodeBrain.SCHEMA, cmd.get(cmd.indexOf("--json-schema") + 1));
         assertFalse(cmd.contains("--bare"), "bare mode ignores the subscription login");
+    }
+
+    @Test
+    void claudeCodesEffortIsItsOwnKey() {
+        Settings s = Settings.of(b -> {
+            b.effort = "low";
+            b.claudeEffort = "medium";
+        });
+        List<String> cmd = ClaudeCodeBrain.command("claude.exe", s, Path.of("system.md"), false);
+        assertEquals("medium", cmd.get(cmd.indexOf("--effort") + 1));
     }
 
     @Test

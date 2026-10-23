@@ -194,7 +194,7 @@ public final class ClaudeCodeBrain implements Brain {
                 // Windows rebuilds one command line from these; without \" the JSON loses its quotes.
                 "--json-schema", windows ? SCHEMA.replace("\"", "\\\"") : SCHEMA));
         if (s.model() != null && !s.model().isBlank()) cmd.addAll(List.of("--model", s.model()));
-        if (s.effort() != null && !s.effort().isBlank()) cmd.addAll(List.of("--effort", s.effort()));
+        if (s.claudeEffort() != null && !s.claudeEffort().isBlank()) cmd.addAll(List.of("--effort", s.claudeEffort()));
         return cmd;
     }
 
