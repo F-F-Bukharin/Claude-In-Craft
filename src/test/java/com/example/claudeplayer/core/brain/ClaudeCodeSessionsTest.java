@@ -3,6 +3,7 @@ package com.example.claudeplayer.core.brain;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -11,6 +12,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -23,9 +25,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 /** Warm Claude Code sessions, driven through ClaudeCodeBrain with scripted fake processes instead of the CLI. */
@@ -185,6 +190,87 @@ class ClaudeCodeSessionsTest {
         assertFalse(cmd.contains("--bare"));
     }
 
+    @Test
+    @Timeout(5)
+    void aStdinThatNeverDrainsIsATimeoutAndTheProcessIsKilled() throws BrainException {
+        StuckProc stuck = new StuckProc();
+        ClaudeCodeSessions sessions = new ClaudeCodeSessions(command -> stuck, 60_000, now::get, false, Runnable::run);
+        ClaudeCodeSessions.Session session = sessions.take(List.of("claude-fake"));
+
+        long started = System.nanoTime();
+        BrainException e = assertThrows(BrainException.class, () -> session.write("{}", 200));
+        long ms = (System.nanoTime() - started) / 1_000_000;
+
+        assertEquals(BrainException.Kind.TIMEOUT, e.kind());
+        assertEquals("timed out writing the prompt", e.getMessage());
+        assertTrue(ms < 1_000, "gave up at the timeout, not when the child reads: " + ms + " ms");
+        assertFalse(stuck.alive());
+        assertNull(sessions.current());
+    }
+
+    @Test
+    @Timeout(5)
+    void aResetWhileTheOpeningStartsIsNotLost() {
+        ClaudeCodeSessions[] sessions = new ClaudeCodeSessions[1];
+        List<ClaudeCodeSessions.Proc> started = new ArrayList<>();
+        sessions[0] = new ClaudeCodeSessions(command -> {
+            FakeProc p = new FakeProc();
+            procs.add(p);
+            started.add(p);
+            sessions[0].endCurrent(); // a reset lands while the opening's process is still starting
+            return p;
+        }, 60_000, now::get, false, Runnable::run);
+
+        BrainException e = assertThrows(BrainException.class, () -> sessions[0].take(List.of("claude-fake")));
+
+        assertEquals(BrainException.Kind.INTERRUPTED, e.kind());
+        assertEquals("reset", e.getMessage());
+        assertEquals(1, started.size());
+        assertFalse(started.get(0).alive(), "the process the reset caught is killed");
+        assertNull(sessions[0].current());
+    }
+
+    @Test
+    @Timeout(5)
+    void aResetKillsOffTheCallingThread() throws BrainException {
+        List<Runnable> queued = new ArrayList<>();
+        ClaudeCodeSessions sessions = sessions(queued::add);
+        sessions.take(List.of("claude-fake"));
+        FakeProc session = procs.get(0);
+
+        sessions.endCurrent();
+
+        assertTrue(session.alive, "the reset only hands the kill to the killer");
+        assertNull(sessions.current());
+        assertEquals(1, queued.size());
+        queued.get(0).run();
+        assertFalse(session.alive);
+    }
+
+    @Test
+    @Timeout(5)
+    void aClaimedSessionIsNotSweptBeforeItsTurnStarts() throws BrainException {
+        ClaudeCodeSessions sessions = sessions(Runnable::run);
+        ClaudeCodeSessions.Session session = sessions.take(List.of("claude-fake"));
+        script.add(List.of(result(1, "[]")));
+        session.write("{}", 5_000);
+        session.await(5_000); // the turn is over: the session is idle again
+        now.addAndGet(10 * 60_000);
+
+        assertSame(session, sessions.claimCurrent(), "send() takes the idle session for its next turn");
+        sessions.sweep(); // the race: the sweep runs before the turn's write
+        assertTrue(procs.get(0).alive, "a claimed session is mid-turn, never idle");
+        assertSame(session, sessions.current());
+    }
+
+    private ClaudeCodeSessions sessions(Executor killer) {
+        return new ClaudeCodeSessions(command -> {
+            FakeProc p = new FakeProc();
+            procs.add(p);
+            return p;
+        }, 60_000, now::get, false, killer);
+    }
+
     private static final String MOVE = "{\"name\":\"move_to\",\"input\":{\"x\":1,\"y\":64,\"z\":2}}";
 
     private static String result(int cacheRead, String calls) {
@@ -313,6 +399,57 @@ class ClaudeCodeSessionsTest {
             alive = false;
             out.close0();
             err.close0();
+        }
+    }
+
+    /** A child that never reads its stdin: a write blocks until the process is killed, as a stalled pipe does. */
+    private static final class StuckProc implements ClaudeCodeSessions.Proc {
+        private final CountDownLatch killed = new CountDownLatch(1);
+        private volatile boolean alive = true;
+
+        @Override
+        public OutputStream stdin() {
+            return new OutputStream() {
+                @Override
+                public void write(int b) throws IOException {
+                    blockUntilKilled();
+                }
+
+                @Override
+                public void write(byte[] b, int off, int len) throws IOException {
+                    blockUntilKilled();
+                }
+            };
+        }
+
+        private void blockUntilKilled() throws IOException {
+            try {
+                killed.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            throw new IOException("the pipe is closed");
+        }
+
+        @Override
+        public InputStream stdout() {
+            return InputStream.nullInputStream();
+        }
+
+        @Override
+        public InputStream stderr() {
+            return InputStream.nullInputStream();
+        }
+
+        @Override
+        public boolean alive() {
+            return alive;
+        }
+
+        @Override
+        public void kill() {
+            alive = false;
+            killed.countDown();
         }
     }
 }

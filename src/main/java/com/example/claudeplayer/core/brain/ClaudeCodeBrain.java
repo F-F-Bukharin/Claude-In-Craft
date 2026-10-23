@@ -75,12 +75,12 @@ public final class ClaudeCodeBrain implements Brain {
         this.sessions = new ClaudeCodeSessions(env, settings.claudeCodeIdleMinutes() * 60_000L, System::currentTimeMillis, true);
     }
 
-    /** Tests: scripted processes, a fake clock, and idle stops only when the test sweeps. */
+    /** Tests: scripted processes, a fake clock, idle stops only when the test sweeps, and kills run inline. */
     ClaudeCodeBrain(Settings settings, Path workDir, ClaudeCodeSessions.Launcher launcher, LongSupplier clock) {
         this.settings = settings;
         this.workDir = workDir;
         this.env = new ClaudeCodeEnv(workDir);
-        this.sessions = new ClaudeCodeSessions(launcher, settings.claudeCodeIdleMinutes() * 60_000L, clock, false);
+        this.sessions = new ClaudeCodeSessions(launcher, settings.claudeCodeIdleMinutes() * 60_000L, clock, false, Runnable::run);
     }
 
     @Override
@@ -88,7 +88,7 @@ public final class ClaudeCodeBrain implements Brain {
         List<String> command = streamCommand(request.system(), request.tools());
         JsonArray messages = request.messages();
         long started = System.nanoTime();
-        ClaudeCodeSessions.Session session = sessions.current();
+        ClaudeCodeSessions.Session session = sessions.claimCurrent();
         int from = session == null ? -1 : continues(session.seen, messages);
         if (from < 0) {
             if (messages.size() > 1) {
@@ -97,7 +97,7 @@ public final class ClaudeCodeBrain implements Brain {
             session = sessions.take(command);
             from = 0;
         }
-        session.write(userLine(renderTranscript(messages, from)));
+        session.write(userLine(renderTranscript(messages, from)), settings.claudeCodeTimeoutSeconds() * 1000L);
         sessions.refill(command); // the next spare starts while the model thinks
         Reply reply;
         try {

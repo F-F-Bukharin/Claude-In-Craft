@@ -13,10 +13,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,8 +30,8 @@ import org.slf4j.LoggerFactory;
  * {@code idleMillis} is stopped.
  *
  * <p>Threading: {@link #take}, {@link #refill} and the session's turn run on the brain thread; {@link #endCurrent}
- * may come from the server thread. The lock only guards the two fields: process starts, reads and writes happen
- * outside it, so the server thread never waits on process I/O.
+ * may come from the server thread and hands its kill to {@code killer}. The lock only guards the fields: process
+ * starts, reads, writes and kills happen outside it, so the server thread never waits on process I/O.
  */
 final class ClaudeCodeSessions {
     private static final Logger LOG = LoggerFactory.getLogger(ClaudeCodeSessions.class);
@@ -71,18 +73,39 @@ final class ClaudeCodeSessions {
             this.lastUsed = clock.getAsLong();
         }
 
-        /** Sends one stream-json line. */
-        void write(String line) throws BrainException {
-            busy = true;
-            lastUsed = clock.getAsLong();
+        /**
+         * Sends one stream-json line. The write runs on its own thread, so a child that never reads its stdin can't
+         * hold the caller past {@code timeoutMillis}; then the session is ended, which unblocks the write.
+         */
+        void write(String line, long timeoutMillis) throws BrainException {
+            byte[] bytes = (line + "\n").getBytes(StandardCharsets.UTF_8);
+            AtomicReference<IOException> failed = new AtomicReference<>();
+            Thread writer = daemon("claudeplayer-cc-in", () -> {
+                try {
+                    OutputStream in = proc.stdin();
+                    in.write(bytes);
+                    in.flush();
+                } catch (IOException e) {
+                    failed.set(e);
+                }
+            });
             try {
-                OutputStream in = proc.stdin();
-                in.write((line + "\n").getBytes(StandardCharsets.UTF_8));
-                in.flush();
-            } catch (IOException e) {
+                writer.join(Math.max(1, timeoutMillis));
+            } catch (InterruptedException e) {
                 busy = false;
                 end(this);
-                throw new BrainException(BrainException.Kind.CLI, "couldn't write the prompt: " + e.getMessage());
+                Thread.currentThread().interrupt();
+                throw new BrainException(BrainException.Kind.INTERRUPTED, "interrupted");
+            }
+            if (writer.isAlive()) {
+                busy = false;
+                end(this);
+                throw new BrainException(BrainException.Kind.TIMEOUT, "timed out writing the prompt");
+            }
+            if (failed.get() != null) {
+                busy = false;
+                end(this);
+                throw new BrainException(BrainException.Kind.CLI, "couldn't write the prompt: " + failed.get().getMessage());
             }
         }
 
@@ -128,25 +151,35 @@ final class ClaudeCodeSessions {
     private final long idleMillis;
     private final LongSupplier clock;
     private final boolean sweepInBackground;
+    private final Executor killer;
     private Session current;
     private Session spare;
     private boolean closed;
+    private int resets; // bumped by every endCurrent(), so a take() that is still starting notices it
     private ScheduledExecutorService sweeper;
     private volatile String rateLimitEvent;
 
-    /** {@code sweepInBackground} false leaves idle stops to whoever calls {@link #sweep} (tests). */
+    /** {@code sweepInBackground} false leaves idle stops to whoever calls {@link #sweep} (tests). Kills run on daemon threads. */
     ClaudeCodeSessions(Launcher launcher, long idleMillis, LongSupplier clock, boolean sweepInBackground) {
+        this(launcher, idleMillis, clock, sweepInBackground, r -> daemon("claudeplayer-cc-kill", r));
+    }
+
+    /** {@code killer} runs the kills {@link #endCurrent} makes; tests pass {@code Runnable::run} to kill inline. */
+    ClaudeCodeSessions(Launcher launcher, long idleMillis, LongSupplier clock, boolean sweepInBackground, Executor killer) {
         this.launcher = launcher;
         this.idleMillis = idleMillis;
         this.clock = clock;
         this.sweepInBackground = sweepInBackground;
+        this.killer = killer;
     }
 
     /** Ends the current session, then takes the spare if it matches {@code command} (else starts a process). */
     Session take(List<String> command) throws BrainException {
         Session old;
         Session s;
+        long epoch;
         synchronized (this) {
+            epoch = resets;
             old = current;
             current = null;
             s = spare;
@@ -164,14 +197,18 @@ final class ClaudeCodeSessions {
                 throw new BrainException(BrainException.Kind.NO_CLI, command.get(0) + ": " + e.getMessage());
             }
         }
+        String why;
         synchronized (this) {
-            if (!closed) {
+            if (!closed && resets == epoch) {
                 current = s;
+                s.busy = true; // claimed here too, so the sweep can't stop it before the turn's write
+                s.lastUsed = clock.getAsLong();
                 return s;
             }
+            why = closed ? "shutting down" : "reset";
         }
         s.proc.kill();
-        throw new BrainException(BrainException.Kind.INTERRUPTED, "shutting down");
+        throw new BrainException(BrainException.Kind.INTERRUPTED, why);
     }
 
     /** Makes sure an idle spare for {@code command} is running. A start failure only costs the next order its head start. */
@@ -202,6 +239,15 @@ final class ClaudeCodeSessions {
         return current;
     }
 
+    /** Takes the current session for a turn: busy and used now, under the lock, so the sweep can't stop it. */
+    synchronized Session claimCurrent() {
+        if (current != null) {
+            current.busy = true;
+            current.lastUsed = clock.getAsLong();
+        }
+        return current;
+    }
+
     /** Kills {@code s}, and forgets it if it is the current session. */
     void end(Session s) {
         synchronized (this) {
@@ -210,14 +256,15 @@ final class ClaudeCodeSessions {
         s.proc.kill();
     }
 
-    /** Kills the current session, not the spare. Safe from any thread. */
+    /** Kills the current session, not the spare. Safe from any thread: the kill runs on {@code killer}. */
     void endCurrent() {
         Session s;
         synchronized (this) {
+            resets++;
             s = current;
             current = null;
         }
-        if (s != null) s.proc.kill();
+        if (s != null) killer.execute(s.proc::kill);
     }
 
     /** Stops the spare and the current session if unused for the idle time; a session mid-turn is never idle. */
