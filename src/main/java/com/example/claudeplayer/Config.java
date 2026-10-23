@@ -101,6 +101,9 @@ public final class Config {
     private static final ForgeConfigSpec.IntValue CLAUDE_CODE_IDLE = B
             .comment("Minutes a warm Claude Code process (an order's session, or the spare kept for the next order) may sit unused before it is stopped.")
             .defineInRange("claude_code_idle_minutes", D.claudeCodeIdleMinutes(), 1, 1440);
+    private static final ForgeConfigSpec.IntValue AUTONOMY_INTERVAL = B
+            .comment("While autonomous (\"C go do your thing\"), at least this many seconds between goals, each one model call.")
+            .defineInRange("autonomy_interval_seconds", D.autonomyIntervalSeconds(), 15, 3600);
 
     static final ForgeConfigSpec SPEC = B.build();
 
@@ -140,6 +143,7 @@ public final class Config {
             b.shortTermMinutes = MEMORY_SHORT_MINUTES.get();
             b.longTermCapacity = MEMORY_LONG_CAPACITY.get();
             b.claudeCodeIdleMinutes = CLAUDE_CODE_IDLE.get();
+            b.autonomyIntervalSeconds = AUTONOMY_INTERVAL.get();
         });
     }
 
