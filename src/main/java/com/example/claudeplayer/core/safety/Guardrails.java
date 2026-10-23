@@ -65,7 +65,7 @@ public final class Guardrails {
         if (ownBlock) return ActionResult.failed("own_block");
         if (!lava) return ActionResult.ok();
         if (!(fromHome <= LAVA_AREA)) return ActionResult.denied("outside_work_area");
-        if (nearestPlayer <= LAVA_PLAYER_GAP) return ActionResult.failed("lava_near_player");
+        if (nearestPlayer <= LAVA_PLAYER_GAP) return ActionResult.denied("lava_near_player");
         return ActionResult.ok();
     }
 

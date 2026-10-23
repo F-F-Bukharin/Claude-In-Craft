@@ -134,9 +134,10 @@ public final class ToolSchemas {
         add("harvest", 2, "Harvest a field in one call: walks to every ripe wheat, carrot, potato, beetroot or nether wart within radius of the point, breaks it, picks up the drops and replants the spot with a matching seed you carry. Growing crops are left alone. Gives up after 120 s. ok: what was harvested, replanted and picked up, and why it stopped: done, none_ripe, inventory_full or timeout. failed:danger (a hostile within 6 blocks or health under 40%) also says what was done.",
                 in -> new Action.Harvest(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000), in.integer("radius", 1, 8)),
                 integer("x", "Field centre x."), integer("y", "Field y, at the crops."), integer("z", "Field centre z."), integer("radius", "Blocks from the point, 1 to 8."));
-        add("use_bucket", 2, "Use a bucket on a block within 4.5 blocks of your eyes. With a water or lava bucket: pour it there and keep the empty bucket. With an empty bucket: fill it from the water or lava source there. Lava pours only within 32 blocks of home (denied:outside_work_area) and never within 4 blocks of another player (failed:lava_near_player). Fails with no_bucket, no_source, too_far, own_block (where you stand) or not_poured.",
-                in -> new Action.UseBucket(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000)),
-                integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."));
+        add("use_bucket", 2, "Use a bucket on a block within 4.5 blocks of your eyes. With a water or lava bucket: pour it there and keep the empty bucket. With an empty bucket: fill it from the water or lava source there. With fluid (water or lava), pour or fill only that kind; without it, water first. Lava pours only within 32 blocks of home (denied:outside_work_area) and never within 4 blocks of another player (denied:lava_near_player). Fails with no_bucket, no_source, too_far, own_block (where you stand) or not_poured.",
+                in -> new Action.UseBucket(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000), fluid(in)),
+                integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."),
+                optional(text("fluid", "water or lava: which bucket to pour. Leave it out for any full bucket.")));
         // vision
         add("glance", 2, "Take a low-res picture of what you see right now. For important moments: a rare or valuable target, or a player asking you to look. It has a cooldown.",
                 in -> new Action.Glance());
@@ -190,6 +191,14 @@ public final class ToolSchemas {
     private static String item(Input in) {
         String id = in.text("item", 64).toLowerCase(Locale.ROOT);
         return id.startsWith("minecraft:") ? id.substring("minecraft:".length()) : id;
+    }
+
+    /** "water" or "lava" for use_bucket, or null when absent. */
+    private static String fluid(Input in) {
+        if (!in.has("fluid")) return null;
+        String f = in.text("fluid", 8).toLowerCase(Locale.ROOT);
+        if (!Set.of("water", "lava").contains(f)) throw new BadInput("fluid");
+        return f;
     }
 
     /** One of DigPlan.DIRECTIONS. */

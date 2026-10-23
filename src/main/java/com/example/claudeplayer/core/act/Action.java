@@ -84,8 +84,11 @@ public sealed interface Action {
     /** Harvests every ripe crop within {@code radius} of a point, picks up the drops and replants from the inventory. */
     record Harvest(int x, int y, int z, int radius) implements Action {}
 
-    /** Pours a water or lava bucket at a position, or fills an empty bucket from the source there (Guardrails.checkPour). */
-    record UseBucket(int x, int y, int z) implements Action {}
+    /**
+     * Pours a water or lava bucket at a position, or fills an empty bucket from the source there (Guardrails.checkPour).
+     * {@code fluid} is "water", "lava", or null for the first full bucket found (water first).
+     */
+    record UseBucket(int x, int y, int z, String fluid) implements Action {}
 
     /** A low-res picture of what the body sees, gated by VisionGate (once per turn, then a cooldown). */
     record Glance() implements Action {}

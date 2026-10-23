@@ -96,7 +96,10 @@ class ToolParseTest {
         assertEquals(new Action.Plant(4, 63, -2, "wheat_seeds"), v1.parse("plant", json("{\"x\":4,\"y\":63,\"z\":-2,\"item\":\"minecraft:Wheat_Seeds\"}")).action());
         assertEquals(new Action.Harvest(10, 64, 10, 8), v1.parse("harvest", json("{\"x\":10,\"y\":64,\"z\":10,\"radius\":8}")).action());
         assertEquals(new Action.Harvest(10, 64, 10, 1), v1.parse("harvest", json("{\"x\":10,\"y\":64,\"z\":10,\"radius\":\"1\"}")).action());
-        assertEquals(new Action.UseBucket(0, 70, 0), v1.parse("use_bucket", json("{\"x\":0,\"y\":70,\"z\":0}")).action());
+        assertEquals(new Action.UseBucket(0, 70, 0, null), v1.parse("use_bucket", json("{\"x\":0,\"y\":70,\"z\":0}")).action());
+        assertEquals(new Action.UseBucket(0, 70, 0, "lava"), v1.parse("use_bucket", json("{\"x\":0,\"y\":70,\"z\":0,\"fluid\":\"lava\"}")).action());
+        assertEquals(new Action.UseBucket(0, 70, 0, "water"), v1.parse("use_bucket", json("{\"x\":0,\"y\":70,\"z\":0,\"fluid\":\"Water\"}")).action());
+        assertEquals(new Action.UseBucket(0, 70, 0, null), v1.parse("use_bucket", json("{\"x\":0,\"y\":70,\"z\":0,\"fluid\":null}")).action());
         assertEquals("failed:bad_input:radius", error(v1, "harvest", "{\"x\":10,\"y\":64,\"z\":10,\"radius\":0}"));
         assertEquals("failed:bad_input:radius", error(v1, "harvest", "{\"x\":10,\"y\":64,\"z\":10,\"radius\":9}"));
         assertEquals("failed:bad_input:radius", error(v1, "harvest", "{\"x\":10,\"y\":64,\"z\":10}"));
@@ -104,6 +107,8 @@ class ToolParseTest {
         assertEquals("failed:bad_input:item", error(v1, "plant", "{\"x\":4,\"y\":63,\"z\":-2,\"item\":\" \"}"));
         assertEquals("failed:bad_input:y", error(v1, "till", "{\"x\":4,\"y\":400,\"z\":-2}"));
         assertEquals("failed:bad_input:z", error(v1, "use_bucket", "{\"x\":0,\"y\":70}"));
+        assertEquals("failed:bad_input:fluid", error(v1, "use_bucket", "{\"x\":0,\"y\":70,\"z\":0,\"fluid\":\"milk\"}"));
+        assertEquals("failed:bad_input:fluid", error(v1, "use_bucket", "{\"x\":0,\"y\":70,\"z\":0,\"fluid\":\"\"}"));
     }
 
     @Test

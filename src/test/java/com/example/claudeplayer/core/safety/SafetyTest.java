@@ -38,8 +38,8 @@ class SafetyTest {
         assertEquals("ok", Guardrails.checkPour(true, false, 32, 4.5).code());
         assertEquals("denied:outside_work_area", Guardrails.checkPour(true, false, 33, none).code());
         assertEquals("denied:outside_work_area", Guardrails.checkPour(true, false, none, none).code(), "no home, no lava");
-        assertEquals("failed:lava_near_player", Guardrails.checkPour(true, false, 10, 4).code());
-        assertEquals("failed:lava_near_player", Guardrails.checkPour(true, false, 10, 0.5).code());
+        assertEquals("denied:lava_near_player", Guardrails.checkPour(true, false, 10, 4).code());
+        assertEquals("denied:lava_near_player", Guardrails.checkPour(true, false, 10, 0.5).code());
         assertEquals("failed:own_block", Guardrails.checkPour(true, true, 10, none).code());
     }
 
