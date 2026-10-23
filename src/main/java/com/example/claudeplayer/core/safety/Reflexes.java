@@ -23,15 +23,17 @@ public final class Reflexes {
         return Math.sqrt(dx * dx + dz * dz);
     }
 
-    /** The reflex move for a threat; FIGHT only when the target is within reach, otherwise Claude plans the approach. */
-    public static Move decide(CautionLevel level, CautionPolicy.Situation s, boolean litCreeper, boolean attacksEnabled,
-                              double reach) {
+    /**
+     * The reflex move for a threat. FIGHT starts the fight routine, which walks to the target and swings until the
+     * policy stops it; without attacks (tool_phase below 4) a fight becomes a flee.
+     */
+    public static Move decide(CautionLevel level, CautionPolicy.Situation s, boolean litCreeper, boolean attacksEnabled) {
         if (litCreeper) return Move.FLEE;
         if (s.targetPlayer() || !s.targetHostile()) return Move.NONE;
         return switch (CautionPolicy.advise(level, s)) {
             case FLEE, FLEE_AND_CALL_FOR_HELP -> Move.FLEE;
             case HOLD -> Move.NONE;
-            case FIGHT -> !attacksEnabled ? Move.FLEE : s.distance() <= reach ? Move.FIGHT : Move.NONE;
+            case FIGHT -> attacksEnabled ? Move.FIGHT : Move.FLEE;
         };
     }
 
