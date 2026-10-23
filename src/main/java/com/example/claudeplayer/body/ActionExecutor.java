@@ -5,7 +5,6 @@ import com.example.claudeplayer.core.act.Action;
 import com.example.claudeplayer.core.act.ActionResult;
 import com.example.claudeplayer.core.act.ActionRunner;
 import com.example.claudeplayer.core.safety.CautionPolicy;
-import com.example.claudeplayer.core.safety.Guardrails;
 import java.util.List;
 import net.minecraft.commands.arguments.EntityAnchorArgument;
 import net.minecraft.core.BlockPos;
@@ -22,7 +21,6 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -37,7 +35,6 @@ public final class ActionExecutor implements ActionRunner {
     public static final double ATTACK_REACH = 3.0;
     static final double CONTAINER_REACH = 6.0;
     private static final double BLOCK_REACH = 4.5;
-    private static final int MAX_DIG_TICKS = 600;
     /** Faces to place against, the floor first. */
     private static final List<Direction> SUPPORT = List.of(Direction.DOWN, Direction.NORTH, Direction.SOUTH,
             Direction.WEST, Direction.EAST, Direction.UP);
@@ -75,11 +72,13 @@ public final class ActionExecutor implements ActionRunner {
         if (action instanceof Action.Eat e) return EatHandle.start(p, e.auto());
         if (action instanceof Action.FollowPlayer f) return follow(p, f);
         if (action instanceof Action.AttackEntity a) return Handle.done(attack(p, a.entityId()));
-        if (action instanceof Action.MineBlock b) return mine(p, new BlockPos(b.x(), b.y(), b.z()));
+        if (action instanceof Action.MineBlock b) return MineHandle.start(rt, p, new BlockPos(b.x(), b.y(), b.z()), true);
         if (action instanceof Action.PlaceBlock b) return Handle.done(place(p, new BlockPos(b.x(), b.y(), b.z()), b.item()));
         if (action instanceof Action.Equip e) return Handle.done(equip(p, e.item()));
         if (action instanceof Action.Craft c) return Crafting.start(p, c);
         if (action instanceof Action.Smelt s) return Handle.done(Smelting.load(rt, p, s));
+        if (action instanceof Action.Gather g) return GatherHandle.start(rt, p, g);
+        if (action instanceof Action.Dig d) return new DigHandle(rt, p, d);
         return Handle.done(ActionResult.failed("not_implemented"));
     }
 
@@ -134,22 +133,6 @@ public final class ActionExecutor implements ActionRunner {
 
     static boolean inBlockReach(ServerPlayer p, BlockPos pos) {
         return p.getEyePosition().distanceTo(Vec3.atCenterOf(pos)) <= BLOCK_REACH;
-    }
-
-    /** Checks the break rule, takes the best tool in hand, then digs over time (MineHandle). */
-    private Handle mine(AgentPlayer p, BlockPos pos) {
-        if (!inBlockReach(p, pos)) return Handle.done(ActionResult.failed("out_of_reach"));
-        ServerLevel level = p.serverLevel();
-        BlockState state = level.getBlockState(pos);
-        String id = SnapshotBuilder.blockId(state);
-        ActionResult rule = Guardrails.checkBreak(state.isAir() || state.getBlock() instanceof LiquidBlock,
-                state.getDestroySpeed(level, pos) < 0, NaturalBlocks.is(state), id.equals(rt.data().placedBlock(level.dimension(), pos)));
-        if (rule.isError()) return Handle.done(rule);
-        int tool = Hands.bestTool(p.getInventory(), state);
-        if (tool >= 0) Hands.hold(p.getInventory(), tool);
-        float perTick = state.getDestroyProgress(p, level, pos);
-        if (perTick * MAX_DIG_TICKS < 1f) return Handle.done(ActionResult.failed("too_slow")); // over 30 s: needs a better tool
-        return new MineHandle(rt, p, pos, state, (int) Math.ceil(1f / perTick));
     }
 
     /** Places the way a player does (sneaking, so a chest or door it builds against doesn't open), then records the block as Claude's. */

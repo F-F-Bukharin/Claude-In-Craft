@@ -2,6 +2,8 @@ package com.example.claudeplayer.core.brain;
 
 import com.example.claudeplayer.core.act.Action;
 import com.example.claudeplayer.core.act.ActionResult;
+import com.example.claudeplayer.core.work.DigPlan;
+import com.example.claudeplayer.core.work.GatherTargets;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -103,6 +105,13 @@ public final class ToolSchemas {
         add("smelt", 2, "Load a furnace, smoker or blast furnace within 6 blocks with an item from your inventory and enough fuel (coal or charcoal first, then planks, then logs). Returns at once with when it will be ready and notes it in short-term memory; collect the output later with take.",
                 in -> new Action.Smelt(in.text("item", 64), in.integer("count", 1, 64)),
                 text("item", "Item id to smelt or cook, for example raw_iron, oak_log or beef."), integer("count", "How many, 1 to 64."));
+        add("gather", 2, "Collect blocks on your own in one call: walks to the nearest reachable matching block within 24 blocks, mines it with your best tool, picks up the drops and repeats until you have count more of what they drop (stone gives cobblestone, coal_ore gives coal). Prefer it to many move_to and mine_block calls. Takes only natural blocks with an open face, nothing beside water or lava, nothing deeper than 4 below you, and nothing out of reach from the ground (no pillaring). Gives up after 120 s. ok says what was gathered and why it stopped: done, none_reachable, needs_tool (nothing you carry harvests it), inventory_full, timeout, hazard_lava, hazard_fire or hazard_drop. failed:danger (a hostile within 6 blocks or health under 40%) also says what was gathered; failed:unknown_target.",
+                in -> new Action.Gather(GatherTargets.normalize(in.text("target", 64)), in.integer("count", 1, 256)),
+                text("target", "A block id (oak_log, iron_ore) or a group: log (any tree), stone (stone, deepslate, andesite, diorite, granite, tuff), coal, iron, copper, gold, diamond, redstone, lapis, emerald (each its ore and deepslate ore), sand, dirt, gravel, clay."),
+                integer("count", "How many dropped items you want, 1 to 256."));
+        add("dig", 2, "Dig a tunnel 1 wide and 2 high from where you stand, walking into each step. north, south, east or west keep your level and never dig the floor; down digs stairs one block lower per step toward the way you face, so you can walk back up. Use it to get underground to ores instead of many mine_block calls. Ores on the tunnel walls are listed (at most 5) so you can gather or mine_block them. Stops at y=-60. ok: dug N/length steps (stopped: y_floor or timeout after 5 minutes). Fails, saying how far it got, with protected_block, unbreakable, hazard_lava or hazard_water (a fluid next to the block about to open), hazard_drop (a fall of 3 or more ahead), too_slow (needs a better tool), stuck, or blocked (falling sand or gravel keeps refilling it).",
+                in -> new Action.Dig(direction(in), in.integer("length", 1, 32)),
+                text("direction", "north, south, east, west or down."), integer("length", "Steps to dig, 1 to 32."));
     }
 
     /** The enabled tools in a fixed order; a stable list keeps the prompt cache valid. */
@@ -153,6 +162,13 @@ public final class ToolSchemas {
     private static String item(Input in) {
         String id = in.text("item", 64).toLowerCase(Locale.ROOT);
         return id.startsWith("minecraft:") ? id.substring("minecraft:".length()) : id;
+    }
+
+    /** One of DigPlan.DIRECTIONS. */
+    private static String direction(Input in) {
+        String d = in.text("direction", 8).toLowerCase(Locale.ROOT);
+        if (!DigPlan.DIRECTIONS.contains(d)) throw new BadInput("direction");
+        return d;
     }
 
     /** 1 to 2304 (a full inventory of 64-stacks); not read for all. */

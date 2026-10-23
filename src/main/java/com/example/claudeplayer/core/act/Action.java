@@ -61,4 +61,10 @@ public sealed interface Action {
 
     /** Loads up to {@code count} of an item and enough fuel into a furnace nearby; doesn't wait for it to finish. */
     record Smelt(String item, int count) implements Action {}
+
+    /** Mines blocks matching {@code target} (a block id or a GatherTargets group) nearby until {@code count} of their drops are gained. */
+    record Gather(String target, int count) implements Action {}
+
+    /** Digs a 1-wide, 2-high tunnel {@code length} steps north, south, east or west, or a staircase down (DigPlan). */
+    record Dig(String direction, int length) implements Action {}
 }
