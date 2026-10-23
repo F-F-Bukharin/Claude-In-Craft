@@ -129,7 +129,7 @@ public record Verdict(boolean allowed, String reason) {}
 - Call rate: at most `max_calls_per_minute`.
 - Token cap: when `session_token_cap` is reached, calls stop and chat says so. Resets on server restart.
 - Step cap: `max_steps` tool rounds per order.
-- Break and place only within `break_radius` of home.
+- Break natural blocks anywhere; other blocks only if Claude placed them (`Guardrails.checkBreak`, `body/NaturalBlocks`). Place anywhere free.
 - Unknown tool names are denied with `denied:unknown_tool`.
 
 ### 8. Navigation
@@ -159,7 +159,8 @@ Config (`Config.java`). A file that holds a key stays out of version control.
 |---|---|---|
 | `brain` | `claude_code` | `claude_code` (Claude Code CLI, subscription) or `api` (Messages API, key) |
 | `claude_code_path` | empty | Path to `claude.exe`; empty searches PATH, then `~/.local/bin` |
-| `claude_code_timeout_seconds` | `90` | One CLI call, startup included |
+| `claude_code_timeout_seconds` | `90` | One Claude Code turn |
+| `claude_code_idle_minutes` | `10` | Stop a warm session or spare unused this long |
 | `model` | `claude-haiku-5-5` | Model for either brain |
 | `api_key_env` | `ANTHROPIC_API_KEY` | Env var holding the key |
 | `body_name` | `Claude` | Fake player display name |
@@ -172,7 +173,6 @@ Config (`Config.java`). A file that holds a key stays out of version control.
 | `max_steps` | `8` | Tool rounds per order |
 | `max_calls_per_minute` | `12` | Call rate cap |
 | `session_token_cap` | `200000` | Placeholder; F sets |
-| `break_radius` | `32` | Break and place radius from home (D4) |
 | `hostile_range` | `16` | Threat radius |
 | `escape_distance` | `8` | Safe distance from threats |
 | `escape_max_steps` | `12` | Max retreat path length |
@@ -184,6 +184,8 @@ Config (`Config.java`). A file that holds a key stays out of version control.
 | `action_timeout_seconds` | `10` | Timed action timeout |
 | `tool_phase` | `2` | Highest plan phase whose tools Claude can call |
 | `idle_reactions` | `true` | React to threats with no order running |
+| `auto_eat` | `true` | Eat on its own when hungry and safe (no model call) |
+| `autonomy_interval_seconds` | `60` | At most one autonomous goal turn per interval |
 | `reflexes` | `true` | Code flees or fights at level 3 before the model is told |
 | `memory_short_capacity` | `24` | Short-term notes kept |
 | `memory_short_minutes` | `10` | Minutes before a note fades |
@@ -211,7 +213,7 @@ Dev launch: `./gradlew runClient -Pquickstart="World"` passes `--quickPlaySingle
 
 ## TOOLS (what Claude can call)
 Gated by `tool_phase` (default 2).
-- Phases 1 and 2, on by default: `get_state`, `look(radius)` (phase 1; the world_state map at radius 4 to 24), `move_to(x, y, z)`, `flee` (phase 1; `ok` with `no_threats`, or `failed:no_escape`), `say(text)`, `wait(seconds)`, `stop`; memory `note(subject, text)`, `remember(subject, text)`, `forget(subject)`; `inspect_container(x, y, z)` (phase 2, notes the contents in short-term memory).
+- Phases 1 and 2, on by default: `get_state`, `look(radius)`, `move_to(x, y, z)`, `flee`, `say(text)`, `wait(seconds)`, `stop`; memory `note`, `remember`, `forget`; containers `inspect_container`, `store(x,y,z,item,count)`, `take(x,y,z,item,count)`; `eat`, `follow_player(name, seconds)`; blocks `mine_block(x,y,z)`, `place_block(x,y,z,item)`, `equip(item)`; `craft(item, count)` (3x3 needs a table within 4.5), `smelt(item, count)` (loads a furnace and returns; collect with `take`); routines `gather(target, count)` (groups: log, stone, coal, iron, ...) and `dig(direction, length)` (tunnel or staircase, stops at fluids). Break rule: natural blocks anywhere, others only if Claude placed them.
 - Phase 3: `follow_player(name, seconds)`. Phase 4: `attack_entity(entity_id)`, behind CautionPolicy.
 - Phase 6, stubs: `mine_block`, `place_block`, `equip`, `craft`. The work-area check is live; the edit itself returns `failed:not_implemented`.
 - Never tools: change caution level, edit the allowlist, run commands, touch config. ToolParseTest checks it.
