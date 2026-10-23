@@ -41,6 +41,21 @@ class ToolParseTest {
     }
 
     @Test
+    void survivalAndStorageToolsParse() {
+        assertEquals(new Action.Eat(false), v1.parse("eat", json("{}")).action());
+        assertEquals(new Action.Store(1, 2, 3, "oak_log", 15),
+                v1.parse("store", json("{\"x\":1,\"y\":2,\"z\":3,\"item\":\"minecraft:Oak_Log\",\"count\":15}")).action());
+        assertEquals(new Action.Store(1, 2, 3, Action.ALL, 0),
+                v1.parse("store", json("{\"x\":1,\"y\":2,\"z\":3,\"item\":\"all\",\"count\":9999}")).action(), "count is ignored for all");
+        assertEquals(new Action.Take(1, 2, 3, "iron_ingot", 2304),
+                v1.parse("take", json("{\"x\":1,\"y\":2,\"z\":3,\"item\":\"iron_ingot\",\"count\":2304}")).action());
+        assertEquals(new Action.FollowPlayer("Steve", 30), v1.parse("follow_player", json("{\"name\":\"Steve\",\"seconds\":30}")).action());
+        assertEquals("failed:bad_input:count", error(v1, "take", "{\"x\":1,\"y\":2,\"z\":3,\"item\":\"iron_ingot\",\"count\":2305}"));
+        assertEquals("failed:bad_input:count", error(v1, "store", "{\"x\":1,\"y\":2,\"z\":3,\"item\":\"oak_log\",\"count\":0}"));
+        assertEquals("failed:bad_input:item", error(v1, "store", "{\"x\":1,\"y\":2,\"z\":3,\"count\":1}"));
+    }
+
+    @Test
     void malformedInputFailsWithTheField() {
         assertEquals("failed:bad_input:z", error(v1, "move_to", "{\"x\":1,\"y\":64}"));
         assertEquals("failed:bad_input:x", error(v1, "move_to", "{\"x\":\"far\",\"y\":64,\"z\":0}"));
@@ -77,7 +92,7 @@ class ToolParseTest {
             names.add(def.get("name").getAsString());
         }
         assertEquals(List.of("get_state", "look", "move_to", "say", "wait", "stop", "flee", "note", "remember", "forget", "inspect_container",
-                "craft", "smelt"), names);
+                "store", "take", "eat", "follow_player", "craft", "smelt"), names);
     }
 
     @Test

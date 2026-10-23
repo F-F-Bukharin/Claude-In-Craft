@@ -5,24 +5,14 @@ import com.example.claudeplayer.core.act.Action;
 import com.example.claudeplayer.core.act.ActionResult;
 import com.example.claudeplayer.core.act.ActionRunner;
 import com.example.claudeplayer.core.safety.CautionPolicy;
-import com.example.claudeplayer.core.safety.WorldText;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
 import net.minecraft.commands.arguments.EntityAnchorArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.Container;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.world.Nameable;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.block.ChestBlock;
-import net.minecraft.world.level.block.entity.BlockEntity;
-import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -35,9 +25,11 @@ public final class ActionExecutor implements ActionRunner {
     static final double CONTAINER_REACH = 6.0;
 
     private final AgentRuntime rt;
+    private final ContainerActions containers;
 
     public ActionExecutor(AgentRuntime rt) {
         this.rt = rt;
+        this.containers = new ContainerActions(rt);
     }
 
     @Override
@@ -59,7 +51,10 @@ public final class ActionExecutor implements ActionRunner {
         }
         if (action instanceof Action.MoveTo m) return rt.navigator().moveTo(p, new Vec3(m.x(), m.y(), m.z()));
         if (action instanceof Action.Flee) return flee(p);
-        if (action instanceof Action.InspectContainer c) return Handle.done(inspect(p, new BlockPos(c.x(), c.y(), c.z())));
+        if (action instanceof Action.InspectContainer c) return Handle.done(containers.inspect(p, new BlockPos(c.x(), c.y(), c.z())));
+        if (action instanceof Action.Store s) return Handle.done(containers.store(p, s));
+        if (action instanceof Action.Take t) return Handle.done(containers.take(p, t));
+        if (action instanceof Action.Eat e) return EatHandle.start(p, e.auto());
         if (action instanceof Action.FollowPlayer f) return follow(p, f);
         if (action instanceof Action.AttackEntity a) return Handle.done(attack(p, a.entityId()));
         if (action instanceof Action.MineBlock b) return Handle.done(blockEdit(b.x(), b.y(), b.z()));
@@ -99,33 +94,6 @@ public final class ActionExecutor implements ActionRunner {
         Vec3 dest = rt.escape().destination(p, threats);
         if (dest == null) return Handle.done(ActionResult.failed("no_escape"));
         return rt.navigator().moveTo(p, dest);
-    }
-
-    /** Reads a container without opening it, and keeps the exact contents as a short-term note. */
-    private ActionResult inspect(AgentPlayer p, BlockPos pos) {
-        if (p.position().distanceTo(Vec3.atCenterOf(pos)) > CONTAINER_REACH) return ActionResult.failed("too_far");
-        BlockState state = p.serverLevel().getBlockState(pos);
-        BlockEntity be = p.serverLevel().getBlockEntity(pos);
-        Container container = state.getBlock() instanceof ChestBlock chest
-                ? ChestBlock.getContainer(chest, state, p.serverLevel(), pos, true) // both halves of a double chest
-                : be instanceof Container c ? c : null;
-        if (container == null) return ActionResult.failed("not_a_container");
-        Map<String, Integer> counts = new LinkedHashMap<>();
-        int used = 0;
-        for (int i = 0; i < container.getContainerSize(); i++) {
-            ItemStack stack = container.getItem(i);
-            if (stack.isEmpty()) continue;
-            used++;
-            counts.merge(SnapshotBuilder.itemId(stack), stack.getCount(), Integer::sum);
-        }
-        String name = be instanceof Nameable n && n.hasCustomName()
-                ? " \"" + WorldText.clean(n.getCustomName().getString(), WorldText.NAME_MAX) + "\"" : "";
-        String contents = counts.isEmpty() ? "empty"
-                : counts.entrySet().stream().map(e -> e.getValue() + " " + e.getKey()).collect(Collectors.joining(", "));
-        String summary = SnapshotBuilder.blockId(state) + name + " at " + pos.toShortString() + ": " + contents
-                + " (" + used + "/" + container.getContainerSize() + " slots used)";
-        rt.memory().note("container@" + pos.getX() + "," + pos.getY() + "," + pos.getZ(), summary);
-        return ActionResult.ok(summary);
     }
 
     private ActionResult attack(AgentPlayer p, int entityId) {
