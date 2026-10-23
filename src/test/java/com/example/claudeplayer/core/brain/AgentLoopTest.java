@@ -488,6 +488,29 @@ class AgentLoopTest {
     }
 
     @Test
+    void aGoalFailureIsSaidOnceUntilAGoalWorksAgain() {
+        build(b -> b.autonomyIntervalSeconds = 60);
+        BrainException down = new BrainException(BrainException.Kind.OVERLOADED, 529, "overloaded", null);
+        script.add(down);
+        loop.startAutonomy("F");
+        ticks(1);
+        assertEquals(1, notices.size());
+        script.add(down);
+        now += 60_000;
+        ticks(1);
+        assertEquals(2, requests.size());
+        assertEquals(1, notices.size(), "the same failure a minute later stays quiet");
+        script.add(tools(say("g")));
+        now += 60_000;
+        ticks(40);
+        script.add(down);
+        now += 60_000;
+        ticks(1);
+        assertEquals(4, requests.size());
+        assertEquals(2, notices.size(), "after a goal works, a new failure is said again");
+    }
+
+    @Test
     void anOrderDisplacesAGoalRunsNormallyAndAutonomyResumes() {
         build(b -> {});
         script.add(tools(move("m")));

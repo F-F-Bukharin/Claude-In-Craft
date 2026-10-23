@@ -127,6 +127,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     private long nextGoalAt; // clock millis; a skipped cycle waits for the next interval too
     private int goalCount;
     private final Deque<String> outcomes = new ArrayDeque<>(); // the last goals' result codes, oldest first
+    private String lastGoalFailure; // the notice of the last failed goal call, so a repeat stays quiet
 
     public AgentLoop(Settings settings, Brain brain, Executor brainThread, Executor mainThread, ActionQueue queue,
                      Guardrails guardrails, PromptBuilder prompts, ToolSchemas tools, Memory memory, Host host,
@@ -496,8 +497,18 @@ public final class AgentLoop implements ActionQueue.Listener {
     private void fail(BrainException e) {
         LOG.warn("model call failed: {} {} (request {})", e.kind(), e.getMessage(), e.requestId());
         if (e.kind() == BrainException.Kind.AUTH) guardrails.halt();
-        if (goal) recordGoal("; the model call failed");
-        end(e.chatMessage(settings.apiKeyEnv()));
+        String notice = e.chatMessage(settings.apiKeyEnv());
+        if (goal) {
+            recordGoal("; the model call failed");
+            // A goal retries every interval: say a failure once, not once a minute, until a goal works again.
+            boolean repeat = notice.equals(lastGoalFailure);
+            lastGoalFailure = notice;
+            if (repeat) {
+                abandon();
+                return;
+            }
+        }
+        end(notice);
     }
 
     private void finish(String text) {
@@ -513,6 +524,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     /** The goal's calls are done: keep their codes for the next goal and end quietly, unless the reply had words. */
     private void endGoal() {
         recordGoal("");
+        lastGoalFailure = null;
         String text = goalText;
         abandon();
         if (text != null && !text.isBlank()) host.say(text);
