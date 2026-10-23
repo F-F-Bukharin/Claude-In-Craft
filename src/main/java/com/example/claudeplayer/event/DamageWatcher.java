@@ -1,7 +1,6 @@
 package com.example.claudeplayer.event;
 
 import com.example.claudeplayer.AgentRuntime;
-import com.example.claudeplayer.body.ActionExecutor;
 import com.example.claudeplayer.body.AgentPlayer;
 import com.example.claudeplayer.body.SnapshotBuilder;
 import com.example.claudeplayer.core.act.Action;
@@ -129,11 +128,10 @@ public final class DamageWatcher {
                 : CautionPolicy.advise(level, s).name().toLowerCase(Locale.ROOT).replace('_', ' ');
         String reason = what + " Caution level " + level.number() + " (" + level.title + ") says: " + stance + ".";
         if (threat == null) return new Pending(reason, List.of(), false);
-        Reflexes.Move move = Reflexes.decide(level, s, lit, rt.settings().toolPhase() >= 4,
-                ActionExecutor.ATTACK_REACH);
+        Reflexes.Move move = Reflexes.decide(level, s, lit, rt.settings().toolPhase() >= 4);
         List<Action> actions = switch (move) {
             case FLEE -> List.of(new Action.Flee());
-            case FIGHT -> List.of(new Action.AttackEntity(threat.getId()));
+            case FIGHT -> List.of(new Action.Fight(threat.getId()));
             case NONE -> List.of();
         };
         if (!actions.isEmpty() && rt.settings().reflexes()) {

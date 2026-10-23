@@ -117,6 +117,18 @@ class ToolParseTest {
         assertEquals("denied:unknown_tool", error(v1, "fly", "{}"));
         assertEquals("denied:unknown_tool", error(v1, "attack_entity", "{\"entity_id\":42}"));
         assertEquals(new Action.AttackEntity(42), new ToolSchemas(4).parse("attack_entity", json("{\"entity_id\":42}")).action());
+        assertEquals("denied:unknown_tool", error(new ToolSchemas(3), "fight", "{\"entity_id\":42}"));
+        assertEquals(new Action.Fight(42), new ToolSchemas(4).parse("fight", json("{\"entity_id\":42}")).action());
+        assertEquals("failed:bad_input:entity_id", error(new ToolSchemas(4), "fight", "{}"));
+    }
+
+    @Test
+    void phaseFourAddsAttackAndFight() {
+        List<String> names = new ArrayList<>();
+        for (JsonElement el : new ToolSchemas(4).definitions()) names.add(el.getAsJsonObject().get("name").getAsString());
+        assertTrue(names.contains("attack_entity"));
+        assertTrue(names.contains("fight"));
+        assertEquals(new ToolSchemas(2).definitions().size() + 2, names.size());
     }
 
     @Test
@@ -173,6 +185,9 @@ class ToolParseTest {
         assertEquals(3, v1.parse("flee", json("{\"prio\":3}")).prio());
         assertEquals(3, v1.parse("stop", json("{\"prio\":3}")).prio());
         assertEquals(3, new ToolSchemas(4).parse("attack_entity", json("{\"entity_id\":7,\"prio\":3}")).prio());
+        ToolSchemas.Parsed fight = new ToolSchemas(4).parse("fight", json("{\"entity_id\":7,\"prio\":3}"));
+        assertEquals(3, fight.prio());
+        assertFalse(fight.prioLowered());
         ToolSchemas.Parsed lowered = v1.parse("say", json("{\"text\":\"hi\",\"prio\":3}"));
         assertEquals(2, lowered.prio());
         assertTrue(lowered.prioLowered());

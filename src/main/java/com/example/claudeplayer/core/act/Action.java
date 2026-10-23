@@ -53,6 +53,10 @@ public sealed interface Action {
     // v2: schemas exist, hidden until tool_phase reaches them
     record AttackEntity(int entityId) implements Action {}
 
+    // combat
+    /** Gears up, then walks to one hostile and swings until it dies, the policy stops it, or 30 s pass (FightHandle). */
+    record Fight(int entityId) implements Action {}
+
     record MineBlock(int x, int y, int z) implements Action {}
 
     record PlaceBlock(int x, int y, int z, String item) implements Action {}

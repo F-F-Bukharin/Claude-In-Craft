@@ -384,7 +384,7 @@ public final class AgentLoop implements ActionQueue.Listener {
                 continue;
             }
             if (parsed.prioLowered()) {
-                notes.add(tc.name() + " " + tc.id() + ": prio_lowered to 2 (prio 3 is only for flee, stop and attack_entity)");
+                notes.add(tc.name() + " " + tc.id() + ": prio_lowered to 2 (prio 3 is only for flee, stop, attack_entity and fight)");
             }
             pending.put(tc.id(), call);
             entries.add(new ActionQueue.Entry(tc.id(), tc.name(), parsed.action(), parsed.prio()));
@@ -617,6 +617,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     private static String reflexTool(Action action) {
         if (action instanceof Action.Flee) return "flee";
         if (action instanceof Action.AttackEntity) return "attack_entity";
+        if (action instanceof Action.Fight) return "fight";
         if (action instanceof Action.Say) return "say";
         if (action instanceof Action.Stop) return "stop";
         if (action instanceof Action.MoveTo) return "move_to";

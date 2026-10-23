@@ -20,10 +20,10 @@ import java.util.Set;
  */
 public final class ToolSchemas {
     /** Tools allowed to ask for priority 3; anywhere else a 3 is lowered to 2. */
-    public static final Set<String> SAFETY_TOOLS = Set.of("flee", "stop", "attack_entity");
+    public static final Set<String> SAFETY_TOOLS = Set.of("flee", "stop", "attack_entity", "fight");
 
     private static final String PRIO = "Priority 1 to 3, default 1. 1: routine, dropped if danger interrupts. "
-            + "2: important, paused and resumed after danger. 3: only flee, stop and attack_entity; runs before everything else.";
+            + "2: important, paused and resumed after danger. 3: only flee, stop, attack_entity and fight; runs before everything else.";
 
     /** Either an action to queue (with its priority), or the result to send back without running anything. */
     public record Parsed(Action action, ActionResult error, int prio, boolean prioLowered) {}
@@ -97,6 +97,10 @@ public final class ToolSchemas {
         add("attack_entity", 4, "Attack one entity by its id from world_state.hostiles. Your caution level decides whether that's allowed; a denial says why.",
                 in -> new Action.AttackEntity(in.integer("entity_id", 0, Integer.MAX_VALUE)),
                 integer("entity_id", "The entity's id."));
+        // combat
+        add("fight", 4, "Fight one hostile by its id until it's dead, you must stop, or it's out of your caution level's range. Gears up first. Reports once at the end.",
+                in -> new Action.Fight(in.integer("entity_id", 0, Integer.MAX_VALUE)),
+                integer("entity_id", "The hostile's id from world_state.hostiles."));
         add("mine_block", 2, "Dig out the block at a position within 4.5 blocks of your eyes, with the best tool you carry, then pick up what drops. Holds the queue while digging. Natural blocks (logs, leaves, stone, dirt, sand, gravel, ores, plants) can be mined anywhere; anything else only if you placed it. Fails with out_of_reach (walk closer first), no_block, too_slow (needs a better tool) or block_changed; denied:protected_block or denied:unbreakable.",
                 in -> new Action.MineBlock(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000)),
                 integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."));
