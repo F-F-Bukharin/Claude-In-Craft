@@ -66,7 +66,7 @@ public final class AgentBody {
         return "Spawned " + p.getGameProfile().getName() + ". Home is " + home.toShortString() + ".";
     }
 
-    /** claude: respawn and /cp respawn: back at home with full health. */
+    /** C respawn and /cp respawn: back at home with full health. */
     public String respawn() {
         if (alive()) return rt.settings().bodyName() + " is alive.";
         BlockPos home = rt.data().home();

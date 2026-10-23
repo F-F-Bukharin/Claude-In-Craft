@@ -56,6 +56,7 @@ Updated 22 Oct 2026 after the skeleton pass (Opus 5.5). Read this first, then th
    - V1. `claude: what do you see?` Its answer should match the terrain around it: trees, water, walls.
    - V2. Build a wall of 2 blocks with one gap, stand behind it, and say `claude: come here`. It should route through the gap.
    - V3. Ask for something wordy (`claude: tell me about yourself`). Chat shows at most two lines.
+   - Trigger (23 Oct, F's choice): the default is now `C`, case-sensitive and followed by a space, ':' or ','. `Claude:` (the body name plus a colon) always works too. Existing config files keep their saved `trigger` until it is edited.
    - Not done: the Blockman status block pinned to each turn (spec section 7), and the flee issues, which wait on F's description of how flees failed.
 
 ## Risks to watch

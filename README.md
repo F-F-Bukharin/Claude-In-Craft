@@ -1,6 +1,6 @@
 # Claude Player
 
-A Forge mod for Minecraft 1.20.1 that adds a player named Claude. Allowlisted players give orders in chat (`claude: come here`). The mod sends the order and a snapshot of the world to Claude through the Messages API. Claude answers with tool calls, which run at 3 actions per second, and reports back in chat. Its caution level (0 to 5) decides when it may fight, and the code enforces that, not the prompt.
+A Forge mod for Minecraft 1.20.1 that adds a player named Claude. Allowlisted players give orders in chat (`C come here`). The mod sends the order and a snapshot of the world to Claude through the Messages API. Claude answers with tool calls, which run at 3 actions per second, and reports back in chat. Its caution level (0 to 5) decides when it may fight, and the code enforces that, not the prompt.
 
 Status: skeleton, rules and brain are built and unit-tested. Nothing has run in game yet; see `docs/claude-player-handoff.md`.
 
@@ -25,7 +25,7 @@ One command for all of it: `./gradlew runClient -Pquickstart="Claude Test"` open
 | `/cp keycheck` | ops, allowlisted | Free API call that checks the key and model |
 | `/cp level <0-5>` | ops | Set the caution level |
 
-Chat, from allowlisted players: `claude: <order>`, `claude: stop`, `claude: respawn`, `claude: level <0-5>`, and `claude: demo` (walks a small square with no API call).
+Chat, from allowlisted players (a capital C and a space; `Claude:` works too): `C <order>`, `C stop`, `C respawn`, `C level <0-5>`, and `C demo` (walks a small square with no API call).
 
 Caution levels: 0 guns blazing, 1 bloodthirsty, 2 ready and willing, 3 reasonable (default), 4 cornered animal, 5 innocent. Players are never attacked at any level.
 

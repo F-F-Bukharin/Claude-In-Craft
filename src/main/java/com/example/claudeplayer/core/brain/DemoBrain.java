@@ -10,7 +10,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The plan's G1 stub brain: {@code claude: demo} walks a 3-block square through the real queue, executor and
+ * The plan's G1 stub brain: {@code C demo} walks a 3-block square through the real queue, executor and
  * body without calling the API, so pacing and movement can be checked before a key exists. Every other order
  * goes to {@code fallback}.
  */

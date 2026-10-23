@@ -30,12 +30,21 @@ public final class ChatIntake {
     private static final Pattern STOP = Pattern.compile("stop\\b.*");
     private static final Pattern LEVEL = Pattern.compile("(?:level|caution)\\s+([0-5])");
 
-    public static Intake classify(String sender, String message, String trigger, Collection<String> allowlist) {
-        if (message == null || trigger == null || trigger.isEmpty()) return IGNORE;
+    /** {@code triggers}: the configured one first, then aliases such as "Claude:". The first that matches wins. */
+    public static Intake classify(String sender, String message, Collection<String> triggers, Collection<String> allowlist) {
+        if (message == null) return IGNORE;
         String msg = message.strip();
-        if (!msg.regionMatches(true, 0, trigger, 0, trigger.length())) return IGNORE;
-        if (!allowed(sender, allowlist)) return IGNORE;
-        String body = WorldText.clean(msg.substring(trigger.length()), WorldText.ORDER_MAX);
+        int length = -1;
+        for (String trigger : triggers) {
+            if (matches(msg, trigger)) {
+                length = trigger.length();
+                break;
+            }
+        }
+        if (length < 0 || !allowed(sender, allowlist)) return IGNORE;
+        String rest = msg.substring(length).stripLeading();
+        if (rest.startsWith(":") || rest.startsWith(",")) rest = rest.substring(1); // "C: stop", "C, come here"
+        String body = WorldText.clean(rest, WorldText.ORDER_MAX);
         if (body.isEmpty()) return IGNORE;
         String lower = body.toLowerCase(Locale.ROOT);
         if (STOP.matcher(lower).matches()) return new Stop(sender);
@@ -43,6 +52,20 @@ public final class ChatIntake {
         Matcher level = LEVEL.matcher(lower);
         if (level.matches()) return new SetLevel(sender, CautionLevel.of(Integer.parseInt(level.group(1))));
         return new Order(sender, body);
+    }
+
+    /**
+     * A trigger ending in punctuation ("claude:") is a prefix in any case. One ending in a letter or digit ("C") is
+     * a word: exact case, then a space, ':' or ',' after it, so "C come here" counts and "Cool" or "c ya" don't.
+     */
+    static boolean matches(String msg, String trigger) {
+        if (trigger == null || trigger.isBlank()) return false;
+        if (!Character.isLetterOrDigit(trigger.charAt(trigger.length() - 1))) {
+            return msg.regionMatches(true, 0, trigger, 0, trigger.length());
+        }
+        if (!msg.startsWith(trigger) || msg.length() == trigger.length()) return false;
+        char next = msg.charAt(trigger.length());
+        return Character.isWhitespace(next) || next == ':' || next == ',';
     }
 
     /** Minecraft names are unique regardless of case, so the allowlist is too. */

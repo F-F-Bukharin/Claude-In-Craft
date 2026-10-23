@@ -153,7 +153,7 @@ public final class AgentRuntime {
         String name = player.getGameProfile().getName();
         List<String> allowlist = Config.allowlist();
         if (ChatIntake.allowed(name, allowlist)) conversation.add(name, raw);
-        ChatIntake.Intake intake = ChatIntake.classify(name, raw, settings.trigger(), allowlist);
+        ChatIntake.Intake intake = ChatIntake.classify(name, raw, settings.triggers(), allowlist);
         if (intake instanceof ChatIntake.Order order) {
             order(order.player(), order.text());
         } else if (intake instanceof ChatIntake.Stop) {
@@ -165,7 +165,7 @@ public final class AgentRuntime {
         }
     }
 
-    /** Kill switch, from {@code claude: stop} or {@code /cp stop}. */
+    /** Kill switch, from {@code C stop} or {@code /cp stop}. */
     public void halt() {
         loop.stop();
         navigator.stop(body.player());

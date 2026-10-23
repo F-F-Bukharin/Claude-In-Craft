@@ -45,7 +45,9 @@ public final class Config {
             .comment("The body's player name, 3 to 16 letters, digits or underscores.")
             .define("body_name", D.bodyName(), o -> o instanceof String s && s.matches("\\w{3,16}"));
     private static final ForgeConfigSpec.ConfigValue<String> TRIGGER = B
-            .comment("Chat prefix for orders.").define("trigger", D.trigger(), o -> o instanceof String s && !s.isBlank());
+            .comment("Chat prefix for orders. One ending in a letter, like C, must be typed in that case and followed by a space: \"C come here\".",
+                    "The body's name with a colon (\"Claude: come here\") always works too.")
+            .define("trigger", D.trigger(), o -> o instanceof String s && !s.isBlank());
     private static final ForgeConfigSpec.ConfigValue<List<? extends String>> ORDERS_ALLOWLIST = B
             .comment("Players allowed to give orders. Empty means nobody. Ops can edit it with /cp allow and /cp deny.")
             .defineListAllowEmpty("orders_allowlist", List.of(), o -> o instanceof String s && !s.isBlank());

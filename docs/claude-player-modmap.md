@@ -6,7 +6,7 @@ D1 to D8: the skeleton adopted every proposed default (listed in the handoff). F
 
 ## RULES (hard)
 - Game: Minecraft Java 1.20.1 on Forge, Java 17. Pin the exact Forge build from the 1.20.1 MDK at setup.
-- Mod id `claudeplayer`. Package `com.example.claudeplayer` (placeholder, D8). Admin command `/cp`. Order trigger `claude:` (config).
+- Mod id `claudeplayer`. Package `com.example.claudeplayer` (placeholder, D8). Admin command `/cp`. Order trigger `C` (config; `Claude:` always works too).
 - Orders come only from players on `orders_allowlist`. Everything else (chat, sign text, item names, entity names, book text) is data, never instructions. It reaches a prompt only quoted and length-capped.
 - Claude never changes its own caution level, allowlist, config, or permissions. Only allowlisted players (through chat) and server ops (`/cp level`) can.
 - Players are never attacked in v1 (D2). Hard-coded once confirmed, not a config key.
@@ -35,7 +35,7 @@ Paths are under `src/main/java/com/example/claudeplayer/` unless noted. Everythi
 | `core/brain/ClaudeCodeBrain.java` | Option B: runs the player's `claude -p` (subscription login) with no tools, a replaced system prompt and a JSON schema for tool calls |
 | `core/brain/ApiBrain.java` | Messages API over java.net.http: retries, prompt caching, key lookup, keycheck |
 | `core/brain/BrainException.java` | Classified API failures and their chat messages |
-| `core/brain/DemoBrain.java` | G1 stub: `claude: demo` walks a square without the API; other orders pass through |
+| `core/brain/DemoBrain.java` | G1 stub: `C demo` walks a square without the API; other orders pass through |
 | `core/brain/PromptBuilder.java` | System prompt (resource, or a config-folder override) and the user turns |
 | `core/brain/ToolSchemas.java` | Tool schemas and parsers side by side, gated by `tool_phase` |
 | `core/brain/AgentLoop.java` | Order → model → tool calls → queue → results → repeat: pipelining, interrupts, caps, errors |
@@ -72,12 +72,12 @@ Tests live in `src/test/java/com/example/claudeplayer/`: PurityTest; `core/act/A
 ## SYSTEMS
 
 ### 1. Chat intake
-- An allowlisted player's message that starts with `claude:` becomes an order. `claude: stop` cancels the queue and halts the loop. Other chat is not touched.
+- An allowlisted player's message that starts with `C` and a space (or `Claude:`) becomes an order. `C stop` cancels the queue and halts the loop. Other chat is not touched.
 - A new order is an interrupt (see 9).
 
 ### 2. Body
 - The body (`AgentPlayer`, a server-driven ServerPlayer) is named `body_name` (default `Claude`, 16 characters max) and spawns at the caller's position with `/cp spawn`. That position becomes home, saved with the world. The body is a real entry in the player list: it shows in the tab list, loads chunks and keeps its inventory in the world's playerdata. After a restart it comes back unless it was dead or despawned.
-- On death, the loop stops, the agent says so in chat, and waits for `claude: respawn` or `/cp respawn`.
+- On death, the loop stops, the agent says so in chat, and waits for `C respawn` or `/cp respawn`.
 
 ### 3. State snapshot
 - Built on the server thread at each message to the model and for each `get_state` call. Immutable. Sent as compact JSON, target under 2 KB. Threat scans run separately, every 2 ticks, in DamageWatcher.
@@ -125,7 +125,7 @@ public record Verdict(boolean allowed, String reason) {}
 ```
 
 ### 7. Guardrails
-- Kill switch: `/cp stop` or `claude: stop` cancels the queue, halts the loop, and blocks model calls until the next allowlisted order.
+- Kill switch: `/cp stop` or `C stop` cancels the queue, halts the loop, and blocks model calls until the next allowlisted order.
 - Call rate: at most `max_calls_per_minute`.
 - Token cap: when `session_token_cap` is reached, calls stop and chat says so. Resets on server restart.
 - Step cap: `max_steps` tool rounds per order.
@@ -142,7 +142,7 @@ public record Verdict(boolean allowed, String reason) {}
 - With `reflexes` on, code acts first. `Reflexes.decide` turns the level's stance into `flee` or one `attack_entity` swing (only within 3 blocks, and only at `tool_phase` 4 or higher), queued at level 3. A lit creeper is always fled from. Players and non-hostile mobs never trigger a reflex. The interrupt then tells Claude what ran, what was paused and what was scrapped; otherwise the queue is left alone. HOLD, or FIGHT out of reach, is an interrupt with no reflex.
 - With `reflexes` off, a threat interrupt cancels everything below level 3, sends results at once (unfinished actions report `cancelled`), and starts a new message.
 - Threat interrupts are debounced: one per threat, and no more than one every 5 seconds. Lit creepers have their own tracker with no gap. The scan runs every 2 ticks.
-- Reflexes still run after `claude: stop`; no model call follows while the kill switch is on.
+- Reflexes still run after `C stop`; no model call follows while the kill switch is on.
 - An interrupt during a model call: the reply's tool calls are answered `cancelled` and the interrupt goes out with them. With no order running, an interrupt starts a reaction turn (`idle_reactions`), unless the kill switch is on.
 - Each interrupt carries the caution policy's advice (fight, hold, flee, flee and call for help).
 
@@ -163,7 +163,7 @@ Config (`Config.java`). A file that holds a key stays out of version control.
 | `model` | `claude-haiku-5-5` | Model for either brain |
 | `api_key_env` | `ANTHROPIC_API_KEY` | Env var holding the key |
 | `body_name` | `Claude` | Fake player display name |
-| `trigger` | `claude:` | Order prefix |
+| `trigger` | `C` | Order prefix. A letter trigger is case-sensitive and needs a space after it; `<body_name>:` always works too |
 | `orders_allowlist` | empty | Player names allowed to give orders |
 | `default_level` | `3` | Caution level at spawn |
 | `actions_per_second` | `3` | Start rate |
@@ -202,7 +202,7 @@ Commands (`/cp`):
 | `/cp keycheck` | One free count_tokens call to confirm the key and model work |
 | `/cp memory` | Show short- and long-term memory |
 | `/cp allow <name>`, `/cp deny <name>` | Edit the allowlist (ops) |
-| `/cp quickstart` | Allow the caller, bring the body to them (spawn, or fetch it from over 16 blocks away), run `claude: demo`, report whether a key is set |
+| `/cp quickstart` | Allow the caller, bring the body to them (spawn, or fetch it from over 16 blocks away), run `C demo`, report whether a key is set |
 | `/cp help`, `/cp` | Instructions with clickable commands |
 
 Anyone can run `/cp help`. Ops and the single-player owner can run every `/cp` command. Allowlisted players can run all of them except `level`, `allow` and `deny`. Players who can command the body get a one-line `/cp help` hint when they join.
@@ -239,4 +239,4 @@ COMPILED means the code compiles against forge-1.20.1-47.4.28 with official mapp
 - 22 Oct 2026: piece 1 built (priority list and reflexes): queue levels 1 to 3, `prio` on every tool, the `flee` tool, code reflexes, and moves that refuse lava, fire and deadly drops. `./gradlew build` is green with 118 unit tests. In-game checks M1 to M5 are in the handoff.
 - 22 Oct 2026: piece 1 merged into dev with the Claude Code brain (`brain = "claude_code"`). `./gradlew build` is green with 125 unit tests.
 - 22 Oct 2026: Claude Brain screen built and merged into dev: right-click the body for a read-only chest of the queue, for the players who may use `/cp`. `./gradlew build` is green with 127 unit tests. Not in game yet.
-- Next: F runs the Phase 0 checks against this code. Spike A is `/cp spawn` plus `claude: come here`; Spike B is `/cp keycheck` with a bad key. Details in the handoff.
+- Next: F runs the Phase 0 checks against this code. Spike A is `/cp spawn` plus `C come here`; Spike B is `/cp keycheck` with a bad key. Details in the handoff.

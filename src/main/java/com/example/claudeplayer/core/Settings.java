@@ -23,6 +23,12 @@ public record Settings(
     public static final String BRAIN_API = "api";
     public static final Settings DEFAULTS = of(b -> {});
 
+    /** The configured trigger, then the body's name with a colon ("Claude:"), which always works too. */
+    public List<String> triggers() {
+        String byName = bodyName + ":";
+        return trigger.equalsIgnoreCase(byName) ? List.of(trigger) : List.of(trigger, byName);
+    }
+
     public boolean usesApi() {
         return BRAIN_API.equals(brain);
     }
@@ -50,7 +56,7 @@ public record Settings(
         public boolean promptCaching = true;
         public boolean logPrompts = false;
         public String bodyName = "Claude";
-        public String trigger = "claude:";
+        public String trigger = "C";
         public List<String> ordersAllowlist = List.of();
         public int defaultLevel = 3;
         public double actionsPerSecond = 3.0;
