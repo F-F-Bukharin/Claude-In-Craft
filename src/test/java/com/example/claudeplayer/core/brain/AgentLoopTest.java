@@ -475,6 +475,22 @@ class AgentLoopTest {
     }
 
     @Test
+    void aQuietReflexThatScrapsTheWholeBatchReportsItAtOnceWithNoInterrupt() {
+        build(b -> {});
+        script.add(tools(move("m"), say("s")));
+        script.add(text("Carrying on."));
+        loop.startOrder("F", "walk");
+        pump();
+        ticks(3); // m is running, s waits
+        loop.reflexQuiet(List.of(new Action.Flee()));
+        pump(); // no tick: the flee hasn't started, so only reflexQuiet's own progress check can report
+        assertEquals(2, requests.size(), "the scrapped batch went out without waiting for the flee");
+        assertEquals(List.of("scrapped", "scrapped"), results(1));
+        assertFalse(lastText(1).contains("INTERRUPT"), lastText(1));
+        assertFalse(lastText(1).contains("Reflex"), lastText(1));
+    }
+
+    @Test
     void aQuietReflexWhileIdleStartsNoReactionButRuns() {
         build(b -> {}); // idle_reactions on
         script.add(text("unused"));
