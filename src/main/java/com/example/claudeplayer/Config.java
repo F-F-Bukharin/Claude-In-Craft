@@ -80,8 +80,8 @@ public final class Config {
     private static final ForgeConfigSpec.IntValue ESCAPE_MAX_STEPS = B
             .defineInRange("escape_max_steps", D.escapeMaxSteps(), 2, 64);
     private static final ForgeConfigSpec.IntValue TOOL_PHASE = B
-            .comment("Highest plan phase whose tools Claude may call: 2 = v1 tools, memory and inspect_container;",
-                    "3 adds follow_player; 4 adds attack_entity; 6 adds the v2 world tools (stubs for now).")
+            .comment("Highest plan phase whose tools Claude may call: 2 = v1 tools, memory, containers, eat and follow_player;",
+                    "4 adds attack_entity; 6 adds the v2 world tools (stubs for now).")
             .defineInRange("tool_phase", D.toolPhase(), 1, 6);
     private static final ForgeConfigSpec.BooleanValue IDLE_REACTIONS = B
             .comment("Let Claude react to threats when no order is running. Costs model calls.")
@@ -89,6 +89,9 @@ public final class Config {
     private static final ForgeConfigSpec.BooleanValue REFLEXES = B
             .comment("Code reflexes: flee or fight by caution level, and refuse moves into lava, fire or deadly drops, before the model hears about it.")
             .define("reflexes", D.reflexes());
+    private static final ForgeConfigSpec.BooleanValue AUTO_EAT = B
+            .comment("Eat on its own when hungry, carrying food and nothing hostile is near. Costs no model calls.")
+            .define("auto_eat", D.autoEat());
     private static final ForgeConfigSpec.IntValue MEMORY_SHORT_CAPACITY = B
             .comment("Short-term notes kept at once; the oldest goes first.")
             .defineInRange("memory_short_capacity", D.shortTermCapacity(), 1, 256);
@@ -133,6 +136,7 @@ public final class Config {
             b.toolPhase = TOOL_PHASE.get();
             b.idleReactions = IDLE_REACTIONS.get();
             b.reflexes = REFLEXES.get();
+            b.autoEat = AUTO_EAT.get();
             b.shortTermCapacity = MEMORY_SHORT_CAPACITY.get();
             b.shortTermMinutes = MEMORY_SHORT_MINUTES.get();
             b.longTermCapacity = MEMORY_LONG_CAPACITY.get();

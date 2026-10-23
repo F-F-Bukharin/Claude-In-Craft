@@ -7,6 +7,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -71,10 +72,18 @@ public final class ToolSchemas {
         add("inspect_container", 2, "Look inside a chest, barrel or other container within 6 blocks. Returns its contents and notes them in short-term memory.",
                 in -> new Action.InspectContainer(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000)),
                 integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."));
-        // v2
-        add("follow_player", 3, "Follow a player, staying within about 3 blocks, for 1 to 60 seconds. Holds the queue.",
+        add("store", 2, "Put items from your inventory into a chest, barrel, furnace or other container within 6 blocks. item all stores everything except your held item, armor and food. Moves what fits and says so; the container's new contents go to short-term memory.",
+                in -> { String item = item(in); return new Action.Store(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000), item, count(in, item)); },
+                integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."), text("item", "Item id, for example oak_log, or all."), integer("count", "How many, 1 to 2304. Ignored for all."));
+        add("take", 2, "Take items from a chest, furnace (its output too) or other container within 6 blocks into your inventory. item all takes everything that fits. The container's new contents go to short-term memory.",
+                in -> { String item = item(in); return new Action.Take(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000), item, count(in, item)); },
+                integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."), text("item", "Item id, for example iron_ingot, or all."), integer("count", "How many, 1 to 2304. Ignored for all."));
+        add("eat", 2, "Eat the best food you carry; takes about 1.6 s. failed:not_hungry when food is full, failed:no_food when you have none. You also eat on your own when hungry and nothing is near.",
+                in -> new Action.Eat(false));
+        add("follow_player", 2, "Follow a player, staying within about 3 blocks, for 1 to 60 seconds. Holds the queue.",
                 in -> new Action.FollowPlayer(in.text("name", 16), in.number("seconds", 1, 60)),
                 text("name", "The player's name, as in world_state.players."), number("seconds", "How long, 1 to 60."));
+        // v2
         add("attack_entity", 4, "Attack one entity by its id from world_state.hostiles. Your caution level decides whether that's allowed; a denial says why.",
                 in -> new Action.AttackEntity(in.integer("entity_id", 0, Integer.MAX_VALUE)),
                 integer("entity_id", "The entity's id."));
@@ -134,6 +143,17 @@ public final class ToolSchemas {
         def.addProperty("description", description);
         def.add("input_schema", schema);
         definitions.add(def);
+    }
+
+    /** An item id for store and take, lower case and without the minecraft: prefix, or all. */
+    private static String item(Input in) {
+        String id = in.text("item", 64).toLowerCase(Locale.ROOT);
+        return id.startsWith("minecraft:") ? id.substring("minecraft:".length()) : id;
+    }
+
+    /** 1 to 2304 (a full inventory of 64-stacks); not read for all. */
+    private static int count(Input in, String item) {
+        return Action.ALL.equals(item) ? 0 : in.integer("count", 1, 2304);
     }
 
     private static Prop number(String name, String description) {

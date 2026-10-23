@@ -33,9 +33,21 @@ public sealed interface Action {
     /** Read-only look into a chest or other container; the game side also notes it in short-term memory. */
     record InspectContainer(int x, int y, int z) implements Action {}
 
-    // v2: schemas exist, hidden until tool_phase reaches them
+    /** The item for store and take that means every item; their count is then ignored (0). */
+    String ALL = "all";
+
+    /** Moves items from the inventory into a container; {@code item} is a short id (oak_log) or {@link #ALL}. */
+    record Store(int x, int y, int z, String item, int count) implements Action {}
+
+    /** Moves items from a container into the inventory; {@code item} is a short id (oak_log) or {@link #ALL}. */
+    record Take(int x, int y, int z, String item, int count) implements Action {}
+
+    /** Eats the best food carried. {@code auto}: queued by the auto-eat reflex, never by the model; it only adds a log line. */
+    record Eat(boolean auto) implements Action {}
+
     record FollowPlayer(String name, double seconds) implements Action {}
 
+    // v2: schemas exist, hidden until tool_phase reaches them
     record AttackEntity(int entityId) implements Action {}
 
     record MineBlock(int x, int y, int z) implements Action {}

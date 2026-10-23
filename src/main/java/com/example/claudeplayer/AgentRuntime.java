@@ -27,6 +27,7 @@ import com.example.claudeplayer.core.safety.CautionLevel;
 import com.example.claudeplayer.core.safety.Guardrails;
 import com.example.claudeplayer.core.safety.WorldText;
 import com.example.claudeplayer.event.DamageWatcher;
+import com.example.claudeplayer.event.HungerWatcher;
 import com.example.claudeplayer.nav.EscapePlanner;
 import com.example.claudeplayer.nav.Navigator;
 import com.mojang.logging.LogUtils;
@@ -71,6 +72,7 @@ public final class AgentRuntime {
     private final EscapePlanner escape;
     private final ActionQueue queue;
     private final DamageWatcher damage;
+    private final HungerWatcher hunger;
     private final ExecutorService brainThread;
     private final ApiBrain brain;
     private final ClaudeCodeBrain claudeCode;
@@ -95,6 +97,7 @@ public final class AgentRuntime {
         this.queue = new ActionQueue(settings.actionsPerSecond(), settings.actionTimeoutSeconds() * 20,
                 new MemoryActions(memory, new ActionExecutor(this)));
         this.damage = new DamageWatcher(this);
+        this.hunger = new HungerWatcher(this);
         this.brainThread = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "claudeplayer-brain");
             t.setDaemon(true);
@@ -136,6 +139,7 @@ public final class AgentRuntime {
         ticks++;
         body.tick();
         damage.tick(); // reflexes enqueue before the queue ticks, so a level-3 action starts this tick
+        hunger.tick();
         queue.tick();
         loop.tick();
         if (quickstartFor != null && ticks >= quickstartAt) {
