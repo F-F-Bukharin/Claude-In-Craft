@@ -9,7 +9,6 @@ import java.util.List;
 import net.minecraft.commands.arguments.EntityAnchorArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
@@ -44,8 +43,11 @@ public final class ActionExecutor implements ActionRunner {
         AgentPlayer p = rt.body().player();
         if (p == null) return Handle.done(ActionResult.failed("no_body"));
         // A sleeping body can't act: anything that does something wakes it first (AgentPlayer only catches timed actions).
+        // Looking, reading and stopping leave it in bed.
         if (p.isSleeping() && !(action instanceof Action.Sleep || action instanceof Action.Wait || action instanceof Action.GetState
-                || action instanceof Action.Look || action instanceof Action.See || action instanceof Action.Say)) {
+                || action instanceof Action.Look || action instanceof Action.See || action instanceof Action.Say
+                || action instanceof Action.Stop || action instanceof Action.Glance || action instanceof Action.InspectContainer
+                || action instanceof Action.TradeOffers)) {
             p.stopSleepInBed(true, true);
         }
         if (action instanceof Action.GetState) return Handle.done(ActionResult.ok(SnapshotBuilder.build(rt).toJson()));
@@ -144,8 +146,7 @@ public final class ActionExecutor implements ActionRunner {
         if (distance > ATTACK_REACH) return ActionResult.failed("out_of_reach");
         if (p.getAttackStrengthScale(0.5f) < 0.9f) return ActionResult.failed("cooldown");
         p.lookAt(EntityAnchorArgument.Anchor.EYES, target.getEyePosition());
-        p.attack(target);
-        p.swing(InteractionHand.MAIN_HAND, true);
+        Swing.hit(p, target); // no sweep onto bystanders
         return ActionResult.ok();
     }
 
