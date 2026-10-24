@@ -87,7 +87,7 @@ public final class ActionExecutor implements ActionRunner {
         if (action instanceof Action.Plant pl) return Handle.done(FarmActions.plant(p, pl));
         if (action instanceof Action.Harvest h) return new HarvestHandle(rt, p, h);
         if (action instanceof Action.UseBucket b) return Handle.done(farm.useBucket(p, new BlockPos(b.x(), b.y(), b.z()), b.fluid()));
-        if (action instanceof Action.Glance) return Handle.done(ActionResult.failed("no_client")); // the renderer comes in part 2
+        if (action instanceof Action.Glance) return GlanceHandle.start(rt, p);
         return Handle.done(ActionResult.failed("not_implemented"));
     }
 

@@ -31,6 +31,9 @@ Paths are under `src/main/java/com/example/claudeplayer/` unless noted. Everythi
 | `core/act/ActionResult.java` | `ok`, `denied:<why>`, `failed:<why>`, `cancelled`, `queued` |
 | `core/act/Gear.java` | Pure gear choice for `fight`: best weapon, armor pieces and shield from the inventory |
 | `core/act/VisionGate.java` | Glance admission: one per turn, then `vision_cooldown_seconds` |
+| `core/GlanceFrame.java` | Pure geometry of a glance picture: the larger 90° render, its 70° centre crop, and the 2×2 averaging |
+| `body/Glance.java`, `body/GlanceHandle.java` | glance's link to the game window (none on a dedicated server), and the action: asks for the picture, waits at most 2 s |
+| `client/GlanceRenderer.java` | Client-only off-screen render from the body's eyes on vanilla's panorama path, occlusion off for the section search, PNG out |
 | `core/brain/Images.java` | Image blocks for tool results, and log redaction of their base64 |
 | `core/safety/FightRules.java` | Pure fight step from CautionPolicy's verdict: strike, approach, the target left the level's range, or denied |
 | `body/FightHandle.java` | The fight routine: gear up, walk to the target, swing on cooldown, CautionPolicy before every swing; stops on lava, fire or a deadly drop |
@@ -218,6 +221,7 @@ Commands (`/cp`):
 | `/cp stop` | Halt now |
 | `/cp status` | Level, queue, calls and weighted tokens (the token cap's count) this session |
 | `/cp keycheck` | One free count_tokens call to confirm the key and model work |
+| `/cp glance` | Save what Claude sees as `<game dir>/claudeplayer/glance-<time>.png` (ops; skips the cooldown) |
 | `/cp memory` | Show short- and long-term memory |
 | `/cp allow <name>`, `/cp deny <name>` | Edit the allowlist (ops) |
 | `/cp quickstart` | Allow the caller, bring the body to them (spawn, or fetch it from over 16 blocks away), run `C demo`, report whether a key is set |
@@ -230,7 +234,7 @@ Dev launch: `./gradlew runClient -Pquickstart="World"` passes `--quickPlaySingle
 ## TOOLS (what Claude can call)
 Gated by `tool_phase` (default 2).
 - Phases 1 and 2, on by default: `get_state`, `look(radius)`, `see(direction?)` (text vision: a fan of 55 rays, 70 by 40 degrees, 32 blocks, from the eyes, plus entities in view; answers in under 1 KB with ores, containers and ripe crops first and exact; a direction other than `forward` turns the body first), `move_to(x, y, z)`, `flee`, `say(text)`, `wait(seconds)`, `stop`; memory `note`, `remember`, `forget`; containers `inspect_container`, `store(x,y,z,item,count)`, `take(x,y,z,item,count)`; `eat`, `follow_player(name, seconds)`; blocks `mine_block(x,y,z)`, `place_block(x,y,z,item)`, `equip(item)`; `craft(item, count)` (3x3 needs a table within 4.5), `smelt(item, count)` (loads a furnace and returns; collect with `take`); routines `gather(target, count)` (groups: log, stone, coal, iron, ...) and `dig(direction, length)` (tunnel or staircase, stops at fluids). Break rule: natural blocks anywhere, others only if Claude placed them. `inspect_container` reads the containers listed in `world_state.points` (within 6 blocks); an ender chest fails with `failed:ender_chest_personal`. `move_to` to a player uses the `pos` in `world_state.players`.
-- Also phase 2: farming `till`, `plant`, `harvest` (a routine that replants) and `use_bucket(x, y, z, fluid?)` (an optional `fluid`, water or lava, picks which bucket pours or fills; lava only in the work area, and `denied:lava_near_player` within 4 blocks of a player); `glance` (no arguments: a `vision_width`×`vision_height` PNG from the body's eyes for important moments; at most one per turn and one per `vision_cooldown_seconds`, enforced by `VisionGate` in AgentLoop; answers `failed:no_client` until the renderer, glance part 2, lands).
+- Also phase 2: farming `till`, `plant`, `harvest` (a routine that replants) and `use_bucket(x, y, z, fluid?)` (an optional `fluid`, water or lava, picks which bucket pours or fills; lava only in the work area, and `denied:lava_near_player` within 4 blocks of a player); `glance` (no arguments: a `vision_width`×`vision_height` PNG from the body's eyes for important moments; at most one per turn and one per `vision_cooldown_seconds`, enforced by `VisionGate` in AgentLoop; the host's game window renders it, so it fails with `no_client` on a dedicated server, `not_loaded` when the host's game hasn't loaded the body, or `render_timeout` after 2 s).
 - Phase 4: `attack_entity(entity_id)` (one swing) and `fight(entity_id)` (gear up, walk and swing until it ends), behind CautionPolicy.
 - Never tools: change caution level, edit the allowlist, run commands, touch config. ToolParseTest checks it.
 - Every tool takes an optional `prio`: 1 routine (default), 2 important (paused and resumed after danger), 3 safety. Only `flee`, `stop`, `attack_entity` and `fight` may ask for 3; anything else at 3 runs at 2, and a `prio_lowered` note goes out in the next turn.
@@ -262,4 +266,5 @@ COMPILED means the code compiles against forge-1.20.1-47.4.28 with official mapp
 - 23 Oct 2026: the Brain chest is replaced by a text panel (F's playtest). Right-click the body for the order header (wrapped, never cut), the running action, the waiting ones with their prio, paused ones marked, and Nothing queued when idle. It refreshes about once a second while open. Merged into dev, not pushed. `./gradlew build` is green with 214 unit tests. Not checked in game yet.
 - 23 Oct 2026: playtest 2 work merged into dev and pushed (`ca91c94`): level gaze and crops on the map, farming and buckets, `see`, `fight` with auto-gear, and glance part 1 (the model side). `./gradlew build` is green with 263 unit tests. Not checked in game yet.
 - 24 Oct 2026: fix round merged into dev: the small fixes (ender chest in store and take, `lava_near_player` denied, `use_bucket` fluid, auto-eat at 16 blocks straight-line, a snapshot size pin at 3108 bytes), the chase-heard remainder and the piece 1 follow-ups, and warm-session bugs 1, 2, 4 and 5. The standalone helper landed in `helper/`. `./gradlew build` is green with 282 unit tests, the helper's build with 57. Not checked in game yet.
-- Next: glance part 2 (the renderer), then F's playtest. Details in the handoff.
+- 24 Oct 2026: glance part 2 on `feat/glance-renderer`: the client renders the body's view off-screen on vanilla's panorama path, and `/cp glance` saves it. `./gradlew build` is green with 290 unit tests. Two model glances worked in F's playtest; `/cp glance` not tried yet.
+- Next: F's playtest, glance checks G1 to G5 included. Details in the handoff.

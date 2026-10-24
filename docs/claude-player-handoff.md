@@ -21,7 +21,7 @@ The one handoff. Updated 24 Oct 2026 (Opus 5.5), after the fix round and the sta
 - **Account:** F is on the Max plan (23 Oct).
 - **Gradle needs Java 17:** `export JAVA_HOME="/c/Program Files/Eclipse Adoptium/jdk-17.0.20.101-hotspot"`. The PATH Java is a 32-bit Java 8 that breaks Gradle.
 - **F's test profile:** `C:\Users\Huntress\curseforge\minecraft\Instances\Claude-In-Craft`.
-  - Its jar is from `4b9d9e2`, built in a clean checkout and installed 24 Oct (22:24). The old jar (from `1669171`) is in `<profile>\claudeplayer-jar-backups\`, outside `mods` so Forge doesn't load both.
+  - Its jar is the glance build (`feat/glance-renderer` on `ae7206b`, still uncommitted), installed 24 Oct (22:30). The earlier jars, from `4b9d9e2` and from `1669171`, are in `<profile>\claudeplayer-jar-backups\`, outside `mods` so Forge doesn't load both.
   - Its config has `trigger = "C"` and `tool_phase = 4` (attacks on).
   - Install by copying `build/libs/claudeplayer-0.1.0.jar` into its `mods` folder, only while the game is closed (Windows locks the jar).
 - **The game log** to read after F plays: `<profile>\logs\latest.log`. Look for `reflex` lines and `claude code reply ... tokens` lines.
@@ -35,15 +35,14 @@ The four 24 Oct builders' worktrees under `.claude/worktrees/` can be removed (`
 `feat/glance-vision` (at `78c0e13`) holds no code: its builder stopped while exploring. Its findings are in `glance-vision-report.md` in the 23 Oct session's scratchpad (`...\26f10b8d-daec-48fa-b2ce-a6b4c1252d3c\scratchpad\`).
 
 ## Next, in order
-1. **Glance part 2, the renderer.**
-   - Plugs in at `ActionExecutor` (the `Glance` branch): return `ActionResult.picture(png)` in place of `failed:no_client`, sized by `settings().visionWidth()`/`visionHeight()`. AgentLoop already admits at most one glance per turn and applies the cooldown (`VisionGate`), so the executor makes no gate calls.
-   - A client-only class behind `FMLEnvironment.dist == Dist.CLIENT`.
-   - The server thread asks the client thread (`Minecraft.getInstance().execute`) to render the level from the body's eyes (the client entity with the same network id) into an off-screen `TextureTarget` of `vision_width`×`vision_height`, with no HUD and no hand.
-   - Read it back to a PNG, restore the camera entity, the main target and the viewport, and hand the bytes back with `server.tell`. A 2 s `failed:render_timeout`; `failed:no_client` on a dedicated server; INFO log `glance WxH NB`.
-   - Also `/cp glance` (`isAdmin`), which saves `<game dir>/claudeplayer/glance-<time>.png` so F can check what Claude sees. It skips the gate.
-   - There are no decompiled sources in the Gradle cache; check signatures with `javap` on the mapped Forge jar: `~/.gradle/caches/forge_gradle/minecraft_user_repo/net/minecraftforge/forge/1.20.1-47.4.28_mapped_official_1.20.1/forge-1.20.1-47.4.28_mapped_official_1.20.1.jar`.
-   - If a clean off-screen render isn't possible in 1.20.1, say so; don't ship something half-working.
-   - Proven: Claude Code with the brain's lockdown flags takes a base64 PNG image block over stream-json mid-session, and Haiku 5.5 reads it. Image tokens are about w×h/750, so 320×180 is about 80 tokens.
+1. **Glance part 2, the renderer: built 24 Oct on `feat/glance-renderer`** (worktree `.claude/worktrees/glance-renderer`, on top of `dev` `ae7206b` with the attack fix, uncommitted until F's in-game check). `./gradlew build` green with 290 tests. In F's playtest (24 Oct, 13:03) the model glanced twice (`glance 320x180 81971B` and `93613B`, no errors in the log) and read the second picture right: "no farm or water canal exists here". `/cp glance` and checks G1 to G3 and G5 not run yet.
+   - How it renders: vanilla's panorama screenshot path (`Minecraft.grabPanoramixScreenshot`). Panoramic mode, an off-screen `TextureTarget`, the window size set to the target's, then `GameRenderer.renderLevel` with the body's client entity as the camera. Checked with `javap`: panoramic mode turns off entity outlines and Fabulous transparency, the only steps in `LevelRenderer.renderLevel` that rebind the main framebuffer; it also drops the hand. Forge still renders the host player when the camera is another entity.
+   - Panoramic mode fixes the field of view at 90°, so `core/GlanceFrame` renders larger, keeps a 70° centre and averages 2×2 pixels (about 917×516 for 320×180).
+   - Holes: the level renderer draws the sections a background search found from the player's camera, skipping what it can't see into. A capture turns occlusion off (`Minecraft.smartCull`) and asks for a new search, renders 4 client ticks (0.2 s) later, then turns it back on. So Claude in a tunnel with the player above still sees its tunnel.
+   - Put back after each render: the camera entity, the main camera (the sound listener reads it), the crosshair target, camera type, view bobbing, block outline, window size, and the main framebuffer.
+   - Codes: `failed:no_client` (dedicated server), `not_loaded` (the host's game hasn't loaded the body: too far, or another dimension), `render_timeout` (2 s), `render_error` (logged at WARN). INFO log `glance WxH NB`.
+   - `/cp glance` (ops, skips the cooldown) saves `<game dir>/claudeplayer/glance-<time>.png`; the file name in chat opens it.
+   - Watch: Fabulous graphics reloads its transparency shaders after every glance (a short hitch). The host's render distance limits what Claude can see. For one tick the frame does an extra level render.
    - Part 1 decisions for F to review: the cooldown starts at admission, so a failed glance still costs 15 s; a picture reported late forces one more model round.
 2. **Install and playtest:** the in-game checks below, plus farming, buckets, fight, `see` and `glance`.
 3. **A code-structure review on Fable** (F's idea, 24 Oct): a fresh reviewer that reads the code without the builders' framing, now that this round is in.
@@ -125,7 +124,12 @@ Early gates, done in F's CurseForge playtests (22 and 23 Oct): quickstart, the d
    - V2. Build a wall of 2 blocks with one gap, stand behind it, and say `C come here`. It should route through the gap.
    - V3. Ask for something wordy (`C tell me about yourself`). Chat shows at most two lines.
    - Existing config files keep their saved `trigger` until it is edited.
-6. **Vision.** `see`: `C what's in front of you?` near ores, a chest, ripe wheat; the answer should name them with distances. `glance` waits on part 2; until then it answers `failed:no_client`, and the model should say so plainly.
+6. **Vision.** `see`: `C what's in front of you?` near ores, a chest, ripe wheat; the answer should name them with distances. `glance`:
+   - G1. `/cp glance` with Claude a few blocks away, facing you: the file it names shows your character from Claude's eyes, no HUD and no hand, at 320×180.
+   - G2. Claude down a 1-wide tunnel or inside a closed room while you stand outside: the picture shows the tunnel or room walls, not sky or holes.
+   - G3. Third-person view (F5) and view bobbing on, and in Fabulous graphics: after `/cp glance` your own view, camera mode, crosshair target and sound come back unchanged.
+   - G4. `C there's a diamond block near you, take a glance` (place one first): the log shows `glance 320x180 ...B`, and Claude's answer matches the picture.
+   - G5. Walk 100+ blocks away from Claude, then `/cp glance`: "No picture: your game hasn't loaded where Claude is".
 7. **Brain panel.** Right-click the body.
    - B1. As an allowlisted player or an op: a small panel with the order header (`order from <you>: "..."`, wrapped), the running action, the waiting ones with their prio, and paused ones marked. `Nothing queued` when idle.
    - B2. As anyone else: nothing happens.

@@ -384,8 +384,8 @@ public final class AgentRuntime {
         return true;
     }
 
-    // server.tell always queues (execute would run inline on the server thread), and closed drops late results.
-    private void onMainThread(Runnable task) {
+    /** Runs {@code task} on the server thread, from any thread. server.tell always queues (execute would run inline on the server thread), and closed drops late results. */
+    public void onMainThread(Runnable task) {
         server.tell(new TickTask(server.getTickCount(), () -> {
             if (!closed) task.run();
         }));

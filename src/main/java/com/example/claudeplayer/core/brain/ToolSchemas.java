@@ -140,7 +140,7 @@ public final class ToolSchemas {
                 integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."),
                 optional(text("fluid", "water or lava: which bucket to pour. Leave it out for any full bucket.")));
         // vision
-        add("glance", 2, "Take a low-res picture of what you see right now. For important moments: a rare or valuable target, or a player asking you to look. It has a cooldown.",
+        add("glance", 2, "Take a low-res picture of what you see right now. For important moments: a rare or valuable target, or a player asking you to look. It has a cooldown. Fails with no_client (a server without a game window), not_loaded (the host's game hasn't loaded where you are) or render_timeout.",
                 in -> new Action.Glance());
     }
 
