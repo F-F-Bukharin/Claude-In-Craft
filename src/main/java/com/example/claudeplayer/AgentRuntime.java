@@ -368,6 +368,17 @@ public final class AgentRuntime {
         guardrails.resetTokens();
     }
 
+    /**
+     * /cp tokencompact: clears the hour's token count and collapses the running order's transcript into one short
+     * summary turn, so it goes on at once with a small prompt (a paused order resumes). No restart needed.
+     */
+    public String tokenCompact() {
+        guardrails.resetTokens();
+        return loop.compactNow()
+                ? "Token cap cleared. The order is compacted to one summary turn and goes on."
+                : "Token cap cleared. No order is running, so there was nothing to compact.";
+    }
+
     public Guardrails guardrails() {
         return guardrails;
     }

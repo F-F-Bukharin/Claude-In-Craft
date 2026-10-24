@@ -49,7 +49,7 @@ public final class Guardrails {
         spend.addLast(new Spend(clockMillis.getAsLong(), count));
     }
 
-    /** Clears the hour's tokens, so calls go on at once. Only /cp resetcap calls this. */
+    /** Clears the hour's tokens, so calls go on at once. Only /cp resetcap and /cp tokencompact call this. */
     public void resetTokens() {
         spend.clear();
     }
