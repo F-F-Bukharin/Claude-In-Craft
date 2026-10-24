@@ -2,8 +2,10 @@ package com.example.claudeplayer.core.brain;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.example.claudeplayer.core.Settings;
@@ -11,10 +13,13 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -23,7 +28,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -38,17 +50,52 @@ class ClaudeCodeSessionsTest {
     private final List<FakeProc> procs = Collections.synchronizedList(new ArrayList<>());
     private final Deque<List<String>> script = new ArrayDeque<>(); // the events answering each written line
     private final AtomicLong now = new AtomicLong(1_000_000);
+    private volatile boolean stallStdin; // the children never read their stdin
+    private final CountDownLatch writing = new CountDownLatch(1); // a write to a stalled child has begun
+    private final CountDownLatch lineRead = new CountDownLatch(1); // a child has read a whole line
+    private final AtomicInteger launches = new AtomicInteger();
+    private volatile int holdLaunch = -1; // this start (0 = the first) waits for startGate
+    private final CountDownLatch starting = new CountDownLatch(1); // the held start has begun
+    private final CountDownLatch startGate = new CountDownLatch(1);
 
     private ClaudeCodeBrain brain(int timeoutSeconds) {
+        return brain(timeoutSeconds, Runnable::run); // kills run at once, so the checks below see them
+    }
+
+    private ClaudeCodeBrain brain(int timeoutSeconds, Executor reaper) {
         Settings s = Settings.of(b -> {
             b.claudeCodePath = "claude-fake";
             b.claudeCodeTimeoutSeconds = timeoutSeconds;
         });
         return new ClaudeCodeBrain(s, dir, command -> {
+            if (launches.getAndIncrement() == holdLaunch) {
+                starting.countDown();
+                try {
+                    startGate.await();
+                } catch (InterruptedException e) {
+                    throw new InterruptedIOException();
+                }
+            }
             FakeProc p = new FakeProc();
             procs.add(p);
             return p;
-        }, now::get);
+        }, now::get, reaper);
+    }
+
+    /** Runs a model call on its own thread, as the brain thread would. */
+    private static Future<Brain.Reply> async(ClaudeCodeBrain brain, JsonArray messages) {
+        FutureTask<Brain.Reply> call = new FutureTask<>(() -> brain.send(request(messages)));
+        Thread t = new Thread(call, "test-brain");
+        t.setDaemon(true);
+        t.start();
+        return call;
+    }
+
+    private static void assertCancelled(Future<Brain.Reply> call) {
+        ExecutionException e = assertThrows(ExecutionException.class, () -> call.get(5, TimeUnit.SECONDS),
+                "the call ends with an error, not a reply");
+        BrainException b = assertInstanceOf(BrainException.class, e.getCause());
+        assertEquals(BrainException.Kind.INTERRUPTED, b.kind(), b.getMessage());
     }
 
     @Test
@@ -127,12 +174,103 @@ class ClaudeCodeSessionsTest {
     }
 
     @Test
+    void aResetBetweenCallsDoesntCancelTheNext() throws BrainException {
+        ClaudeCodeBrain brain = brain(5);
+        script.add(List.of(result(1, "[" + MOVE + "]")));
+        brain.send(request(opening()));
+        brain.reset();
+        script.add(List.of(result(1, "[" + MOVE + "]")));
+        assertEquals("tool_use", brain.send(request(opening())).stopReason());
+        assertEquals(1, procs.get(1).written.size(), "the new order took the spare");
+    }
+
+    @Test
+    void aResetWhileTheChildStartsCancelsTheCall() throws InterruptedException {
+        ClaudeCodeBrain brain = brain(5);
+        script.add(List.of(result(1, "[" + MOVE + "]")));
+        holdLaunch = 0;
+        Future<Brain.Reply> call = async(brain, opening());
+        assertTrue(starting.await(5, TimeUnit.SECONDS));
+        brain.reset();
+        startGate.countDown();
+        assertCancelled(call);
+        assertTrue(procs.get(0).written.isEmpty(), "the prompt never went out");
+        assertFalse(procs.get(0).alive, "the child is stopped");
+    }
+
+    @Test
+    void aResetMidWriteCancelsTheCall() throws InterruptedException {
+        ClaudeCodeBrain brain = brain(5);
+        stallStdin = true;
+        Future<Brain.Reply> call = async(brain, opening());
+        assertTrue(writing.await(5, TimeUnit.SECONDS));
+        brain.reset();
+        assertCancelled(call);
+        assertFalse(procs.get(0).alive);
+    }
+
+    @Test
+    void aResetWhileTheModelThinksCancelsTheCall() throws InterruptedException {
+        ClaudeCodeBrain brain = brain(5);
+        script.add(List.of("{\"type\":\"system\",\"subtype\":\"init\"}")); // read, but no answer yet
+        Future<Brain.Reply> call = async(brain, opening());
+        assertTrue(lineRead.await(5, TimeUnit.SECONDS));
+        brain.reset();
+        assertCancelled(call);
+        assertFalse(procs.get(0).alive);
+    }
+
+    @Test
+    void aResetAfterTheAnswerArrivedStillCancelsTheCall() throws InterruptedException {
+        ClaudeCodeBrain brain = brain(5);
+        script.add(List.of(result(1, "[" + MOVE + "]")));
+        holdLaunch = 1; // the next spare's start, after the prompt went out
+        Future<Brain.Reply> call = async(brain, opening());
+        assertTrue(starting.await(5, TimeUnit.SECONDS));
+        assertTrue(lineRead.await(5, TimeUnit.SECONDS));
+        brain.reset();
+        startGate.countDown();
+        assertCancelled(call);
+        assertFalse(procs.get(0).alive);
+        assertTrue(procs.get(1).alive, "the spare stays");
+    }
+
+    @Test
+    void aResetOnlyFlagsTheCallAndLeavesTheKillToTheReaper() throws InterruptedException {
+        BlockingQueue<Runnable> reaper = new LinkedBlockingQueue<>(); // the test runs the kills by hand
+        ClaudeCodeBrain brain = brain(5, reaper::add);
+        script.add(List.of("{\"type\":\"system\",\"subtype\":\"init\"}"));
+        Future<Brain.Reply> call = async(brain, opening());
+        assertTrue(lineRead.await(5, TimeUnit.SECONDS));
+
+        brain.reset(); // what AgentLoop.abandon does on the server thread
+
+        assertTrue(procs.get(0).alive, "no process walk or pid file on the resetting thread");
+        assertCancelled(call); // woken by the flag, not by the process dying
+        assertFalse(reaper.isEmpty(), "the kill waits for the reaper");
+        for (Runnable kill; (kill = reaper.poll()) != null; ) kill.run();
+        assertFalse(procs.get(0).alive, "the reaper stops it");
+        assertTrue(procs.get(1).alive, "the spare stays");
+    }
+
+    @Test
     void noResultInTimeIsATimeout() {
         ClaudeCodeBrain brain = brain(1);
         script.add(List.of("{\"type\":\"system\"}"));
         BrainException e = assertThrows(BrainException.class, () -> brain.send(request(opening())));
         assertEquals(BrainException.Kind.TIMEOUT, e.kind());
         assertFalse(procs.get(0).alive);
+    }
+
+    @Test
+    void aChildThatNeverReadsItsPromptTimesOut() {
+        ClaudeCodeBrain brain = brain(1);
+        stallStdin = true;
+        BrainException e = assertTimeoutPreemptively(Duration.ofSeconds(10),
+                () -> assertThrows(BrainException.class, () -> brain.send(request(opening()))),
+                "the timeout covers the write too");
+        assertEquals(BrainException.Kind.TIMEOUT, e.kind());
+        assertFalse(procs.get(0).alive, "the stalled child is killed");
     }
 
     @Test
@@ -157,6 +295,39 @@ class ClaudeCodeSessionsTest {
         brain.sweepIdle();
         assertFalse(procs.get(0).alive, "the session");
         assertFalse(procs.get(1).alive, "and the spare");
+    }
+
+    @Test
+    void theSweepNeverStopsTheSessionALaterTurnClaimed() throws BrainException {
+        ClaudeCodeBrain brain = brain(5);
+        script.add(List.of(result(1, "[" + MOVE + "]")));
+        JsonArray messages = opening();
+        Brain.Reply first = brain.send(request(messages));
+        now.addAndGet(10 * 60_000); // a long action: the session has idled the whole time
+        brain.picked = brain::sweepIdle;
+        script.add(List.of(result(1, "[" + MOVE + "]")));
+
+        Brain.Reply second = brain.send(request(next(messages, first, "update two")));
+
+        assertEquals("tool_use", second.stopReason());
+        assertEquals(2, procs.get(0).written.size(), "the claimed session answered");
+        assertTrue(procs.get(0).alive);
+    }
+
+    @Test
+    void theSweepNeverStopsTheSpareAnOpeningClaimed() throws BrainException {
+        ClaudeCodeBrain brain = brain(5);
+        brain.prewarm("You are Claude.", new JsonArray());
+        now.addAndGet(10 * 60_000 - 1); // the spare is a moment from idle
+        brain.picked = () -> {
+            now.addAndGet(2);
+            brain.sweepIdle();
+        };
+        script.add(List.of(result(1, "[" + MOVE + "]")));
+
+        assertEquals("tool_use", brain.send(request(opening())).stopReason());
+        assertEquals(1, procs.get(0).written.size(), "the opening went to the spare it took");
+        assertTrue(procs.get(0).alive);
     }
 
     @Test
@@ -256,12 +427,16 @@ class ClaudeCodeSessionsTest {
         }
     }
 
-    /** Answers each stdin line with the next scripted events. */
+    /**
+     * Answers each stdin line with the next scripted events. Like a real pipe, a write after {@link #kill} fails;
+     * with {@link #stallStdin} the child never reads, so a write blocks until the process is killed.
+     */
     private final class FakeProc implements ClaudeCodeSessions.Proc {
         static final String EXIT_WITH_ERROR = "exit";
         final List<String> written = Collections.synchronizedList(new ArrayList<>());
         final Pipe out = new Pipe();
         final Pipe err = new Pipe();
+        final CountDownLatch killed = new CountDownLatch(1);
         volatile boolean alive = true;
 
         @Override
@@ -270,14 +445,30 @@ class ClaudeCodeSessionsTest {
                 private final ByteArrayOutputStream line = new ByteArrayOutputStream();
 
                 @Override
-                public void write(int b) {
+                public void write(int b) throws IOException {
+                    if (stallStdin) {
+                        writing.countDown();
+                        try {
+                            killed.await();
+                        } catch (InterruptedException e) {
+                            throw new InterruptedIOException();
+                        }
+                    }
+                    if (!alive) throw new IOException("The pipe is being closed");
                     if (b != '\n') {
                         line.write(b);
                         return;
                     }
                     written.add(line.toString(StandardCharsets.UTF_8));
                     line.reset();
-                    List<String> events = script.poll();
+                    try {
+                        answer(script.poll());
+                    } finally {
+                        lineRead.countDown(); // after the answer is on stdout
+                    }
+                }
+
+                private void answer(List<String> events) {
                     if (events == null) return;
                     for (String e : events) {
                         if (e.equals(EXIT_WITH_ERROR)) {
@@ -313,6 +504,7 @@ class ClaudeCodeSessionsTest {
             alive = false;
             out.close0();
             err.close0();
+            killed.countDown();
         }
     }
 }
