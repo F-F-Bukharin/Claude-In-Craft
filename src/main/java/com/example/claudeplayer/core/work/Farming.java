@@ -1,44 +1,82 @@
 package com.example.claudeplayer.core.work;
 
 import java.util.Map;
-import java.util.Set;
 import java.util.stream.Collectors;
 
-/** till, plant and harvest's pure parts: which soil takes which item, what tills, when a crop is ripe. Ids are short (wheat_seeds). */
+/**
+ * harvest's pure parts: which blocks are crops, how each kind is harvested, when it is ripe, and what replants it.
+ * Ids are short (wheat_seeds). Soil rules for till and plant live in {@link Planting}.
+ */
 public final class Farming {
-    /** What a hoe turns into farmland (coarse and rooted dirt become dirt first, the vanilla way). */
-    private static final Set<String> TILLABLE = Set.of("dirt", "grass_block", "coarse_dirt", "rooted_dirt", "dirt_path");
-    private static final Set<String> CROP_SEEDS = Set.of("wheat_seeds", "carrot", "potato", "beetroot_seeds");
-    private static final Set<String> SAPLING_SOIL = Set.of("dirt", "grass_block", "coarse_dirt", "podzol", "rooted_dirt");
+    /** How a crop is harvested. */
+    public enum Kind {
+        /** Wheat, carrots, potatoes, beetroots, nether wart: break at max age, replant the seed. */
+        CROP,
+        /** Cocoa on a jungle log: break at age 2, replant the beans on the same log face. */
+        COCOA,
+        /** Sweet berry bush: use it at age 3 (it drops berries and goes back to age 1); never broken. */
+        BERRY_BUSH,
+        /** Melon and pumpkin: break the fruit an attached stem faces; the stem stays. */
+        FRUIT,
+        /** Sugar cane, cactus, bamboo: break the second block up; the bottom stays and regrows. */
+        COLUMN
+    }
+
     /** Crop block to the item that plants it again. */
     private static final Map<String, String> SEEDS = Map.of("wheat", "wheat_seeds", "carrots", "carrot", "potatoes", "potato",
-            "beetroots", "beetroot_seeds", "nether_wart", "nether_wart");
+            "beetroots", "beetroot_seeds", "nether_wart", "nether_wart", "cocoa", "cocoa_beans");
 
     private Farming() {}
 
-    /** CropBlock#isMaxAge, or the age property at its max for beetroot and nether wart. */
+    /** The harvest kind of this block, or null for blocks harvest leaves alone (stems, saplings, placed decoration ids). */
+    public static Kind kind(String blockId) {
+        return switch (blockId) {
+            case "wheat", "carrots", "potatoes", "beetroots", "nether_wart" -> Kind.CROP;
+            case "cocoa" -> Kind.COCOA;
+            case "sweet_berry_bush" -> Kind.BERRY_BUSH;
+            case "melon", "pumpkin" -> Kind.FRUIT;
+            case "sugar_cane", "cactus", "bamboo" -> Kind.COLUMN;
+            default -> null;
+        };
+    }
+
+    /** CropBlock#isMaxAge, or the age property at its max for beetroot, nether wart, cocoa and berry bushes. */
     public static boolean ripe(int age, int maxAge) {
         return age >= maxAge;
     }
 
-    public static boolean tillable(String blockId) {
-        return TILLABLE.contains(blockId);
+    /** Ripe by age: crops, cocoa and berry bushes at their max age. Fruits and columns have no age rule (cane's age is growth time). */
+    public static boolean ageRipe(String blockId, int age, int maxAge) {
+        Kind k = kind(blockId);
+        return (k == Kind.CROP || k == Kind.COCOA || k == Kind.BERRY_BUSH) && ripe(age, maxAge);
     }
 
-    /** Seeds for farmland, saplings, or nether wart. */
-    public static boolean plantable(String item) {
-        return CROP_SEEDS.contains(item) || item.endsWith("_sapling") || item.equals("nether_wart");
+    /** Whether this neighbour is the attached stem of this fruit (the caller checks the stem's FACING points at the fruit). */
+    public static boolean fruitAttached(String fruitId, String stemId) {
+        return kind(fruitId) == Kind.FRUIT && stemId.equals("attached_" + fruitId + "_stem");
     }
 
-    /** Whether this item may be planted on this soil block: crops on farmland, saplings on dirt or grass, wart on soul sand. */
-    public static boolean fits(String item, String soilId) {
-        if (CROP_SEEDS.contains(item)) return soilId.equals("farmland");
-        if (item.endsWith("_sapling")) return SAPLING_SOIL.contains(soilId);
-        if (item.equals("nether_wart")) return soilId.equals("soul_sand");
-        return false;
+    /** The cut for a column crop: this block is the second one up (the one below is the same plant, the one under that isn't). */
+    public static boolean cutPoint(String blockId, String belowId, String twoBelowId) {
+        return kind(blockId) == Kind.COLUMN && belowId.equals(blockId) && !twoBelowId.equals(blockId);
     }
 
-    /** The item that replants this crop block, or null for blocks harvest doesn't know. */
+    /** Only crops and cocoa are broken whole, so only they get a seed back. */
+    public static boolean replants(Kind kind) {
+        return kind == Kind.CROP || kind == Kind.COCOA;
+    }
+
+    /** A berry bush is picked by using it; everything else is broken. */
+    public static boolean usedNotBroken(Kind kind) {
+        return kind == Kind.BERRY_BUSH;
+    }
+
+    /** Blocks that hurt the body standing in or against them, so drops inside them are picked up from beside. */
+    public static boolean hurtsToStand(String blockId) {
+        return blockId.equals("sweet_berry_bush") || blockId.equals("cactus");
+    }
+
+    /** The item that replants this crop block, or null for blocks harvest doesn't replant. */
     public static String seedFor(String cropId) {
         return SEEDS.get(cropId);
     }
