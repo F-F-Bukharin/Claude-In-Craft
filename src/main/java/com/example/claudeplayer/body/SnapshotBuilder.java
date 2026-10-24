@@ -35,6 +35,7 @@ import net.minecraft.world.level.block.NetherWartBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.Vec3;
@@ -73,24 +74,54 @@ public final class SnapshotBuilder {
         for (Mob m : hostilesXZ(body, Math.max(radius * 1.5, hostileRange))) {
             if (Math.abs(m.getY() - body.getY()) <= MARKER_HEIGHT) markers.add(new WorldMap.Marker(m.getBlockX(), m.getBlockZ(), '!'));
         }
-        BlockPos.MutableBlockPos probe = new BlockPos.MutableBlockPos();
         BlockPos.MutableBlockPos columnProbe = new BlockPos.MutableBlockPos();
         // Level.getHeight does not load chunks (a missing chunk reads as the build floor); the isLoaded check is belt and braces.
         WorldMap.Heights heights = (x, z) -> world.isLoaded(columnProbe.set(x, feet.getY(), z))
                 ? world.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z) : Integer.MAX_VALUE;
-        return WorldMap.render((x, y, z) -> kind(world, probe.set(x, y, z)), heights, feet.getX(), feet.getY(), feet.getZ(), radius, markers);
+        return WorldMap.render(new MapReader(world), heights, feet.getX(), feet.getY(), feet.getZ(), radius, markers);
     }
 
-    private static WorldMap.Kind kind(ServerLevel world, BlockPos pos) {
-        if (!world.isLoaded(pos)) return WorldMap.Kind.UNKNOWN; // never load chunks just to draw the map
-        BlockState state = world.getBlockState(pos);
+    /**
+     * The map's block reads, through the last chunk looked up: a column's reads, and a coarse cell's, find their
+     * chunk once instead of on every read. Never loads a chunk (getChunkNow) and never creates a block entity.
+     */
+    private static final class MapReader implements WorldMap.Sampler {
+        private final ServerLevel world;
+        private final BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        private int chunkX = Integer.MIN_VALUE;
+        private int chunkZ = Integer.MIN_VALUE;
+        private @Nullable LevelChunk chunk;
+
+        MapReader(ServerLevel world) {
+            this.world = world;
+        }
+
+        @Override
+        public WorldMap.Kind at(int x, int y, int z) {
+            pos.set(x, y, z);
+            if (world.isOutsideBuildHeight(pos)) return WorldMap.Kind.UNKNOWN;
+            int cx = x >> 4;
+            int cz = z >> 4;
+            if (cx != chunkX || cz != chunkZ) {
+                chunkX = cx;
+                chunkZ = cz;
+                chunk = world.getChunkSource().getChunkNow(cx, cz);
+            }
+            return chunk == null ? WorldMap.Kind.UNKNOWN : kind(world, chunk, pos); // never load chunks just to draw the map
+        }
+    }
+
+    private static WorldMap.Kind kind(ServerLevel world, LevelChunk chunk, BlockPos pos) {
+        BlockState state = chunk.getBlockState(pos);
         FluidState fluid = state.getFluidState();
         if (fluid.is(FluidTags.LAVA)) return WorldMap.Kind.LAVA;
         if (fluid.is(FluidTags.WATER)) return WorldMap.Kind.WATER;
         if (state.is(Blocks.FIRE) || state.is(Blocks.SOUL_FIRE)) return WorldMap.Kind.LAVA; // drawn as L: just as deadly to walk into
         if (state.isAir()) return WorldMap.Kind.OPEN;
         if (state.is(BlockTags.LOGS) || state.is(BlockTags.LEAVES)) return WorldMap.Kind.TREE;
-        if (state.hasBlockEntity() && world.getBlockEntity(pos) instanceof Container) return WorldMap.Kind.CONTAINER;
+        if (state.hasBlockEntity() && chunk.getBlockEntity(pos, LevelChunk.EntityCreationType.CHECK) instanceof Container) {
+            return WorldMap.Kind.CONTAINER;
+        }
         if (state.is(Blocks.FARMLAND)) return WorldMap.Kind.FARMLAND;
         WorldMap.Kind crop = crop(state);
         if (crop != null) return crop;

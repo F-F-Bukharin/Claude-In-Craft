@@ -85,16 +85,31 @@ public final class Guardrails {
     /** Lava never goes this close to another player: "players are never attacked" covers lava too. */
     public static final double LAVA_PLAYER_GAP = 4;
 
+    /** Lava never goes within this many blocks (Chebyshev, flat) of the body's own feet. */
+    public static final int LAVA_SELF_GAP = 2;
+
+    /**
+     * How far a lava source flows on flat ground: LavaFluid#getDropOff is 2 levels a block (8, 6, 4, 2: 3 blocks), or
+     * 1 in an ultraWarm dimension such as the Nether (7 blocks).
+     */
+    public static int lavaSpread(boolean ultraWarm) {
+        return ultraWarm ? 7 : 3;
+    }
+
     /**
      * The pour rule for use_bucket: never into the body's own feet or head block; water anywhere else in reach; lava
-     * only within {@link #LAVA_AREA} of home and more than {@link #LAVA_PLAYER_GAP} from every other player.
-     * Distances in blocks, infinity for no home or no other player.
+     * only within {@link #LAVA_AREA} of home, not within {@link #LAVA_SELF_GAP} of the body's feet (from a block below
+     * the feet upward: lava poured overhead falls beside it), and more than {@link #LAVA_PLAYER_GAP} plus its
+     * {@link #lavaSpread} from every other player. dx, dy, dz: the target block minus the feet block. Distances in
+     * blocks, infinity for no home or no other player.
      */
-    public static ActionResult checkPour(boolean lava, boolean ownBlock, double fromHome, double nearestPlayer) {
+    public static ActionResult checkPour(boolean lava, boolean ownBlock, int dx, int dy, int dz, double fromHome,
+            double nearestPlayer, boolean ultraWarm) {
         if (ownBlock) return ActionResult.failed("own_block");
         if (!lava) return ActionResult.ok();
         if (!(fromHome <= LAVA_AREA)) return ActionResult.denied("outside_work_area");
-        if (nearestPlayer <= LAVA_PLAYER_GAP) return ActionResult.denied("lava_near_player");
+        if (Math.max(Math.abs(dx), Math.abs(dz)) <= LAVA_SELF_GAP && dy >= -1) return ActionResult.denied("too_close");
+        if (nearestPlayer <= LAVA_PLAYER_GAP + lavaSpread(ultraWarm)) return ActionResult.denied("lava_near_player");
         return ActionResult.ok();
     }
 

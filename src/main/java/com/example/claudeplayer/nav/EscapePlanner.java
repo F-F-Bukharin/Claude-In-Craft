@@ -18,7 +18,8 @@ import net.minecraft.world.phys.Vec3;
  * Answers "is there a way out?" for the caution policy, and "where to?" for flee: a path of at most
  * escape_max_steps to a spot at least escape_distance from EVERY threat. Candidates sit on a ring around the body,
  * aimed away from the whole crowd (not only the nearest threat) and ordered by {@link EscapeScore}; the best few are
- * path-checked with the same planner movement uses.
+ * path-checked with the same planner movement uses. A path whose nodes pass within {@link EscapeScore#PATH_GAP} of a
+ * threat ({@link EscapeScore#runsPast}) is refused: fleeing never runs past one.
  *
  * <p>Cost: at most {@link #MAX_SEARCHES} path searches per answer, and the answer is remembered for
  * {@link #CACHE_TICKS} server ticks while the body stays in its block and no threat changes block, so the several
@@ -75,7 +76,13 @@ public final class EscapePlanner {
             Node end = path.getEndNode();
             if (end == null) continue;
             Vec3 where = Navigator.center(end); // the end can differ from the aimed spot: check where it really is
-            if (EscapeScore.clear(where.x, where.z, crowd, escape)) return where;
+            if (!EscapeScore.clear(where.x, where.z, crowd, escape)) continue;
+            List<Point> nodes = new ArrayList<>(path.getNodeCount());
+            for (int i = 0; i < path.getNodeCount(); i++) {
+                Vec3 c = Navigator.center(path.getNode(i));
+                nodes.add(new Point(c.x, c.z));
+            }
+            if (!EscapeScore.runsPast(new Point(body.getX(), body.getZ()), nodes, crowd)) return where; // never past a threat
         }
         return null;
     }

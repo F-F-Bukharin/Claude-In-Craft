@@ -28,20 +28,46 @@ class SafetyTest {
     @Test
     void waterPoursAnywhereButIntoTheBody() {
         double none = Double.POSITIVE_INFINITY;
-        assertEquals("ok", Guardrails.checkPour(false, false, none, 1).code(), "far from home, beside a player: fine for water");
-        assertEquals("failed:own_block", Guardrails.checkPour(false, true, 0, none).code());
+        assertEquals("ok", Guardrails.checkPour(false, false, 3, 0, 0, none, 1, false).code(), "far from home, beside a player: fine for water");
+        assertEquals("ok", Guardrails.checkPour(false, false, 1, 0, 0, none, none, false).code(), "water right beside the feet is fine");
+        assertEquals("failed:own_block", Guardrails.checkPour(false, true, 0, 0, 0, 0, none, false).code());
     }
 
     @Test
     void lavaPoursOnlyInTheWorkAreaAndNeverNearAPlayer() {
         double none = Double.POSITIVE_INFINITY;
-        assertEquals("ok", Guardrails.checkPour(true, false, 10, none).code());
-        assertEquals("ok", Guardrails.checkPour(true, false, 32, 4.5).code());
-        assertEquals("denied:outside_work_area", Guardrails.checkPour(true, false, 33, none).code());
-        assertEquals("denied:outside_work_area", Guardrails.checkPour(true, false, none, none).code(), "no home, no lava");
-        assertEquals("denied:lava_near_player", Guardrails.checkPour(true, false, 10, 4).code());
-        assertEquals("denied:lava_near_player", Guardrails.checkPour(true, false, 10, 0.5).code());
-        assertEquals("failed:own_block", Guardrails.checkPour(true, true, 10, none).code());
+        assertEquals("ok", Guardrails.checkPour(true, false, 4, 0, 0, 10, none, false).code());
+        assertEquals("ok", Guardrails.checkPour(true, false, 4, 0, 0, 32, 7.5, false).code(), "past the gap plus the 3-block spread");
+        assertEquals("denied:outside_work_area", Guardrails.checkPour(true, false, 4, 0, 0, 33, none, false).code());
+        assertEquals("denied:outside_work_area", Guardrails.checkPour(true, false, 4, 0, 0, none, none, false).code(), "no home, no lava");
+        assertEquals("denied:lava_near_player", Guardrails.checkPour(true, false, 4, 0, 0, 10, 4, false).code());
+        assertEquals("denied:lava_near_player", Guardrails.checkPour(true, false, 4, 0, 0, 10, 0.5, false).code());
+        assertEquals("failed:own_block", Guardrails.checkPour(true, true, 0, 0, 0, 10, none, false).code());
+    }
+
+    @Test
+    void lavaKeepsItsSpreadAwayFromPlayers() {
+        assertEquals(3, Guardrails.lavaSpread(false), "overworld lava drops 2 levels a block: 3 blocks");
+        assertEquals(7, Guardrails.lavaSpread(true), "ultraWarm lava drops 1 level a block: 7 blocks");
+        assertEquals("denied:lava_near_player", Guardrails.checkPour(true, false, 4, 0, 0, 10, 4.5, false).code(), "4.5 is inside 4 + 3");
+        assertEquals("denied:lava_near_player", Guardrails.checkPour(true, false, 4, 0, 0, 10, 7, false).code());
+        assertEquals("ok", Guardrails.checkPour(true, false, 4, 0, 0, 10, 7.1, false).code());
+        assertEquals("denied:lava_near_player", Guardrails.checkPour(true, false, 4, 0, 0, 10, 10, true).code(), "the Nether: 4 + 7");
+        assertEquals("ok", Guardrails.checkPour(true, false, 4, 0, 0, 10, 11.5, true).code());
+    }
+
+    @Test
+    void lavaNeverGoesRightBesideTheBody() {
+        double none = Double.POSITIVE_INFINITY;
+        assertEquals("denied:too_close", Guardrails.checkPour(true, false, 1, 0, 0, 10, none, false).code());
+        assertEquals("denied:too_close", Guardrails.checkPour(true, false, 2, 0, -2, 10, none, false).code(), "Chebyshev 2");
+        assertEquals("denied:too_close", Guardrails.checkPour(true, false, -2, -1, 1, 10, none, false).code(), "a pit beside the floor");
+        assertEquals("denied:too_close", Guardrails.checkPour(true, false, 0, 1, 2, 10, none, false).code(), "head height");
+        assertEquals("denied:too_close", Guardrails.checkPour(true, false, 1, 2, 0, 10, none, false).code(), "above the head falls onto the feet");
+        assertEquals("ok", Guardrails.checkPour(true, false, 3, 0, 0, 10, none, false).code());
+        assertEquals("ok", Guardrails.checkPour(true, false, 1, -2, 1, 10, none, false).code(), "two below the feet");
+        assertEquals("denied:too_close", Guardrails.checkPour(true, false, 1, 4, 1, 10, none, false).code(), "poured overhead, it falls beside the body");
+        assertEquals("failed:own_block", Guardrails.checkPour(true, true, 0, 0, 0, 10, none, false).code(), "own block first");
     }
 
     @Test

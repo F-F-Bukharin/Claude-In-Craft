@@ -1,5 +1,6 @@
 package com.example.claudeplayer.core.work;
 
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -74,6 +75,23 @@ public final class Farming {
     /** Blocks that hurt the body standing in or against them, so drops inside them are picked up from beside. */
     public static boolean hurtsToStand(String blockId) {
         return blockId.equals("sweet_berry_bush") || blockId.equals("cactus");
+    }
+
+    /**
+     * Whether a drop is picked up from beside rather than walked onto: it lies in a cactus or berry bush, or one of its
+     * horizontal neighbours is one (walking onto it brushes the cactus or wades through the bush).
+     */
+    public static boolean awkwardDrop(String cellId, List<String> sideIds) {
+        if (hurtsToStand(cellId)) return true;
+        for (String side : sideIds) {
+            if (hurtsToStand(side)) return true;
+        }
+        return false;
+    }
+
+    /** Whether standing here touches a cactus: one of the horizontal neighbours is one (a berry bush only hurts from inside). */
+    public static boolean hurtsBeside(List<String> sideIds) {
+        return sideIds.contains("cactus");
     }
 
     /** The item that replants this crop block, or null for blocks harvest doesn't replant. */
