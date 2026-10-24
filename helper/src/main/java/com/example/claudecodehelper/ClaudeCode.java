@@ -27,7 +27,7 @@ import java.util.logging.Logger;
  * try (ClaudeCode cc = ClaudeCode.builder().model("claude-haiku-5-5").systemPrompt("Be brief.").build();
  *      ClaudeCode.Session chat = cc.open()) {
  *     System.out.println(chat.send("Name three colours.").text());
- *     System.out.println(chat.send("And three more.").text()); // same warm process, prompt cache hit
+ *     System.out.println(chat.send("And three more.").text()); // same warm process, no restart
  * }
  * }</pre>
  *

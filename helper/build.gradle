@@ -59,12 +59,17 @@ def helperZip = tasks.register('helperZip', Zip) {
     destinationDirectory = layout.buildDirectory.dir('distributions')
     into("claude-code-helper-${project.version}") {
         from(tasks.named('jar'))
+        // Line endings fixed here, whatever the checkout did: CRLF for Windows files, LF for the shell script.
         from('dist') {
             include 'HOW-IT-WORKS.txt', 'start-helper.bat'
+            filter(org.apache.tools.ant.filters.FixCrLfFilter,
+                    eol: org.apache.tools.ant.filters.FixCrLfFilter.CrLf.newInstance('crlf'))
         }
         from('dist') {
             include 'start-helper.sh'
             filePermissions { unix('rwxr-xr-x') }
+            filter(org.apache.tools.ant.filters.FixCrLfFilter,
+                    eol: org.apache.tools.ant.filters.FixCrLfFilter.CrLf.newInstance('lf'))
         }
     }
 }
