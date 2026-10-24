@@ -139,7 +139,9 @@ public final class DamageWatcher {
                 : CautionPolicy.advise(level, s).name().toLowerCase(Locale.ROOT).replace('_', ' ');
         String reason = what + " Caution level " + level.number() + " (" + level.title + ") says: " + stance + ".";
         if (threat == null) return new Pending(reason, List.of(), false, null);
-        Reflexes.Move move = Reflexes.decide(level, s, lit, rt.settings().toolPhase() >= 4);
+        int range = rt.settings().hostileRange();
+        if (s.targetHostile() && s.distance() > range) reason += " It is beyond " + range + " blocks: no reflex, flee and fight only see hostiles within that.";
+        Reflexes.Move move = Reflexes.decide(level, s, lit, rt.settings().toolPhase() >= 4, range);
         List<Action> actions = switch (move) {
             case FLEE -> List.of(new Action.Flee());
             case FIGHT -> List.of(new Action.Fight(threat.getId()));

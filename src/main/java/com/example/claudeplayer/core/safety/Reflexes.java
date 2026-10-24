@@ -40,6 +40,17 @@ public final class Reflexes {
     }
 
     /**
+     * {@link #decide} for a threat that may be beyond {@code hostileRange} (a hit from far off: a ghast's fireball,
+     * a long arrow). Such a threat gets NONE: flee and fight both work on the hostiles within range, so either move
+     * would only scrap work and then answer ok:no_threats or out_of_range. The model still hears the hit.
+     */
+    public static Move decide(CautionLevel level, CautionPolicy.Situation s, boolean litCreeper, boolean attacksEnabled,
+                              double hostileRange) {
+        if (s.distance() > hostileRange) return Move.NONE;
+        return decide(level, s, litCreeper, attacksEnabled);
+    }
+
+    /**
      * The chase rule: a flee ends after about 10 blocks and a threat is reported once, so a mob that keeps up gets
      * the decision re-run while no level 3 action is running, once {@code now} reaches the mob's {@code dueAt}
      * ({@link #chaseWait}). Only a mob the model {@code heard} about (its first reflex was delivered) can chase: a

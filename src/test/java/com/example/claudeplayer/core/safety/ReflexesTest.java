@@ -47,6 +47,17 @@ class ReflexesTest {
     }
 
     @Test
+    void aThreatBeyondHostileRangeGetsNoReflex() {
+        // flee and fight only work on hostiles within hostile_range: a ghast's fireball from 30 blocks would scrap
+        // routine work for a flee that answers ok:no_threats
+        assertEquals(Reflexes.Move.NONE, Reflexes.decide(CautionLevel.REASONABLE, s(30, 1.0, true), false, true, 16), "flee stance");
+        assertEquals(Reflexes.Move.NONE, Reflexes.decide(CautionLevel.INNOCENT, s(16.5, 0.2, true), false, true, 16));
+        assertEquals(Reflexes.Move.NONE, Reflexes.decide(CautionLevel.GUNS_BLAZING, s(20, 1.0, true), false, true, 16), "fight stance");
+        assertEquals(Reflexes.Move.FLEE, Reflexes.decide(CautionLevel.REASONABLE, s(16, 1.0, true), false, true, 16), "16 is in range");
+        assertEquals(Reflexes.Move.FIGHT, Reflexes.decide(CautionLevel.GUNS_BLAZING, s(14, 1.0, true), false, true, 16));
+    }
+
+    @Test
     void holdDoesNothing() {
         assertEquals(Reflexes.Move.NONE, Reflexes.decide(CautionLevel.READY, s(10, 1.0, true), false, true));
     }
