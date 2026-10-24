@@ -4,8 +4,12 @@ import com.example.claudeplayer.core.act.ActionResult;
 import com.example.claudeplayer.core.act.ActionRunner;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.pathfinder.Path;
+import net.minecraft.world.phys.Vec3;
 
-/** follow_player: keeps within about 3 blocks of the target, re-planning each second; ok when the time is up. */
+/**
+ * follow_player: keeps within about 3 blocks of the target, re-planning each second; ok when the time is up.
+ * failed:hazard_lava, hazard_fire or hazard_drop when the next step would be deadly (the body halts at the edge).
+ */
 final class FollowHandle implements ActionRunner.Handle {
     private static final double CLOSE_ENOUGH = 3.0;
     private static final int REPLAN_TICKS = 20;
@@ -50,7 +54,13 @@ final class FollowHandle implements ActionRunner.Handle {
             return null;
         }
         while (node < path.getNodeCount() && MoveHandle.reached(body, path.getNode(node))) node++;
-        Navigator.steer(body, node < path.getNodeCount() ? MoveHandle.center(path.getNode(node)) : target.position());
+        Vec3 point = node < path.getNodeCount() ? MoveHandle.center(path.getNode(node)) : target.position();
+        String hazard = MoveHandle.hazardAhead(body, point); // the same probe as move_to: the target may walk past lava
+        if (hazard != null) {
+            Navigator.halt(body);
+            return ActionResult.failed("hazard_" + hazard);
+        }
+        Navigator.steer(body, point);
         return null;
     }
 
