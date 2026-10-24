@@ -19,15 +19,22 @@ import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * see: a fan of rays from the eyes (11 across 70 degrees, 5 down 40 degrees, 32 blocks) plus the living things in
- * that cone with a clear line of sight. This only collects what was hit; Sight words it. Server thread only.
+ * see: a fan of rays from the eyes (21 across 70 degrees, 9 down 40 degrees, 96 blocks: 189 rays) plus the living things
+ * in that cone with a clear line of sight. This only collects what was hit; Sight words it. Server thread only.
+ *
+ * <p>Cost: each ray is one {@code level.clip}, which walks about one block per step, so a ray that hits nothing is up to
+ * ~100-200 block lookups and the fan is at most a few tens of thousands, once per see call (not measured in game). The
+ * rows are packed toward the horizon: flat ground at 96 blocks sits only about 1 degree below the eye line, so evenly
+ * spaced rows would reach it with just one ray. Ray spacing at 96 blocks is about 6 blocks across, and 4 to 10 blocks
+ * between rows from -5 degrees upward (wider below, where the ground is hit much nearer).
  */
 final class SeeActions {
-    private static final int ACROSS = 11;
-    private static final int DOWN = 5;
+    private static final int ACROSS = 21;
+    /** Pitch of each row in degrees from the look direction, up positive; all inside the 40 degree cone. Dense near and just below the horizon. */
+    private static final double[] ROW_PITCH = {-20, -10, -5, -2.5, 0, 3, 8, 14, 20};
     private static final double HALF_WIDTH = 35;
     private static final double HALF_HEIGHT = 20;
-    private static final double RANGE = 32;
+    private static final double RANGE = 96;
 
     private SeeActions() {}
 
@@ -43,9 +50,9 @@ final class SeeActions {
         List<Sight.Hit> hits = new ArrayList<>();
         for (int i = 0; i < ACROSS; i++) {
             double across = Math.tan(Math.toRadians(-HALF_WIDTH + 2 * HALF_WIDTH * i / (ACROSS - 1)));
-            for (int j = 0; j < DOWN; j++) {
-                double down = Math.tan(Math.toRadians(-HALF_HEIGHT + 2 * HALF_HEIGHT * j / (DOWN - 1)));
-                Vec3 ray = forward.add(right.scale(across)).add(up.scale(down)).normalize();
+            for (double pitch : ROW_PITCH) {
+                double upward = Math.tan(Math.toRadians(pitch));
+                Vec3 ray = forward.add(right.scale(across)).add(up.scale(upward)).normalize();
                 Sight.Hit hit = cast(level, p, eye, ray);
                 if (hit != null) hits.add(hit);
             }
@@ -55,28 +62,44 @@ final class SeeActions {
         AABB box = new AABB(eye, eye).inflate(RANGE);
         for (LivingEntity e : level.getEntitiesOfClass(LivingEntity.class, box, x -> x != p && x.isAlive())) {
             Vec3 to = e.getBoundingBox().getCenter().subtract(eye);
+            double length = to.length();
             double ahead = to.dot(forward);
-            if (ahead <= 0 || to.length() > RANGE) continue;
+            if (ahead <= 0 || length > RANGE) continue;
             if (Math.abs(Math.toDegrees(Math.atan2(to.dot(right), ahead))) > HALF_WIDTH) continue;
             if (Math.abs(Math.toDegrees(Math.atan2(to.dot(up), ahead))) > HALF_HEIGHT) continue;
+            // hasLineOfSight clips through the blocks in between: never let that load a chunk on the way
+            if (loadedReach(level, eye, to.scale(1 / length), length) < length) continue;
             if (!p.hasLineOfSight(e)) continue;
             BlockPos at = e.blockPosition();
             seen.add(new Sight.Seen(SnapshotBuilder.typeId(e), e.getId(), e instanceof Player pl ? pl.getGameProfile().getName() : null,
-                    to.length(), at.getX(), at.getY(), at.getZ()));
+                    length, at.getX(), at.getY(), at.getZ()));
         }
         String facing = direction.equals("up") || direction.equals("down") ? direction : Direction.fromYRot(p.getYRot()).getName();
-        return ActionResult.ok(Sight.format(facing, hits, seen));
+        return ActionResult.ok(Sight.format(facing, eye.x, eye.y, eye.z, hits, seen));
+    }
+
+    /**
+     * How far along the ray (up to {@code max}) every chunk it passes is loaded, sampled each block. Sight stops one block
+     * short of the first unloaded chunk it finds, so the clip never asks for one (a chunk corner cut in under a block can slip through).
+     */
+    private static double loadedReach(ServerLevel level, Vec3 eye, Vec3 ray, double max) {
+        int lastX = Integer.MIN_VALUE;
+        int lastZ = Integer.MIN_VALUE;
+        for (double d = 0; d <= max; d += 1) {
+            BlockPos at = BlockPos.containing(eye.add(ray.scale(d)));
+            int cx = at.getX() >> 4;
+            int cz = at.getZ() >> 4;
+            if (cx == lastX && cz == lastZ) continue; // same chunk as the last sample
+            if (!level.hasChunkAt(at)) return Math.max(0, d - 1);
+            lastX = cx;
+            lastZ = cz;
+        }
+        return max;
     }
 
     /** One ray. Outline shapes, so crops, signs and flowers show too; stops short of a chunk that isn't loaded (never loads one). */
     private static Sight.Hit cast(ServerLevel level, ServerPlayer p, Vec3 eye, Vec3 ray) {
-        double reach = RANGE;
-        for (double d = 0; d <= RANGE; d += 4) {
-            if (!level.hasChunkAt(BlockPos.containing(eye.add(ray.scale(d))))) {
-                reach = Math.max(0, d - 4);
-                break;
-            }
-        }
+        double reach = loadedReach(level, eye, ray, RANGE);
         BlockHitResult r = level.clip(new ClipContext(eye, eye.add(ray.scale(reach)), ClipContext.Block.OUTLINE, ClipContext.Fluid.ANY, p));
         if (r.getType() == HitResult.Type.MISS) return null;
         BlockPos pos = r.getBlockPos();
