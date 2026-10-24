@@ -35,6 +35,7 @@ import net.minecraft.world.level.pathfinder.Path;
 import net.minecraft.world.level.pathfinder.WalkNodeEvaluator;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
 
 /**
  * move_to: ok on arrival, failed:no_path if the planner can't reach it, failed:stuck when the body makes no progress
@@ -44,26 +45,32 @@ import net.minecraft.world.phys.Vec3;
  * <p>Beyond the plain walk: it heads straight for a later node when the line is safe ({@link PathSmoother}), sprints on
  * long straight runs ({@link Gait}), swims for the nearest dry node on the path and rises when air runs low, opens
  * wooden doors (and a fence gate that blocks the way) and closes what it opened once clear, and jumps up one-block
- * steps. {@link Progress} decides when a stall means a jump, a re-plan or giving up. The 0.8-block hazard probe runs
- * every tick before any of it takes effect.
+ * steps. {@link Progress} decides when a stall means a jump, a re-plan or giving up. The 0.8-block hazard probe (also
+ * about 1.2 ahead while sprinting, and the landing block of a step up) runs every tick before any of it takes effect.
  */
 final class MoveHandle implements ActionRunner.Handle {
     private static final double ARRIVE = 1.0;
     private static final double NODE_REACHED = 0.6;
     private static final double PROBE_AHEAD = 0.8;
+    /** Sprinting, the probe also looks {@code PROBE_AHEAD + PROBE_PER_SPEED * speed} ahead (blocks a tick)... */
+    private static final double PROBE_PER_SPEED = 1.2;
+    /** ... and at least this far: a sprint covers about 0.28 blocks a tick, more with a jump. */
+    private static final double PROBE_SPRINTING = 1.2;
     private static final int MAX_DROP = 24;
     /** A node this much above the feet needs a jump (a slab or stair step is 0.5 and doesn't). */
     private static final double STEP_UP = 0.5;
     /** ... once the body is within this many blocks of it. */
     private static final double STEP_NEAR = 1.6;
     private static final double DOOR_REACH = 2.4;
-    /** An opened door is closed once the body is this far (flat) from it. */
-    private static final double DOOR_CLEAR = 2.0;
+    /** An opened door is closed once the body is this far (flat) from it: past DOOR_REACH, so one tick never opens and closes it. */
+    private static final double DOOR_CLEAR = 3.0;
     /** When the move ends, a door is closed only if the body is at least this far from it. */
     private static final double DOOR_CLEAR_AT_END = 1.2;
-    /** Sprint safety is checked this many nodes ahead, and again when fewer than SPRINT_RESCAN remain checked. */
+    /** Sprint safety is checked this many nodes ahead, and checked again every SPRINT_RESCAN nodes, so it is never stale for long. */
     private static final int SPRINT_WINDOW = 24;
-    private static final int SPRINT_RESCAN = 8;
+    private static final int SPRINT_RESCAN = 3;
+    /** While swimming the body steers at most this many nodes ahead, so it follows the path round a bank, not through it. */
+    private static final int SWIM_STEER_AHEAD = 2;
     /** A drop of this many blocks beside or on a sprint run stops the sprint, whatever the hazard rules say. */
     private static final int SPRINT_DROP = 3;
     private static final int SWIM_EXIT_SCAN = 24;
@@ -86,7 +93,7 @@ final class MoveHandle implements ActionRunner.Handle {
     private int runEnd;
     private int exitFor = -1;
     private int exitIdx;
-    private int sprintCheckedTo = -1;
+    private int sprintCheckedFrom = -1;
     private int sprintCheckedRun = -1;
     private boolean sprintSafe;
 
@@ -150,7 +157,7 @@ final class MoveHandle implements ActionRunner.Handle {
         path = p;
         node = 0;
         aimFor = runFor = exitFor = -1;
-        sprintCheckedTo = sprintCheckedRun = -1;
+        sprintCheckedFrom = sprintCheckedRun = -1;
         List<Cell> list = new ArrayList<>(p.getNodeCount());
         for (int i = 0; i < p.getNodeCount(); i++) {
             Node n = p.getNode(i);
@@ -212,7 +219,11 @@ final class MoveHandle implements ActionRunner.Handle {
         return false;
     }
 
-    /** While swimming: the next path node on dry ground, or the target when the path has none. */
+    /**
+     * While swimming: a node at most {@link #SWIM_STEER_AHEAD} ahead, and no farther than the next path node on dry
+     * ground. Steering straight at a far exit (or the target) would cut through the bank; the exit only lets
+     * {@link #advance} skip the path's deep nodes.
+     */
     private Vec3 swimPoint() {
         int count = path.getNodeCount();
         if (node >= count) return target;
@@ -227,7 +238,9 @@ final class MoveHandle implements ActionRunner.Handle {
                 }
             }
         }
-        return exitIdx >= 0 ? center(path.getNode(exitIdx)) : target;
+        int steer = Math.min(count - 1, node + SWIM_STEER_AHEAD);
+        if (exitIdx >= 0) steer = Math.min(exitIdx, steer);
+        return center(path.getNode(steer));
     }
 
     private static boolean dry(ServerLevel level, Cell c) {
@@ -288,15 +301,17 @@ final class MoveHandle implements ActionRunner.Handle {
         return Gait.sprint(now, body.getFoodData().getFoodLevel(), body.isInWater(), remaining, hazardNear);
     }
 
-    /** Whether the next stretch of the straight run (and the blocks beside it) is free of lava, fire, drops and doors. */
+    /**
+     * Whether the next stretch of the straight run (and the blocks beside it) is free of lava, fire, drops and doors.
+     * Scanned again every {@link #SPRINT_RESCAN} nodes (about 125 block reads), so flowing lava or a broken floor
+     * ahead is seen within a few blocks, not a whole window later.
+     */
     private boolean runSafe() {
-        int window = Math.min(runEnd, node + SPRINT_WINDOW);
         boolean newRun = sprintCheckedRun != runEnd;
-        boolean windowRunningOut = node + SPRINT_RESCAN > sprintCheckedTo && sprintCheckedTo < runEnd;
-        if (newRun || windowRunningOut) {
+        if (newRun || node < sprintCheckedFrom || node >= sprintCheckedFrom + SPRINT_RESCAN) {
             sprintCheckedRun = runEnd;
-            sprintCheckedTo = window;
-            sprintSafe = scanRun(node, window);
+            sprintCheckedFrom = node;
+            sprintSafe = scanRun(node, Math.min(runEnd, node + SPRINT_WINDOW));
         }
         return sprintSafe;
     }
@@ -412,6 +427,7 @@ final class MoveHandle implements ActionRunner.Handle {
                 it.remove();
                 continue;
             }
+            if (!last && onNextNodes(pos)) continue; // still ahead on the route: closing it would only reopen it
             if (flat(body, Vec3.atCenterOf(pos)) >= (last ? DOOR_CLEAR_AT_END : DOOR_CLEAR)) {
                 use(level, pos);
                 it.remove();
@@ -421,27 +437,54 @@ final class MoveHandle implements ActionRunner.Handle {
         }
     }
 
+    /** Whether this door's lower or upper half stands on the next two path nodes, the ones {@link #openDoorsOnRoute} opens. */
+    private boolean onNextNodes(BlockPos lower) {
+        if (path == null) return false;
+        int count = path.getNodeCount();
+        for (int i = node; i < count && i <= node + 1; i++) {
+            Cell c = cells.get(i);
+            if (c.x() == lower.getX() && c.z() == lower.getZ() && (c.y() == lower.getY() || c.y() == lower.getY() + 1)) return true;
+        }
+        return false;
+    }
+
     // ---- the probe, shared with follow_player ----------------------------------------------------------------
 
     /**
      * Looks at the block the body is about to step into: "lava", "fire", "drop", or null when it is safe. Shared by
      * move_to and follow_player. Standing on a slab, stair or carpet puts the feet inside that block, so a feet block
-     * with a collision shape is the floor itself: no drop, and the ground under it doesn't count.
+     * with a collision shape is the floor itself: no drop, and the ground under it doesn't count. Sprinting, it also
+     * looks {@code PROBE_AHEAD + PROBE_PER_SPEED * speed} ahead (at least {@link #PROBE_SPRINTING}), since a sprint
+     * covers the plain 0.8 in about three ticks.
      */
     static @Nullable String hazardAhead(ServerPlayer body, Vec3 point) {
         double dx = point.x - body.getX();
         double dz = point.z - body.getZ();
         double length = Reflexes.horizontal(dx, dz);
         if (length < 0.01) return null;
+        ServerLevel level = body.serverLevel();
+        double hp = body.getHealth();
         BlockPos feet = BlockPos.containing(body.position().add(dx / length * PROBE_AHEAD, 0, dz / length * PROBE_AHEAD));
-        return hazardAt(body.serverLevel(), feet, body.getHealth());
+        String hazard = hazardAt(level, feet, hp);
+        if (hazard != null || !body.isSprinting()) return hazard;
+        Vec3 v = body.getDeltaMovement();
+        double ahead = Math.max(PROBE_SPRINTING, PROBE_AHEAD + PROBE_PER_SPEED * Reflexes.horizontal(v.x, v.z));
+        BlockPos far = BlockPos.containing(body.position().add(dx / length * ahead, 0, dz / length * ahead));
+        return far.equals(feet) ? null : hazardAt(level, far, hp);
     }
 
-    /** The hazard rules for a body whose feet would be in {@code feet}. */
+    /**
+     * The hazard rules for a body whose feet would be in {@code feet}. A feet block with a collision shape taller than
+     * a slab is a step up: the feet land in the block above it, so that block is judged for lava and fire too.
+     */
     static @Nullable String hazardAt(ServerLevel level, BlockPos feet, double hp) {
         BlockState feetState = level.getBlockState(feet);
-        if (!feetState.getCollisionShape(level, feet).isEmpty()) { // a partial block walked on, or a step up
-            return Reflexes.hazard(id(feetState), id(feetState), 0, false, hp);
+        VoxelShape shape = feetState.getCollisionShape(level, feet);
+        if (!shape.isEmpty()) { // a partial block walked on, or a step up
+            String here = Reflexes.hazard(id(feetState), id(feetState), 0, false, hp);
+            if (here != null || shape.max(Direction.Axis.Y) <= STEP_UP) return here;
+            BlockState landing = level.getBlockState(feet.above());
+            return Reflexes.hazard(id(landing), id(feetState), 0, false, hp);
         }
         BlockPos below = feet.below();
         int depth = 0;
