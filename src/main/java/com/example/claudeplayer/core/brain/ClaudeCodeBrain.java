@@ -19,6 +19,7 @@ import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
@@ -74,15 +75,17 @@ public final class ClaudeCodeBrain implements Brain {
         this.workDir = workDir;
         this.env = new ClaudeCodeEnv(workDir);
         env.killLeftovers();
-        this.sessions = new ClaudeCodeSessions(env, settings.claudeCodeIdleMinutes() * 60_000L, System::currentTimeMillis, true);
+        this.sessions = new ClaudeCodeSessions(env, settings.claudeCodeIdleMinutes() * 60_000L, System::currentTimeMillis,
+                true, ClaudeCodeSessions.reaper());
     }
 
-    /** Tests: scripted processes, a fake clock, and idle stops only when the test sweeps. */
-    ClaudeCodeBrain(Settings settings, Path workDir, ClaudeCodeSessions.Launcher launcher, LongSupplier clock) {
+    /** Tests: scripted processes, a fake clock, the test's reaper, and idle stops only when the test sweeps. */
+    ClaudeCodeBrain(Settings settings, Path workDir, ClaudeCodeSessions.Launcher launcher, LongSupplier clock,
+            Executor reaper) {
         this.settings = settings;
         this.workDir = workDir;
         this.env = new ClaudeCodeEnv(workDir);
-        this.sessions = new ClaudeCodeSessions(launcher, settings.claudeCodeIdleMinutes() * 60_000L, clock, false);
+        this.sessions = new ClaudeCodeSessions(launcher, settings.claudeCodeIdleMinutes() * 60_000L, clock, false, reaper);
     }
 
     @Override

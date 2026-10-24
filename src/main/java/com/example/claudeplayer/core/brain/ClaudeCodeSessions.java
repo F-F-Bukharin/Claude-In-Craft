@@ -13,10 +13,14 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,9 +31,11 @@ import org.slf4j.LoggerFactory;
  * startup. A spare whose command no longer matches (new system prompt or flags) is replaced; a process unused for
  * {@code idleMillis} is stopped.
  *
- * <p>Threading: {@link #take}, {@link #refill} and the session's turn run on the brain thread; {@link #endCurrent}
- * may come from the server thread. The lock only guards the two fields: process starts, reads and writes happen
- * outside it, so the server thread never waits on process I/O.
+ * <p>Threading: {@link #take}, {@link #refill} and the session's turn run on the brain thread (the prompt line goes
+ * out from a writer thread, so the turn's deadline covers it); {@link #endCurrent} may come from the server thread.
+ * The lock only guards the fields and claims: process starts, reads and writes happen outside it. Kills go to the
+ * reaper thread, so a reset on the server thread only flags the call and queues the kill: no process walk, no pid
+ * file, no stream another thread may be blocked on.
  */
 final class ClaudeCodeSessions {
     private static final Logger LOG = LoggerFactory.getLogger(ClaudeCodeSessions.class);
@@ -54,7 +60,10 @@ final class ClaudeCodeSessions {
 
         boolean alive();
 
-        /** Kills the process and its descendants. Never blocks on I/O. */
+        /**
+         * Kills the process and its descendants. May walk the process table and rewrite the pid file, so the
+         * sessions call it only from the reaper (or at shutdown), never from the server thread.
+         */
         void kill();
     }
 
@@ -88,6 +97,7 @@ final class ClaudeCodeSessions {
         private volatile String writeError;
         private volatile long lastUsed;
         private boolean claimed; // a call holds it: the sweep leaves it alone. Guarded by ClaudeCodeSessions.this
+        private final AtomicBoolean stopped = new AtomicBoolean(); // its kill is on its way
 
         private Session(Proc proc, List<String> command) {
             this.proc = proc;
@@ -163,6 +173,7 @@ final class ClaudeCodeSessions {
     private final long idleMillis;
     private final LongSupplier clock;
     private final boolean sweepInBackground;
+    private final Executor reaper;
     private Session current;
     private Session spare;
     private Turn turn; // the model call in flight
@@ -170,12 +181,25 @@ final class ClaudeCodeSessions {
     private ScheduledExecutorService sweeper;
     private volatile String rateLimitEvent;
 
-    /** {@code sweepInBackground} false leaves idle stops to whoever calls {@link #sweep} (tests). */
-    ClaudeCodeSessions(Launcher launcher, long idleMillis, LongSupplier clock, boolean sweepInBackground) {
+    /**
+     * {@code sweepInBackground} false leaves idle stops to whoever calls {@link #sweep} (tests). {@code reaper} runs
+     * the kills ({@link Proc#kill} walks the process table and rewrites the pid file), off the caller's thread.
+     */
+    ClaudeCodeSessions(Launcher launcher, long idleMillis, LongSupplier clock, boolean sweepInBackground, Executor reaper) {
         this.launcher = launcher;
         this.idleMillis = idleMillis;
         this.clock = clock;
         this.sweepInBackground = sweepInBackground;
+        this.reaper = reaper;
+    }
+
+    /** The production reaper: one daemon thread. */
+    static ExecutorService reaper() {
+        return Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "claudeplayer-cc-reaper");
+            t.setDaemon(true);
+            return t;
+        });
     }
 
     /** Starts a model call; from here until {@link #finish}, a {@link #endCurrent} cancels it. Brain thread. */
@@ -214,9 +238,9 @@ final class ClaudeCodeSessions {
             s = spare;
             spare = null;
         }
-        if (old != null) old.proc.kill();
+        if (old != null) stop(old);
         if (s != null && (!s.command.equals(command) || !s.proc.alive())) {
-            s.proc.kill();
+            stop(s);
             s = null;
         }
         if (s == null) {
@@ -239,7 +263,7 @@ final class ClaudeCodeSessions {
                 return s;
             }
         }
-        s.proc.kill();
+        stop(s);
         throw refused;
     }
 
@@ -262,7 +286,7 @@ final class ClaudeCodeSessions {
             stale = spare;
             spare = null;
         }
-        if (stale != null) stale.proc.kill();
+        if (stale != null) stop(stale);
         Session s;
         try {
             s = launch(command);
@@ -275,7 +299,7 @@ final class ClaudeCodeSessions {
             keep = !closed && spare == null;
             if (keep) spare = s;
         }
-        if (!keep) s.proc.kill();
+        if (!keep) stop(s);
     }
 
     /** Kills {@code s}, and forgets it if it is the current session. */
@@ -283,7 +307,7 @@ final class ClaudeCodeSessions {
         synchronized (this) {
             if (current == s) current = null;
         }
-        s.proc.kill();
+        stop(s);
     }
 
     /** Cancels the call in flight, if any, and kills the current session, not the spare. Safe from any thread. */
@@ -296,8 +320,8 @@ final class ClaudeCodeSessions {
             waiting = cancelTurn();
         }
         if (waiting != null) waiting.lines.add(CANCELLED);
-        if (s != null) s.proc.kill();
-        if (waiting != null && waiting != s) waiting.proc.kill();
+        if (s != null) stop(s);
+        if (waiting != null && waiting != s) stop(waiting);
     }
 
     /** Marks the call in flight cancelled; returns the session it waits on, if it has one yet. */
@@ -307,6 +331,32 @@ final class ClaudeCodeSessions {
         Session s = turn.session;
         turn = null;
         return s;
+    }
+
+    /**
+     * Hands the kill of {@code s} to the reaper: {@link Proc#kill} walks the process table and rewrites the pid
+     * file, which must not run on the server thread (a reset comes from there). Once per session.
+     */
+    private void stop(Session s) {
+        if (!s.stopped.compareAndSet(false, true)) return;
+        try {
+            reaper.execute(() -> kill(s));
+        } catch (RejectedExecutionException e) {
+            kill(s); // the reaper is gone (shutdown): do it here
+        }
+    }
+
+    /** Shutdown: kills {@code s} on this thread, before the JVM can exit under the reaper. */
+    private void stopNow(Session s) {
+        if (s.stopped.compareAndSet(false, true)) kill(s);
+    }
+
+    private static void kill(Session s) {
+        try {
+            s.proc.kill();
+        } catch (RuntimeException e) {
+            LOG.warn("couldn't stop a Claude Code process: {}", e.toString());
+        }
     }
 
     private static BrainException cancelled() {
@@ -330,10 +380,11 @@ final class ClaudeCodeSessions {
                 current = null;
             }
         }
-        idle.forEach(s -> s.proc.kill());
+        idle.forEach(this::stop);
         if (!idle.isEmpty()) LOG.info("stopped {} idle Claude Code process(es)", idle.size());
     }
 
+    /** Server shutdown: cancels the call in flight and kills every process here and now; kills already queued still run. */
     void close() {
         Session a;
         Session b;
@@ -348,9 +399,10 @@ final class ClaudeCodeSessions {
             if (sweeper != null) sweeper.shutdownNow();
         }
         if (waiting != null) waiting.lines.add(CANCELLED);
-        if (a != null) a.proc.kill();
-        if (b != null) b.proc.kill();
-        if (waiting != null && waiting != a) waiting.proc.kill();
+        if (a != null) stopNow(a);
+        if (b != null) stopNow(b);
+        if (waiting != null && waiting != a) stopNow(waiting);
+        if (reaper instanceof ExecutorService service) service.shutdown();
     }
 
     synchronized Session spare() {

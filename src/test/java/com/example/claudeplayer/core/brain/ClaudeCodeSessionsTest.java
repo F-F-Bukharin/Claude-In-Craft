@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -58,6 +59,10 @@ class ClaudeCodeSessionsTest {
     private final CountDownLatch startGate = new CountDownLatch(1);
 
     private ClaudeCodeBrain brain(int timeoutSeconds) {
+        return brain(timeoutSeconds, Runnable::run); // kills run at once, so the checks below see them
+    }
+
+    private ClaudeCodeBrain brain(int timeoutSeconds, Executor reaper) {
         Settings s = Settings.of(b -> {
             b.claudeCodePath = "claude-fake";
             b.claudeCodeTimeoutSeconds = timeoutSeconds;
@@ -74,7 +79,7 @@ class ClaudeCodeSessionsTest {
             FakeProc p = new FakeProc();
             procs.add(p);
             return p;
-        }, now::get);
+        }, now::get, reaper);
     }
 
     /** Runs a model call on its own thread, as the brain thread would. */
@@ -227,6 +232,24 @@ class ClaudeCodeSessionsTest {
         startGate.countDown();
         assertCancelled(call);
         assertFalse(procs.get(0).alive);
+        assertTrue(procs.get(1).alive, "the spare stays");
+    }
+
+    @Test
+    void aResetOnlyFlagsTheCallAndLeavesTheKillToTheReaper() throws InterruptedException {
+        BlockingQueue<Runnable> reaper = new LinkedBlockingQueue<>(); // the test runs the kills by hand
+        ClaudeCodeBrain brain = brain(5, reaper::add);
+        script.add(List.of("{\"type\":\"system\",\"subtype\":\"init\"}"));
+        Future<Brain.Reply> call = async(brain, opening());
+        assertTrue(lineRead.await(5, TimeUnit.SECONDS));
+
+        brain.reset(); // what AgentLoop.abandon does on the server thread
+
+        assertTrue(procs.get(0).alive, "no process walk or pid file on the resetting thread");
+        assertCancelled(call); // woken by the flag, not by the process dying
+        assertFalse(reaper.isEmpty(), "the kill waits for the reaper");
+        for (Runnable kill; (kill = reaper.poll()) != null; ) kill.run();
+        assertFalse(procs.get(0).alive, "the reaper stops it");
         assertTrue(procs.get(1).alive, "the spare stays");
     }
 
