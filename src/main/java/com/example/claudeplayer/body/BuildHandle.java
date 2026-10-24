@@ -26,7 +26,9 @@ import net.minecraft.world.phys.Vec3;
 
 /**
  * build: places the blocks in list order. A position that already holds its block is skipped; one out of reach is
- * walked to first, to a spot near it (never on it, never in a block still to come). Danger or low health stops the
+ * walked to first, to a spot near it (never on it, never in a block still to come), and placed as soon as the walk
+ * brings it into reach. A block more than 64 blocks away or in an unloaded chunk fails no_path up front, before any
+ * read. Danger or low health stops the
  * run the way gather does. Reports once: ok with how many were placed and skipped, or the failure code BuildPlan
  * gives with the progress. build_house runs its walls and roof through {@link #run}.
  */
@@ -77,14 +79,16 @@ final class BuildHandle implements ActionRunner.Handle {
         }
         if (walk != null) {
             ActionResult r = walk.poll();
+            if (r != null && r.isError() && r.reason().startsWith("hazard_")) return end(r.reason());
+            if (canPlaceFromHere(pos(blocks.get(index)))) { // in reach on the way, or on arrival: stop and place
+                walk = null;
+                rt.navigator().stop(body);
+                return place();
+            }
             if (r == null && ++walkTicks < BuildPlan.WALK_TICKS) return null;
             walk = null;
-            if (r != null && r.isError() && r.reason().startsWith("hazard_")) return end(r.reason());
-            if (r == null || r.isError() || !canPlaceFromHere(pos(blocks.get(index)))) {
-                rt.navigator().stop(body);
-                return nextSpot();
-            }
-            return place();
+            rt.navigator().stop(body);
+            return nextSpot();
         }
         while (index < blocks.size() && filled(blocks.get(index))) {
             pending.remove(spot(blocks.get(index)));
@@ -103,8 +107,14 @@ final class BuildHandle implements ActionRunner.Handle {
         return nextSpot();
     }
 
-    /** Before the first block: every item carried (unless its blocks are all there already) and every item a block. */
+    /**
+     * Before the first block: every position near and loaded (no_path otherwise, before the world is read there, so a
+     * far coordinate never loads or generates a chunk), every item carried (unless its blocks are all there already)
+     * and every item a block.
+     */
     private String check() {
+        String far = unreachable(body, blocks);
+        if (far != null) return far;
         Map<String, Integer> carried = new HashMap<>();
         Map<String, Item> items = new HashMap<>();
         for (ItemStack s : body.getInventory().items) {
@@ -119,6 +129,16 @@ final class BuildHandle implements ActionRunner.Handle {
             if (filled(b)) continue;
             if (!(items.get(b.item()) instanceof BlockItem)) return "not_a_block:" + b.item();
             pending.add(spot(b));
+        }
+        return null;
+    }
+
+    /** "no_path" when a block is {@link BuildPlan#tooFar} from the body or in a chunk that isn't loaded; null when all are fine. */
+    private static String unreachable(AgentPlayer body, List<Action.BuildBlock> blocks) {
+        if (BuildPlan.firstTooFar(blocks, body.getX(), body.getZ()) >= 0) return "no_path";
+        ServerLevel level = body.serverLevel();
+        for (Action.BuildBlock b : blocks) {
+            if (!level.hasChunk(b.x() >> 4, b.z() >> 4)) return "no_path";
         }
         return null;
     }

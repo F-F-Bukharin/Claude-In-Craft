@@ -22,6 +22,8 @@ public final class BuildPlan {
     public static final int WALK_TICKS = 300;
     /** Spots tried per block before it fails with no_path. */
     public static final int SPOT_TRIES = 3;
+    /** A planned block (or a house's site) this far from the body, on the ground, fails no_path before any read. */
+    public static final int MAX_DISTANCE = 64;
     private static final int BASE_TICKS = 400;
     private static final int PER_BLOCK_TICKS = 100;
 
@@ -93,6 +95,25 @@ public final class BuildPlan {
         double dy = s.y() - y;
         double dz = s.z() + 0.5 - z;
         return dx * dx + dy * dy + dz * dz;
+    }
+
+    /**
+     * A block farther than {@link #MAX_DISTANCE} on the ground (block centre to the body, height ignored): the game
+     * side refuses it before reading the world there, so a far coordinate can't make the server load or generate
+     * chunks while it checks.
+     */
+    public static boolean tooFar(int x, int z, double fromX, double fromZ) {
+        double dx = x + 0.5 - fromX;
+        double dz = z + 0.5 - fromZ;
+        return dx * dx + dz * dz > (double) MAX_DISTANCE * MAX_DISTANCE;
+    }
+
+    /** The list index of the first block {@link #tooFar} from the body, or -1. */
+    public static int firstTooFar(List<Action.BuildBlock> blocks, double fromX, double fromZ) {
+        for (int i = 0; i < blocks.size(); i++) {
+            if (tooFar(blocks.get(i).x(), blocks.get(i).z(), fromX, fromZ)) return i;
+        }
+        return -1;
     }
 
     /** "danger" when a hostile is within gather's danger range or health is below its low mark; null to keep going. */

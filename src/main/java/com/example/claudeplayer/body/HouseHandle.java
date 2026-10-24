@@ -7,6 +7,7 @@ import com.example.claudeplayer.core.act.ActionRunner;
 import com.example.claudeplayer.core.work.BuildPlan;
 import com.example.claudeplayer.core.work.GatherRule;
 import com.example.claudeplayer.core.work.HousePlan;
+import com.example.claudeplayer.nav.Navigator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,13 +39,24 @@ import net.minecraftforge.common.Tags;
  * BuildHandle raise the walls and roof (HousePlan's order), then, standing inside, places a bed it carries against
  * the back wall and makes it home, and last the door, facing out. Doors and beds take their facing from where the
  * body looks, so it places each from a spot in line with it (HousePlan) and sets the door's facing outright if it
- * still came out wrong. Reports once at the end.
+ * still came out wrong. move_to only gets within a block of that spot, so the body then steers onto its centre
+ * (HousePlan.STAND_TOLERANCE), which also keeps it out of the doorway and off the bed's cells. A site more than 64
+ * blocks away or not loaded fails no_path before anything there is read. Reports once at the end.
  */
 final class HouseHandle implements ActionRunner.Handle {
     private enum Phase { CHECK, BUILD, BED, DOOR }
 
     /** Walks to the bed's or door's spot before giving up with no_path. */
     private static final int WALK_TRIES = 2;
+    /** After each walk, ticks of steering straight onto the stand cell's centre before walking again. */
+    private static final int CENTRE_TICKS = 40;
+    /** Centring is tried only this close (flat) to the centre; farther, it walks. */
+    private static final double CENTRE_RANGE = 2.0;
+    /** The centring walk's forward input: this times the distance, at least the minimum, at most a full walk. */
+    private static final double CENTRE_GAIN = 1.5;
+    private static final double CENTRE_MIN_SPEED = 0.2;
+    /** Horizontal speed (blocks per tick) under which the body counts as standing still. */
+    private static final double STILL = 0.03;
 
     private final AgentRuntime rt;
     private final AgentPlayer body;
@@ -57,6 +69,8 @@ final class HouseHandle implements ActionRunner.Handle {
     private ActionRunner.Handle walk;
     private int walkTicks;
     private int walkTries;
+    /** Ticks spent centring on the stand cell, or -1 when not centring. */
+    private int centreTicks = -1;
 
     private HouseHandle(AgentRuntime rt, AgentPlayer body, Action.BuildHouse a) {
         this.rt = rt;
@@ -105,8 +119,20 @@ final class HouseHandle implements ActionRunner.Handle {
         }
     }
 
-    /** Material, count, door and site, in that order; null when the house can go up. */
+    /**
+     * Site near and loaded, then material, count, door and site, in that order; null when the house can go up. The
+     * first check comes before any world read, so a far coordinate never loads or generates a chunk.
+     */
     private ActionResult check() {
+        if (HousePlan.siteTooFar(a.x(), a.z(), body.getX(), body.getZ())) {
+            return ActionResult.failed("no_path", "the site is more than " + BuildPlan.MAX_DISTANCE + " blocks away");
+        }
+        ServerLevel level = body.serverLevel();
+        for (int[] corner : new int[][] {{0, 0}, {4, 0}, {0, 4}, {4, 4}}) { // a 5x5 site touches at most 4 chunks, each at a corner
+            if (!level.hasChunk((a.x() + corner[0]) >> 4, (a.z() + corner[1]) >> 4)) {
+                return ActionResult.failed("no_path", "the site isn't loaded");
+            }
+        }
         Map<String, Integer> carried = new HashMap<>();
         Map<String, Integer> candidates = new HashMap<>();
         for (ItemStack s : body.getInventory().items) {
@@ -117,7 +143,6 @@ final class HouseHandle implements ActionRunner.Handle {
         }
         material = a.material() != null ? a.material() : HousePlan.pickMaterial(candidates);
         if (material == null) return ActionResult.failed("missing_blocks", HousePlan.countText(HousePlan.BLOCKS, null, 0));
-        ServerLevel level = body.serverLevel();
         HousePlan.Site site = site(level);
         int needed = HousePlan.needed(HousePlan.blocks(a.x(), a.y(), a.z(), a.facing(), material), site);
         int have = carried.getOrDefault(material, 0);
@@ -212,25 +237,59 @@ final class HouseHandle implements ActionRunner.Handle {
         }
     }
 
-    /** Walks to {@code stand}; null while walking, no_path (or the hazard) when it can't get there. */
+    /**
+     * Walks to {@code stand}; null while walking, no_path (or the hazard) when it can't get there. move_to stops
+     * within a block of the target (and at once when it starts that close), so each walk is followed by a short,
+     * slow steer straight onto the cell's centre, which doesn't count as a try; only a centring that fails walks
+     * again.
+     */
     private ActionResult walkTo(HousePlan.Cell stand) {
-        if (walk == null) {
-            if (walkTries++ >= WALK_TRIES) return end("no_path");
-            walk = rt.navigator().moveTo(body, Vec3.atBottomCenterOf(pos(stand)));
-            walkTicks = 0;
+        Vec3 centre = Vec3.atBottomCenterOf(pos(stand));
+        if (walk != null) {
+            ActionResult r = walk.poll();
+            if (r == null && ++walkTicks < BuildPlan.WALK_TICKS) return null;
+            walk = null;
+            rt.navigator().stop(body);
+            if (r != null && r.isError() && r.reason().startsWith("hazard_")) return end(r.reason());
+            centreTicks = 0; // then centre, whatever the walk said: close enough is decided below
             return null;
         }
-        ActionResult r = walk.poll();
-        if (r == null && ++walkTicks < BuildPlan.WALK_TICKS) return null;
-        walk = null;
-        rt.navigator().stop(body);
-        if (r != null && r.isError() && r.reason().startsWith("hazard_")) return end(r.reason());
-        return null; // the next poll places if it got there, else walks again
+        boolean on = HousePlan.onStand(body.getX(), body.getY(), body.getZ(), stand);
+        if (centreTicks >= 0 || on) { // on the cell but still sliding (only at a phase's start) settles the same way
+            if (centreTicks < 0) centreTicks = 0;
+            double flat = Math.hypot(centre.x - body.getX(), centre.z - body.getZ());
+            if (centreTicks++ < CENTRE_TICKS && flat <= CENTRE_RANGE && Math.abs(body.getY() - stand.y()) < 1.0) {
+                if (on) { // let it come to a stop; standingOn decides next tick
+                    Navigator.halt(body);
+                    return null;
+                }
+                String hazard = Navigator.hazardAhead(body, centre);
+                if (hazard != null) return end("hazard_" + hazard);
+                Navigator.steer(body, centre);
+                body.zza = (float) Math.max(CENTRE_MIN_SPEED, Math.min(1.0, flat * CENTRE_GAIN)); // slow near the centre: no overshoot
+                body.setJumping(false);
+                return null;
+            }
+            Navigator.halt(body);
+            centreTicks = -1; // too far, or it didn't settle: walk again
+        }
+        if (walkTries++ >= WALK_TRIES) return end("no_path");
+        walk = rt.navigator().moveTo(body, centre);
+        walkTicks = 0;
+        return null;
     }
 
+    /**
+     * On the cell's centre (within {@link HousePlan#STAND_TOLERANCE}) and nearly still, so the aim from here gives the
+     * door or bed its facing and the body is clear of the cell it places into. Halts the body once it is.
+     */
     private boolean standingOn(HousePlan.Cell c) {
-        BlockPos feet = body.blockPosition();
-        return walk == null && feet.getX() == c.x() && feet.getZ() == c.z() && feet.getY() == c.y();
+        if (walk != null || !HousePlan.onStand(body.getX(), body.getY(), body.getZ(), c)) return false;
+        Navigator.halt(body);
+        Vec3 v = body.getDeltaMovement();
+        if (v.x * v.x + v.z * v.z > STILL * STILL) return false; // still sliding: the next tick decides
+        centreTicks = -1;
+        return true;
     }
 
     /** The head of the bed at the planned foot, or null when there is none. */
@@ -284,6 +343,6 @@ final class HouseHandle implements ActionRunner.Handle {
     /** The build's own limit plus time to walk in for the bed and the door. */
     @Override
     public int timeoutTicks() {
-        return BuildPlan.timeoutTicks(HousePlan.BLOCKS) + 2 * WALK_TRIES * BuildPlan.WALK_TICKS + 200;
+        return BuildPlan.timeoutTicks(HousePlan.BLOCKS) + 2 * (WALK_TRIES + 1) * (BuildPlan.WALK_TICKS + CENTRE_TICKS) + 200;
     }
 }

@@ -128,4 +128,16 @@ class BuildPlanTest {
         assertTrue(BuildPlan.timeoutTicks(71) > BuildPlan.limitTicks(71), "its own limit reports first");
         assertTrue(BuildPlan.limitTicks(1) >= 20 * 20, "at least 20 s for one block");
     }
+
+    @Test
+    void aBlockMoreThan64BlocksAwayIsTooFar() {
+        assertFalse(BuildPlan.tooFar(64, 0, 0.5, 0.5), "64 flat from the body is still near");
+        assertTrue(BuildPlan.tooFar(65, 0, 0.5, 0.5));
+        assertTrue(BuildPlan.tooFar(46, 46, 0.5, 0.5), "flat distance, not per axis");
+        assertFalse(BuildPlan.tooFar(-40, -40, 0.5, 0.5));
+        List<Action.BuildBlock> list = List.of(new Action.BuildBlock(1, 64, 1, "stone"),
+                new Action.BuildBlock(1, 300, 1, "stone"), new Action.BuildBlock(100, 64, 1, "stone"));
+        assertEquals(2, BuildPlan.firstTooFar(list, 0, 0), "height doesn't count, only the ground distance");
+        assertEquals(-1, BuildPlan.firstTooFar(list.subList(0, 2), 0, 0));
+    }
 }

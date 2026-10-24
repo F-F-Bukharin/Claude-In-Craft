@@ -20,6 +20,8 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Unit;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.ai.village.poi.PoiManager;
+import net.minecraft.world.entity.ai.village.poi.PoiTypes;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.ChunkPos;
@@ -89,15 +91,34 @@ final class SleepHandle implements ActionRunner.Handle {
 
     /** Bed heads within 16 of the body, nearest first, then the ones at home (in the home dimension). */
     private static List<BlockPos> candidates(AgentRuntime rt, AgentPlayer p, ServerLevel level) {
-        Set<BlockPos> found = new LinkedHashSet<>();
-        Map<Long, Boolean> loaded = new HashMap<>();
-        BlockPos feet = p.blockPosition();
-        found.addAll(bedsIn(level, loaded, feet, SEARCH, SEARCH, p.position(), SEARCH));
+        Set<BlockPos> found = new LinkedHashSet<>(bedsNear(level, p.blockPosition(), p.position()));
         BlockPos home = rt.data().home();
         if (home != null && level.dimension().equals(rt.data().homeDimension())) {
-            found.addAll(bedsIn(level, loaded, home, HOME_RADIUS, HOME_HEIGHT, p.position(), Double.POSITIVE_INFINITY));
+            found.addAll(bedsIn(level, new HashMap<>(), home, HOME_RADIUS, HOME_HEIGHT, p.position(), Double.POSITIVE_INFINITY));
         }
         return new ArrayList<>(found);
+    }
+
+    /**
+     * Bed heads within 16 of the body (and 16 up or down), nearest first, from the POI index vanilla keeps for beds
+     * (HOME, registered on the head) rather than a scan of 33x33x33 blocks. Only the chunks already loaded are asked,
+     * so no POI data is read from disk; each hit is checked against the block itself.
+     */
+    private static List<BlockPos> bedsNear(ServerLevel level, BlockPos feet, Vec3 from) {
+        PoiManager pois = level.getPoiManager();
+        List<BlockPos> beds = new ArrayList<>();
+        for (int cx = (feet.getX() - SEARCH) >> 4; cx <= (feet.getX() + SEARCH) >> 4; cx++) {
+            for (int cz = (feet.getZ() - SEARCH) >> 4; cz <= (feet.getZ() + SEARCH) >> 4; cz++) {
+                if (!level.hasChunk(cx, cz)) continue;
+                pois.getInChunk(type -> type.is(PoiTypes.HOME), new ChunkPos(cx, cz), PoiManager.Occupancy.ANY).forEach(poi -> {
+                    BlockPos pos = poi.getPos();
+                    if (Math.abs(pos.getY() - feet.getY()) > SEARCH || pos.distToCenterSqr(from) > (double) SEARCH * SEARCH) return;
+                    if (isHead(level.getBlockState(pos))) beds.add(pos.immutable());
+                });
+            }
+        }
+        beds.sort(Comparator.comparingDouble(pos -> pos.distToCenterSqr(from)));
+        return beds;
     }
 
     /** Bed heads in the box, within {@code maxDist} of {@code from}, nearest to it first. Unloaded chunks are left alone. */

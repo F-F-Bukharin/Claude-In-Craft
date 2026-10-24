@@ -29,7 +29,8 @@ import net.minecraft.world.phys.Vec3;
  * roam: walks out toward the directions least seen (RoamPlan picks the waypoints), looks around every few seconds and
  * writes what it sees as short-term notes (trees, ores in the open or at cave mouths, water, lava, villages, animals
  * by kind), turns back at half the time, and reports once at the start: ok with the finds. A waypoint it can't reach
- * is skipped; with none reachable at all it ends failed:no_path; a hostile close by ends it failed:danger with the
+ * is skipped; when it gives up with none reachable at all it ends failed:no_path (time running out before the first
+ * waypoint is still an ok roam: it walks back and reports what it saw); a hostile close by ends it failed:danger with the
  * finds so far. It never mines, places or attacks, and says nothing per step.
  */
 final class RoamHandle implements ActionRunner.Handle {
@@ -91,7 +92,7 @@ final class RoamHandle implements ActionRunner.Handle {
     private ActionResult pollOut() {
         if (walk == null) {
             waypoint = plan.next();
-            if (waypoint == null) return plan.reachedCount() == 0 ? noPath() : goHome();
+            if (waypoint == null) return goHome();
             Vec3 target = target(waypoint);
             if (target == null) {
                 plan.unreachable(waypoint);
@@ -113,8 +114,9 @@ final class RoamHandle implements ActionRunner.Handle {
         return null;
     }
 
+    /** Turns back to the start. no_path only when the plan gave up with nothing reached; time running out first is a roam. */
     private ActionResult goHome() {
-        if (plan.reachedCount() == 0) return noPath();
+        if (plan.noPath()) return noPath();
         homing = true;
         waypoint = null;
         walkTicks = 0;

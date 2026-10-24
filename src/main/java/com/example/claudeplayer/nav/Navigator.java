@@ -53,7 +53,7 @@ public final class Navigator {
      * a fence to the planner whatever it is told. The door flag is put back as it was before this returns, so the
      * plain call is never affected.
      */
-    @Nullable Path findPath(ServerPlayer body, BlockPos target, int accuracy, boolean throughDoors) {
+    public @Nullable Path findPath(ServerPlayer body, BlockPos target, int accuracy, boolean throughDoors) {
         Zombie z = planner(body.serverLevel());
         z.moveTo(body.getX(), body.getY(), body.getZ(), body.getYRot(), 0f);
         z.setOnGround(true);

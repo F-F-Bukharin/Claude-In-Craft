@@ -54,7 +54,8 @@ import net.minecraftforge.common.Tags;
  * to the end of the partial path and the next one plans again from there). With store it then puts the loot that
  * {@link StorePlan} picks into the chests, trapped chests and barrels within 6 blocks of home, nearest first,
  * through {@link ContainerActions}, and moves on to the next one when a container is full.
- * Fails no_home, no_path (also for a home in another dimension), no_container, danger, timeout, or hazard_*.
+ * Fails no_home, no_path (also for a home in another dimension), no_container, danger, timeout, hazard_* or died.
+ * Legs are planned through closed wooden doors, which the walk opens and closes behind it.
  * One report at the end; nothing is said per step.
  */
 final class HomeHandle implements ActionRunner.Handle {
@@ -145,7 +146,8 @@ final class HomeHandle implements ActionRunner.Handle {
     /** Starts the next leg: all the way when vanilla finds a full path, else to the end of the partial one. */
     private @Nullable ActionResult planLeg() {
         Vec3 homeAt = Vec3.atBottomCenterOf(home);
-        Path path = rt.navigator().findPath(body, home, 1);
+        // through closed wooden doors, as move_to walks (it opens them on the way): a bed indoors is a normal home
+        Path path = rt.navigator().findPath(body, home, 1, true);
         if (path == null) return end(ActionResult.failed("no_path", progress()));
         Vec3 goal = homeAt;
         if (!path.canReach()) {

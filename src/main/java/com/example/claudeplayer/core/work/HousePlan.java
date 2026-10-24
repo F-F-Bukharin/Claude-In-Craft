@@ -98,6 +98,26 @@ public final class HousePlan {
         return at(x, y, z, facing, 1, 1);
     }
 
+    /**
+     * How far (flat) the body may be from a stand cell's centre to count as on it. 0.2 keeps the 0.6-wide body inside
+     * the cell: any more and it reaches into the doorway, where a closed door's slab sits right against the stand
+     * cell, or into the bed's foot, and vanilla refuses the placement as obstructed.
+     */
+    public static final double STAND_TOLERANCE = 0.2;
+
+    /** Whether a body at x, y, z (feet) stands on {@code c}: within {@link #STAND_TOLERANCE} of its centre, feet in its block. */
+    public static boolean onStand(double x, double y, double z, Cell c) {
+        double dx = x - (c.x() + 0.5);
+        double dz = z - (c.z() + 0.5);
+        return dx * dx + dz * dz <= STAND_TOLERANCE * STAND_TOLERANCE && Math.floor(y + 1e-6) == c.y();
+    }
+
+    /** Whether any of the 5x5 site's corner columns is {@link BuildPlan#tooFar} from the body; the farthest point is a corner. */
+    public static boolean siteTooFar(int x, int z, double fromX, double fromZ) {
+        return BuildPlan.tooFar(x, z, fromX, fromZ) || BuildPlan.tooFar(x + 4, z, fromX, fromZ)
+                || BuildPlan.tooFar(x, z + 4, fromX, fromZ) || BuildPlan.tooFar(x + 4, z + 4, fromX, fromZ);
+    }
+
     /** The 16 cells of the outer ring at height y, walked clockwise from the north-west corner. */
     private static List<Cell> ring(int x0, int y, int z0, int size) {
         List<Cell> cells = new ArrayList<>();
