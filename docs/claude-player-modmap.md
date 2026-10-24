@@ -150,7 +150,7 @@ public record Verdict(boolean allowed, String reason) {}
 
 ### 9. Interrupts
 - Interrupts: a threat (a hostile within `hostile_range` in a straight line, height included, or any hit on the body), a new order, or `stop`.
-- With `reflexes` on, code acts first. `Reflexes.decide` turns the level's stance into `flee` or a FIGHT, which queues `fight` (the routine) at level 3; below `tool_phase` 4 a FIGHT becomes a flee. A lit creeper is always fled from. Players and non-hostile mobs never trigger a reflex. The interrupt then tells Claude what ran, what was paused and what was scrapped; otherwise the queue is left alone. HOLD is an interrupt with no reflex, and so is a hit from beyond `hostile_range` (a ghast): flee and fight only see hostiles within range.
+- With `reflexes` on, code acts first. `Reflexes.decide` turns the level's stance into `flee` or a FIGHT, which queues `fight` (the routine) at level 3; below `tool_phase` 4 (`Settings.ATTACK_PHASE`) a FIGHT becomes a flee, and the prompt, a level change, `/cp status` and the startup log say attacks are off. A lit creeper is always fled from. Players and non-hostile mobs never trigger a reflex. The interrupt then tells Claude what ran, what was paused and what was scrapped; otherwise the queue is left alone. HOLD is an interrupt with no reflex, and so is a hit from beyond `hostile_range` (a ghast): flee and fight only see hostiles within range.
 - With `reflexes` off, a threat interrupt cancels everything below level 3, sends results at once (unfinished actions report `cancelled`), and starts a new message.
 - Threat interrupts are debounced: one per threat, and no more than one every 5 seconds. Lit creepers have their own tracker with no gap. The scan runs every 2 ticks.
 - Chase rule: with `reflexes` on and no level 3 running or waiting, a hostile within 6 blocks that the model heard about (its first reflex was delivered) re-runs the reflex decision: 2 s after a move, 10 ticks after a NONE. A FLEE or FIGHT is queued as a reflex; NONE sends nothing. The rule is quiet: only the first reflex for a threat (the `near:`, `lit:` and `hit:` paths) tells the model. A re-fire only queues its level 3 actions, with no interrupt and no reaction call (`AgentLoop.reflexQuiet`).
@@ -196,7 +196,7 @@ Config (`Config.java`). A file that holds a key stays out of version control.
 | `prompt_caching` | `true` | Cache breakpoints on the system block and the newest turn |
 | `log_prompts` | `false` | Full request bodies at DEBUG |
 | `action_timeout_seconds` | `10` | Timed action timeout |
-| `tool_phase` | `2` | Highest plan phase whose tools Claude can call |
+| `tool_phase` | `2` | Highest plan phase whose tools Claude can call; attacks (`attack_entity`, `fight`) need 4 |
 | `idle_reactions` | `true` | React to threats with no order running |
 | `auto_eat` | `true` | Eat on its own when hungry and safe (no model call) |
 | `autonomy_interval_seconds` | `60` | At most one autonomous goal turn per interval |

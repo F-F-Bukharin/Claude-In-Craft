@@ -3,7 +3,7 @@
 The one handoff. Updated 24 Oct 2026 (Opus 5.5), after the fix round and the standalone helper. Read this first, then `CLAUDE.md`, then the modmap RULES.
 
 ## Where things stand
-- **GitHub:** `dev` is pushed (24 Oct) and matches `origin/dev`. `main` is still at `1669171` until F says to fast-forward it.
+- **GitHub:** `dev` holds two local commits on top of `origin/dev` (24 Oct): the attack fix (`4b9d9e2`) and these docs. Not pushed. `main` is still at `1669171` until F says to fast-forward it.
 - **The 24 Oct round, merged into `dev`:**
   - `fix/small-fixes`: ender chest refusal in `store` and `take`; `lava_near_player` is `denied:`; `use_bucket` takes an optional `fluid`; auto-eat counts hostiles within 16 blocks straight-line; a test pins a busy snapshot's JSON size.
   - `fix/reflex-followups`: the chase-heard remainder (F1 to F4) and every piece 1 follow-up (section below).
@@ -21,13 +21,16 @@ The one handoff. Updated 24 Oct 2026 (Opus 5.5), after the fix round and the sta
 - **Account:** F is on the Max plan (23 Oct).
 - **Gradle needs Java 17:** `export JAVA_HOME="/c/Program Files/Eclipse Adoptium/jdk-17.0.20.101-hotspot"`. The PATH Java is a 32-bit Java 8 that breaks Gradle.
 - **F's test profile:** `C:\Users\Huntress\curseforge\minecraft\Instances\Claude-In-Craft`.
-  - Its jar is from `1669171`, not current `dev`.
+  - Its jar is from `4b9d9e2`, built in a clean checkout and installed 24 Oct (22:24). The old jar (from `1669171`) is in `<profile>\claudeplayer-jar-backups\`, outside `mods` so Forge doesn't load both.
   - Its config has `trigger = "C"` and `tool_phase = 4` (attacks on).
   - Install by copying `build/libs/claudeplayer-0.1.0.jar` into its `mods` folder, only while the game is closed (Windows locks the jar).
 - **The game log** to read after F plays: `<profile>\logs\latest.log`. Look for `reflex` lines and `claude code reply ... tokens` lines.
 
 ## Work in flight
-Nothing. The 24 Oct builders' worktrees under `.claude/worktrees/` can be removed (`git worktree remove`); their branches are merged. Their reports are in session `02761c29`'s scratchpad: `C:\Users\Huntress\AppData\Local\Temp\claude\C--Users-Huntress--claude-spares-spare-ZmkL3R\02761c29-3a11-4d52-9219-e82b88985d0a\scratchpad\` (`small-fixes-report.md`, `reflex-followups-report.md`, `bridge-bugs-report.md`, `helper-report.md`).
+- `feat/glance-renderer`: glance part 2, built by F's fork session in `.claude/worktrees/glance-renderer` (uncommitted when this was written). It touches `AgentRuntime` (`onMainThread` public), `ClaudePlayerMod`, `ActionExecutor`, `CpCommands`, the glance line in `ToolSchemas`, and new `body/Glance*`, `client/GlanceRenderer`, `core/GlanceFrame`.
+- `fix/helper-round-2` (`7ecf304`): one helper commit left by a fix round that was stopped. It is not merged and won't be; F decides whether to delete it.
+
+The four 24 Oct builders' worktrees under `.claude/worktrees/` can be removed (`git worktree remove`); their branches are merged. Their reports are in session `02761c29`'s scratchpad: `C:\Users\Huntress\AppData\Local\Temp\claude\C--Users-Huntress--claude-spares-spare-ZmkL3R\02761c29-3a11-4d52-9219-e82b88985d0a\scratchpad\` (`small-fixes-report.md`, `reflex-followups-report.md`, `bridge-bugs-report.md`, `helper-report.md`).
 
 `feat/glance-vision` (at `78c0e13`) holds no code: its builder stopped while exploring. Its findings are in `glance-vision-report.md` in the 23 Oct session's scratchpad (`...\26f10b8d-daec-48fa-b2ce-a6b4c1252d3c\scratchpad\`).
 
@@ -177,10 +180,15 @@ For F's friend, who wants Claude without an API key and without the mod.
 
 Playtest 2 (23 Oct) asked for level gaze, crops on the map, farming, buckets, combat, vision and the text Brain panel; all are on dev now.
 
+**"Claude can't attack and always flees" (found 24 Oct in playtest 2's `latest.log`).** That session ran at `tool_phase = 3`; F raised it to 4 at 19:48, a minute after the log ends. Below 4, Claude has no attack tools ("my attack tool is unavailable") and every fight reflex is a flee, so `C level 1` changed nothing: `reflex FLEE` after every zombie. Nothing said why, and the prompt still told Claude to use `fight`. Fixed in `4b9d9e2`: with attacks off, the prompt says so and what an op must change, a level change and `/cp status` say it, and the startup log shows `attacks on` or `off`. The flee itself stays: without attacks, running is the safe fallback.
+- Check: at level 1, a zombie 10 blocks away gives `reflex FIGHT`, and the body gears up, walks in and fights. At level 3 it still flees while a path exists (by design).
+- Check: with `tool_phase = 3`, `C level 1` answers "Attacks are off (tool_phase 3 ...)", and asking Claude to fight gets the same explanation.
+
 ## Decisions
 - Stated by F (locked): plan §2.
 - D1 to D8: the skeleton follows every proposed default. That means the Messages API with a key; players never attacked and orders only from the allowlist; level 5 never swings; a 32-block work area; big-step planning; single-player first; mod id `claudeplayer`, package `com.example.claudeplayer`. F confirms or overrides each one here.
 - Git (D7): https://github.com/F-F-Bukharin/Claude-In-Craft, branches `main` and `dev`, MIT license (`LICENSE` and `mod_license`). Commits carry a `Co-Authored-By` trailer until F decides otherwise.
+- Open for F (24 Oct): `tool_phase` still defaults to 2, so a fresh install (a friend's, say) never fights until someone sets it to 4. F's profile already has 4.
 - Made during the build, for F to review:
   - The body is a server-driven `ServerPlayer` (`AgentPlayer`), not Forge's `FakePlayer`, which doesn't tick, can't be hurt and never dies. It counts as a real player (tab list, sleep vote).
   - Pure logic lives under `core/`, and PurityTest enforces it.
