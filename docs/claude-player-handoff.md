@@ -133,14 +133,7 @@ Early gates, done in F's CurseForge playtests (22 and 23 Oct): quickstart, the d
    - Watch in B1: a very long order makes a tall panel; check that it fits a small window.
 
 ## Piece 1 follow-ups
-From the final review. None blocks the in-game checks.
-- The model never hears a reflex's own outcome (`failed:no_escape`, `ok:no_threats`, `hazard_*`, a denied swing). Add a note when a `reflex-` entry ends in an error.
-- `abandon()` spares every level-3 entry, including the model's prio-3 calls for a dropped order; a leftover prio-3 `stop` would cancel the next order's batch. Spare only `reflex-` entries.
-- A second reflex during one model call overwrites the first in `interruptInFlight`. Append instead.
-- `follow_player` has no hazard check. Share MoveHandle's probe.
-- The prompt should say to give an approach and its attack the same prio, since higher levels run first.
-- A slab, stair or carpet walkway over a drop can read as `hazard_drop` at low HP.
-- A hit from beyond `hostile_range` (a ghast) builds a flee that scraps routine work, then returns `ok:no_threats`.
+Done on `fix/reflex-followups` (23 Oct), with the chase-heard remainder (F1 to F4): a failed reflex is a note in the next turn; a dropped order spares only `reflex-` entries; several reflexes during one call all go out; `follow_player` uses move_to's hazard probe; the prompt says to give an approach and its attack the same prio; a slab, stair or carpet under the feet is floor for the probe; a hit from beyond `hostile_range` gets no reflex. Not checked in game yet.
 
 ## Playtest 1 (22 Oct, CurseForge)
 
