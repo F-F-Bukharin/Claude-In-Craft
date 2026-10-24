@@ -35,6 +35,20 @@ public record Settings(
         return BRAIN_API.equals(brain);
     }
 
+    /** The tool_phase that unlocks attack_entity and fight; below it a fight reflex becomes a flee. */
+    public static final int ATTACK_PHASE = 4;
+
+    public boolean attacksEnabled() {
+        return toolPhase >= ATTACK_PHASE;
+    }
+
+    /** For players: why the body flees instead of fighting, or "" when attacks are on. */
+    public String attacksOffNote() {
+        if (attacksEnabled()) return "";
+        return "Attacks are off (tool_phase " + toolPhase + " in claudeplayer-common.toml; fighting needs " + ATTACK_PHASE
+                + "), so " + bodyName + " flees instead of fighting. A server op can raise it, then reload the world.";
+    }
+
     public Settings {
         ordersAllowlist = List.copyOf(ordersAllowlist);
     }

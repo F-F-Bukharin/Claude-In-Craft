@@ -115,8 +115,9 @@ public final class AgentRuntime {
         this.loop = new AgentLoop(settings, new DemoBrain(backend), brainThread, this::onMainThread, queue, guardrails, prompts,
                 tools, memory, new LoopHost(), System::currentTimeMillis);
         if (!settings.usesApi()) brainThread.execute(() -> claudeCode.prewarm(prompts.system(), tools.definitions()));
-        LOG.info("Claude Player ready: brain {}, model {}, caution level {}, {} allowlisted, {} long-term memories",
-                settings.brain(), settings.model(), level().number(), Config.allowlist().size(), memory.longTerm().size());
+        LOG.info("Claude Player ready: brain {}, model {}, caution level {}, attacks {} (tool_phase {}), {} allowlisted, {} long-term memories",
+                settings.brain(), settings.model(), level().number(), settings.attacksEnabled() ? "on" : "off",
+                settings.toolPhase(), Config.allowlist().size(), memory.longTerm().size());
     }
 
     public static @Nullable AgentRuntime get() {
@@ -184,6 +185,7 @@ public final class AgentRuntime {
     public String setLevel(CautionLevel level, String by) {
         data.setLevel(level.number());
         String msg = "Caution level " + level.number() + " (" + level.title + "), set by " + by + ".";
+        if (level != CautionLevel.INNOCENT && !settings.attacksEnabled()) msg += " " + settings.attacksOffNote(); // else "level 1" silently still flees
         notice(msg);
         return msg;
     }
@@ -301,8 +303,10 @@ public final class AgentRuntime {
     public String status() {
         String state = body.alive() ? "in the world" : body.dead() ? "dead" : "not spawned";
         CautionLevel l = level();
-        return String.format(Locale.ROOT, "%s is %s | caution %d (%s) | %s | %s | queue: %s, %d waiting | memory: %d short, %d long | %d calls, %d weighted tokens this session",
-                settings.bodyName(), state, l.number(), l.title, loop.status(), loop.autonomyStatus(),
+        return String.format(Locale.ROOT, "%s is %s | caution %d (%s)%s | %s | %s | queue: %s, %d waiting | memory: %d short, %d long | %d calls, %d weighted tokens this session",
+                settings.bodyName(), state, l.number(), l.title,
+                settings.attacksEnabled() ? "" : ", attacks off (tool_phase " + settings.toolPhase() + ")",
+                loop.status(), loop.autonomyStatus(),
                 Objects.requireNonNullElse(queue.runningTool(), "idle"), queue.waitingCount(),
                 memory.shortTerm().size(), memory.longTerm().size(), guardrails.callsMade(), guardrails.tokensUsed());
     }

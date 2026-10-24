@@ -37,7 +37,20 @@ public final class PromptBuilder {
                 .replace("{{trigger}}", settings.trigger())
                 .replace("{{short_minutes}}", String.valueOf(settings.shortTermMinutes()))
                 .replace("{{map_key}}", WorldMap.KEY)
-                .replace("{{levels}}", levels.toString().stripTrailing());
+                .replace("{{levels}}", levels.toString().stripTrailing())
+                .replace("{{attacks}}", attacks(settings));
+    }
+
+    /** How to fight, or, below the attack phase, that attacks are off: the prompt never offers a tool the list lacks. */
+    private static String attacks(Settings settings) {
+        if (settings.attacksEnabled()) {
+            return "attack_entity takes the ids listed in world_state.hostiles. Use fight for a whole fight: it gears up,"
+                    + " walks and swings by itself until it's done; attack_entity is a single swing.";
+        }
+        return "Attacks are switched off on this server (tool_phase " + settings.toolPhase() + "; fighting needs "
+                + Settings.ATTACK_PHASE + "): you have no attack actions, and when your caution level says fight, your"
+                + " body flees instead. If a player asks you to fight, say a server op must set tool_phase to "
+                + Settings.ATTACK_PHASE + " in claudeplayer-common.toml and reload the world.";
     }
 
     /** The prompt from {@code override} when that file exists, else the copy bundled in the jar. */

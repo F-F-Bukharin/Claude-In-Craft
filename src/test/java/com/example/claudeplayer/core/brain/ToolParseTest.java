@@ -143,6 +143,18 @@ class ToolParseTest {
     }
 
     @Test
+    void theAttackToolsAppearExactlyWhenTheSettingsSayAttacksAreOn() {
+        for (int phase = 1; phase <= 6; phase++) {
+            int p = phase;
+            List<String> names = new ArrayList<>();
+            for (JsonElement el : new ToolSchemas(phase).definitions()) names.add(el.getAsJsonObject().get("name").getAsString());
+            boolean on = com.example.claudeplayer.core.Settings.of(b -> b.toolPhase = p).attacksEnabled();
+            assertEquals(on, names.contains("attack_entity"), "phase " + phase);
+            assertEquals(on, names.contains("fight"), "phase " + phase);
+        }
+    }
+
+    @Test
     void seeTakesAnOptionalDirectionAndRejectsOthers() {
         assertEquals(new Action.See("forward"), v1.parse("see", json("{}")).action());
         assertEquals(new Action.See("forward"), v1.parse("see", json("{\"direction\":null}")).action());

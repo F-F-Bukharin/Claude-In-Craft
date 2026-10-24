@@ -1,5 +1,6 @@
 package com.example.claudeplayer.core.brain;
 
+import com.example.claudeplayer.core.Settings;
 import com.example.claudeplayer.core.Sight;
 import com.example.claudeplayer.core.act.Action;
 import com.example.claudeplayer.core.act.ActionResult;
@@ -94,11 +95,11 @@ public final class ToolSchemas {
                 in -> new Action.FollowPlayer(in.text("name", 16), in.number("seconds", 1, 60)),
                 text("name", "The player's name, as in world_state.players."), number("seconds", "How long, 1 to 60."));
         // v2
-        add("attack_entity", 4, "Attack one entity by its id from world_state.hostiles. Your caution level decides whether that's allowed; a denial says why.",
+        add("attack_entity", Settings.ATTACK_PHASE, "Attack one entity by its id from world_state.hostiles. Your caution level decides whether that's allowed; a denial says why.",
                 in -> new Action.AttackEntity(in.integer("entity_id", 0, Integer.MAX_VALUE)),
                 integer("entity_id", "The entity's id."));
         // combat
-        add("fight", 4, "Fight one hostile by its id until it's dead, you must stop, or it's out of your caution level's range. Gears up first. Reports once at the end.",
+        add("fight", Settings.ATTACK_PHASE, "Fight one hostile by its id until it's dead, you must stop, or it's out of your caution level's range. Gears up first. Reports once at the end.",
                 in -> new Action.Fight(in.integer("entity_id", 0, Integer.MAX_VALUE)),
                 integer("entity_id", "The hostile's id from world_state.hostiles."));
         add("mine_block", 2, "Dig out the block at a position within 4.5 blocks of your eyes, with the best tool you carry, then pick up what drops. Holds the queue while digging. Natural blocks (logs, leaves, stone, dirt, sand, gravel, ores, plants) can be mined anywhere; anything else only if you placed it. Fails with out_of_reach (walk closer first), no_block, too_slow (needs a better tool) or block_changed; denied:protected_block or denied:unbreakable.",

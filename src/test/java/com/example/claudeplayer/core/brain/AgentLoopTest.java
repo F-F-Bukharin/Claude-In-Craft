@@ -837,4 +837,17 @@ class AgentLoopTest {
         assertFalse(system.contains("{{"), system);
         assertTrue(system.contains("5 Innocent: never attack"), system);
     }
+
+    @Test
+    void thePromptSaysWhenAttacksAreOffInsteadOfOfferingFight() {
+        String off = new PromptBuilder(Settings.of(b -> b.toolPhase = 3), PromptBuilder.loadTemplate(null)).system();
+        assertFalse(off.contains("{{"), off);
+        assertTrue(off.contains("Attacks are switched off on this server (tool_phase 3"), off);
+        assertFalse(off.contains("Use fight for a whole fight"), "no advice to use a tool it doesn't have");
+
+        String on = new PromptBuilder(Settings.of(b -> b.toolPhase = 4), PromptBuilder.loadTemplate(null)).system();
+        assertFalse(on.contains("{{"), on);
+        assertTrue(on.contains("Use fight for a whole fight"), on);
+        assertFalse(on.contains("switched off"), on);
+    }
 }
