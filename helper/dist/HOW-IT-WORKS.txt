@@ -1,0 +1,209 @@
+CLAUDE CODE HELPER
+==================
+
+Use your own Claude Code login (your Claude subscription) from any program, with no API key.
+The helper runs on your computer and answers like the Claude Messages API at http://127.0.0.1:8787.
+It was split out of the Claude Player Minecraft mod, where it lets the in-game player think on its owner's plan.
+
+This file is written for you and for any AI agent you point at it.
+
+
+HOW IT WORKS
+------------
+1. Your app sends a normal Messages API request (POST /v1/messages) to 127.0.0.1:8787 instead of
+   api.anthropic.com.
+2. The helper turns it into one turn of a warm Claude Code session running on your login. Claude Code runs
+   locked down: no tools, no files, no settings, no plugins, and the helper's own system prompt.
+3. The reply goes back in the API's shape (content blocks, stop_reason, usage), so SDKs and other clients
+   read it as if it came from the real API.
+
+When the next request continues the same conversation (the same messages plus new ones), the helper sends only
+the new part to the session that is already warm. That skips Claude Code's startup, and once a conversation is
+long enough (a few thousand tokens) earlier turns come from the prompt cache.
+
+
+WHAT YOU NEED
+-------------
+- Java 17 or newer.
+- Claude Code, installed and signed in with your own Claude account.
+
+
+SETUP, STEP BY STEP (first time)
+--------------------------------
+1. Install Java 17 or newer.
+   - Download it from https://adoptium.net (Temurin 17 or 21) and install it.
+   - Check it: open a new terminal (Windows: PowerShell) and type
+         java -version
+     It should say version "17" or higher. If it says 1.8 or another old version, an old Java comes first on
+     your PATH: set JAVA_HOME to the new Java's folder (the start scripts use JAVA_HOME when it is set).
+
+2. Install Claude Code and sign in.
+   - Windows (PowerShell):    irm https://claude.ai/install.ps1 | iex
+   - macOS or Linux:          curl -fsSL https://claude.ai/install.sh | bash
+     (These are Anthropic's official installers. Their Claude Code documentation has the details.)
+   - Open a new terminal, type
+         claude
+     and follow the sign-in. Use your own Claude account.
+   - Confirm it works: ask it something ("say hi"), then type /exit. You can also run
+         claude auth status
+     and look for "loggedIn": true.
+
+3. Unzip the helper anywhere, for example to your Documents folder. Then start it:
+   - Windows: double-click start-helper.bat, or from a terminal in that folder:
+         start-helper.bat --token pick-a-long-secret
+   - macOS or Linux, from a terminal in that folder:
+         ./start-helper.sh --token pick-a-long-secret
+   - Or directly:
+         java -jar claude-code-helper.jar --token pick-a-long-secret
+   Use --token. With it, only programs that know the token can use your plan.
+   Leave the window open: the helper runs until you stop it.
+
+4. Check that it runs.
+   - Open http://127.0.0.1:8787/health in your browser. You should see "status": "ok", the claude path,
+     and "signed_in": true.
+   - Then one real test. Save this as hello.json in any folder:
+         {"model": "claude-haiku-5-5", "max_tokens": 200,
+          "messages": [{"role": "user", "content": "Say hi in three words."}]}
+     and from a terminal in that folder run (Windows: in PowerShell type curl.exe, in cmd type curl):
+         curl http://127.0.0.1:8787/v1/messages -H "content-type: application/json" -H "x-api-key: pick-a-long-secret" -d "@hello.json"
+     The answer is JSON with "type": "message" and your reply in "content". It takes a few seconds.
+
+5. Point your own AIs and apps at it.
+   - Base URL:  http://127.0.0.1:8787     (clients add /v1/messages themselves)
+   - API key:   your token (or, without --token, any string at all)
+   - Many tools also read the environment variables ANTHROPIC_BASE_URL and ANTHROPIC_API_KEY.
+
+   Python (pip install anthropic):
+       import anthropic
+       client = anthropic.Anthropic(base_url="http://127.0.0.1:8787", api_key="pick-a-long-secret")
+       reply = client.messages.create(model="claude-haiku-5-5", max_tokens=500,
+                                      messages=[{"role": "user", "content": "Hello!"}])
+       print(reply.content[0].text)
+
+   TypeScript or JavaScript (npm install @anthropic-ai/sdk):
+       import Anthropic from "@anthropic-ai/sdk";
+       const client = new Anthropic({ baseURL: "http://127.0.0.1:8787", apiKey: "pick-a-long-secret" });
+       const reply = await client.messages.create({ model: "claude-haiku-5-5", max_tokens: 500,
+                                                    messages: [{ role: "user", content: "Hello!" }] });
+       console.log(reply.content[0].text);
+
+   Plain HTTP, from any language:
+       POST http://127.0.0.1:8787/v1/messages
+       Content-Type: application/json
+       x-api-key: pick-a-long-secret          (or  Authorization: Bearer pick-a-long-secret)
+       {"model": "claude-haiku-5-5", "max_tokens": 500, "messages": [{"role": "user", "content": "Hello!"}]}
+
+6. Stop it: press Ctrl+C in its window (or close the window). It stops its Claude Code processes on the way
+   out; if it is killed hard, the next start cleans up any it left behind.
+
+Options:
+    --port <n>          port on 127.0.0.1 (default 8787)
+    --token <secret>    require this key. Or set the environment variable CLAUDE_HELPER_TOKEN instead,
+                        which keeps it out of the process list.
+    --model <id>        the model when a request names none
+    --claude <path>     the claude program, if it isn't found on its own
+    --effort <level>    low, medium, high, xhigh or max
+    --timeout <s>       seconds one reply may take (default 300)
+    --idle-minutes <n>  stop warm sessions unused this long (default 10)
+    --max-sessions <n>  requests at the same time (default 4)
+
+
+TROUBLESHOOTING
+---------------
+- "claude not found": install Claude Code (step 2) and open a new terminal, or start the helper with
+  --claude "C:\path\to\claude.exe". The helper looks on PATH, then in %USERPROFILE%\.local\bin (Windows) or
+  ~/.local/bin. An npm install (claude.cmd) isn't picked up on its own; the native installer is the tested way.
+- "isn't signed in" (HTTP 401 authentication_error, or "signed_in": false in /health): run claude in a
+  terminal and sign in again, then retry. No restart of the helper is needed.
+- "Port 8787 is in use": the helper is probably already running in another window. Or start it with
+  --port 8788 and use that port in your base URL.
+- The first reply is slow: starting Claude Code takes a few seconds. The helper keeps one spare session
+  started ahead, and later replies in the same conversation reuse the warm session. Expect 1 to 5 seconds a turn.
+- UnsupportedClassVersionError: your Java is older than 17 (see step 1).
+- HTTP 401 with your token set: the key your app sends doesn't match --token.
+- HTTP 529 overloaded_error: more requests at once than --max-sessions. SDKs retry these on their own.
+- HTTP 403 permission_error: the request came from a web page on another site, or was addressed to a host
+  name other than 127.0.0.1 or localhost. That is refused on purpose.
+
+
+WHAT WORKS AND WHAT DOESN'T
+---------------------------
+Works:
+- POST /v1/messages with system (a string or text blocks), multi-turn messages, and usage in every reply.
+- Images: base64 PNG and JPEG, in user messages and inside tool results.
+- Tools (your own, with input_schema): emulated. Claude Code itself runs with no tools; the helper asks it for
+  a structured answer and turns that into standard tool_use blocks with fresh ids and stop_reason "tool_use".
+  You run the tool and send a tool_result back as usual. tool_choice auto, any, tool and none work, and so
+  does disable_parallel_tool_use.
+- stream: true works, but the events arrive all at once when the reply is finished (standard message_start ...
+  message_stop events), so there is no typing effect.
+- Models: "model" is passed to Claude Code, so use a model id or alias Claude Code accepts on your plan.
+- GET /health: the claude path, its version, and whether it is signed in.
+
+Accepted but ignored: max_tokens, temperature, top_p, top_k, stop_sequences, metadata, thinking, service_tier,
+and cache_control (Claude Code caches on its own).
+
+Not supported (you get a clear 400 error): image URLs, GIF and WebP, PDFs and other document blocks, Anthropic's
+server tools (web search and the like), and assistant prefill (the last message must be from the user).
+There is no /v1/models, token counting or batches endpoint.
+
+Latency: a few seconds per turn (measured 1.2 to 4.8 s with claude-haiku-5-5), more for long answers.
+One request at a time per conversation; up to --max-sessions conversations in parallel.
+
+
+YOUR PLAN'S LIMITS
+------------------
+Every request counts against your Claude plan's usage limits, exactly as if you typed it into Claude Code.
+A program that loops can use up your limit quickly. When the limit is reached, requests fail with HTTP 429
+until it resets.
+
+
+SAFETY
+------
+- The helper only listens on 127.0.0.1 (this computer). Never expose it to a network: no port forwarding,
+  no tunnels, no 0.0.0.0, no sharing it with other people.
+- Use --token. Without it, any program running on this computer can use your plan through the helper.
+- It never reads your Claude credentials; Claude Code keeps its own sign-in. It removes any ANTHROPIC_* and
+  cloud-billing variables from Claude Code's environment, so it always uses your subscription login.
+- Its log lines carry request ids, the model, timings, token counts and stop reasons only: never your prompts,
+  images or the token.
+
+
+TERMS
+-----
+This is for personal use on your own account. Before you build anything shared on it (other people using it,
+a public app, a service), check Anthropic's terms for Claude subscriptions and Claude Code. Shared or
+commercial use generally belongs on the Claude API with an API key.
+
+
+USING IT AS A JAVA LIBRARY
+--------------------------
+The same jar is a plain Java library (Gson is bundled inside). A warm Claude Code session, no server needed:
+
+    import com.example.claudecodehelper.*;
+    import java.nio.file.*;
+    import java.util.List;
+
+    public class Demo {
+        public static void main(String[] args) throws Exception {
+            try (ClaudeCode cc = ClaudeCode.builder().model("claude-haiku-5-5").systemPrompt("You are terse.").build();
+                 ClaudeCode.Session chat = cc.open()) {
+                Reply r = chat.send("Name three colours.");
+                System.out.println(r.text() + "  (" + r.usage().output() + " tokens out)");
+                r = chat.send("Three more.");                       // same warm session, no restart
+                System.out.println(r.text());
+                r = chat.send(List.of(Blocks.text("What is in this picture?"),
+                                      Blocks.png(Files.readAllBytes(Path.of("picture.png")))));
+                System.out.println(r.text());
+            }
+        }
+    }
+
+    javac -cp claude-code-helper.jar Demo.java
+    java -cp "claude-code-helper.jar;." Demo        (on macOS or Linux use : instead of ;)
+
+Builder options: claudePath, model, effort, systemPrompt, jsonSchema (structured output, read back with
+reply.structured()), turnTimeout, idleMinutes, maxSessions. Each reply has text(), structured(), usage(),
+rateLimit() (Claude Code's plan-usage reading, sent on a session's first turn) and stopReason().
+For stateless callers (like the server), cc.lease(options, history) continues a warm session whose
+conversation the new history extends, or starts a fresh one.
