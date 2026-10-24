@@ -136,6 +136,8 @@ public final class AgentLoop implements ActionQueue.Listener {
     private Batch batch;
     private boolean inFlight;
     private boolean deferred;
+    private boolean capPaused; // the order waits at the token cap; tick retries, so it goes on when the hour frees
+    private boolean forceCompact; // /cp tokencompact: the next turn compacts whatever the prompt's size
     private boolean cancelling;
     private boolean mustReport;
     private final List<String> interruptsInFlight = new ArrayList<>(); // in arrival order; all go out with the reply
@@ -330,6 +332,19 @@ public final class AgentLoop implements ActionQueue.Listener {
     }
 
     /** Once per server tick: sends a call that was waiting for the call-rate window, or starts a due goal. */
+    /**
+     * /cp tokencompact: the order's next turn replaces its transcript with one short summary turn (autocompact's),
+     * whatever the prompt's size, and a turn held back at the token cap goes out now if the cap allows. The caller
+     * clears the cap first. Server thread. False when no order runs, so there is nothing to compact.
+     */
+    public boolean compactNow() {
+        if (orderFrom == null || goal) return false;
+        forceCompact = !messages.isEmpty() || inFlight;
+        capPaused = false;
+        if (!inFlight && deferred) flush();
+        return true;
+    }
+
     public void tick() {
         if (deferred) flush();
         if (autonomyBy != null && orderFrom == null && queue.idle() && clockMillis.getAsLong() >= nextGoalAt) startGoal();
@@ -373,7 +388,8 @@ public final class AgentLoop implements ActionQueue.Listener {
     public String status() {
         if (orderFrom == null) return guardrails.halted() ? "halted" : "idle";
         String who = goal ? "autonomous goal #" + goalCount : orderFrom.isEmpty() ? "reacting to a threat" : "order from " + orderFrom;
-        String wait = inFlight ? ", waiting for the model" : deferred ? ", waiting for the call-rate window" : "";
+        String wait = inFlight ? ", waiting for the model" : capPaused ? ", paused at the token cap"
+                : deferred ? ", waiting for the call-rate window" : "";
         return who + ", round " + steps + "/" + settings.maxSteps() + wait;
     }
 
@@ -591,15 +607,22 @@ public final class AgentLoop implements ActionQueue.Listener {
             return;
         }
         switch (guardrails.allowCall()) {
-            case OK -> deferred = false;
+            case OK -> {
+                deferred = false;
+                capPaused = false;
+            }
             case RATE_LIMITED -> {
                 deferred = true;
                 return;
             }
-            case TOKEN_CAP -> {
-                long minutes = Math.max(1, (guardrails.capFreesInMillis() + 59_999) / 60_000);
-                end("Token cap reached (" + settings.sessionTokenCap() + " per hour). Calls resume in about " + minutes
-                        + " min, or an op can run /cp resetcap.");
+            case TOKEN_CAP -> { // pause, don't end: tick retries, and /cp tokencompact goes on at once
+                if (!capPaused) {
+                    long minutes = Math.max(1, (guardrails.capFreesInMillis() + 59_999) / 60_000);
+                    host.notice("Token cap reached (" + settings.sessionTokenCap() + " per hour). The order is paused and"
+                            + " goes on in about " + minutes + " min, or now after an op runs /cp tokencompact.");
+                }
+                capPaused = true;
+                deferred = true;
                 return;
             }
             case HALTED -> {
@@ -615,7 +638,9 @@ public final class AgentLoop implements ActionQueue.Listener {
             notes.add(cavemanNote.get());
             cavemanNoted = true;
         }
-        boolean compact = opening == null && !goal && !messages.isEmpty() && lastPrompt >= settings.compactAtTokens();
+        boolean compact = opening == null && !goal && !messages.isEmpty()
+                && (forceCompact || lastPrompt >= settings.compactAtTokens());
+        forceCompact = false;
         String text;
         if (compact) {
             text = compactTurn(state);
@@ -829,6 +854,8 @@ public final class AgentLoop implements ActionQueue.Listener {
         batch = null;
         inFlight = false;
         deferred = false;
+        capPaused = false;
+        forceCompact = false;
         mustReport = false;
         interruptsInFlight.clear();
         finalText = null;

@@ -159,7 +159,7 @@ public record Verdict(boolean allowed, String reason) {}
 ### 7. Guardrails
 - Kill switch: `/cp stop` or `C stop` cancels the queue, halts the loop, and blocks model calls until the next allowlisted order.
 - Call rate: at most `max_calls_per_minute`.
-- Token cap: weighted tokens (`Brain.Usage.weighted()`: cache reads at a tenth) per rolling hour. At `session_token_cap`, the order ends with how long until it frees, autonomy waits, and `/cp resetcap` (ops) clears it. `total()` is unchanged for logs.
+- Token cap: weighted tokens (`Brain.Usage.weighted()`: cache reads at a tenth) per rolling hour. At `session_token_cap` the order pauses (it says how long until the hour frees, then goes on by itself), autonomy waits, `/cp resetcap` (ops) clears the count, and `/cp tokencompact` (ops) clears it and collapses the running order into one summary turn so it goes on at once with a small prompt. `total()` is unchanged for logs.
 - Autocompact: when one call's prompt reaches `compact_at_tokens`, the order's earlier turns collapse into one code-built summary turn; the one exception to append-only transcripts.
 - Blockman: every user turn ends with a `<status>` block (ORDER, STEP, POS, HP, FOOD, THREATS, QUEUE) from `PromptBuilder.status`.
 - Step cap: `max_steps` tool rounds per order.
@@ -248,6 +248,7 @@ Commands (`/cp`):
 | `/cp stop` | Halt now |
 | `/cp status` | Level, queue, calls, weighted tokens this hour, and with Claude Code the usage windows and caveman |
 | `/cp resetcap` | Clear the hourly token cap now (ops) |
+| `/cp tokencompact` | Clear the cap and compact the running order into one summary turn; a paused order goes on (ops) |
 | `/cp keycheck` | One free count_tokens call to confirm the key and model work |
 | `/cp glance` | Save what Claude sees as `<game dir>/claudeplayer/glance-<time>.png` (ops; skips the cooldown) |
 | `/cp memory` | Show short- and long-term memory |

@@ -629,6 +629,75 @@ class AgentLoopTest {
         assertTrue(notices.isEmpty(), notices.toString());
     }
 
+    /** The same reply, but weighing 2020 tokens: over a cap of 1000 on its own. */
+    private static Brain.Reply heavy(Brain.Reply r) {
+        return new Brain.Reply(r.id(), r.content(), r.toolCalls(), r.text(), r.stopReason(), new Brain.Usage(2000, 20, 0, 0), r.done());
+    }
+
+    @Test
+    void atTheTokenCapAnOrderPausesAndGoesOnByItselfWhenTheHourFrees() {
+        build(b -> b.sessionTokenCap = 1000);
+        script.add(heavy(tools(say("s1"))));
+        script.add(text("Done."));
+        loop.startOrder("F", "say hi");
+        pump();
+        ticks(5);
+        assertEquals(1, requests.size(), "the second call waits at the cap");
+        assertTrue(said.isEmpty(), "the order is paused, not ended");
+        assertEquals(1, notices.size(), "said once, not every tick: " + notices);
+        assertTrue(notices.get(0).contains("paused") && notices.get(0).contains("/cp tokencompact"), notices.get(0));
+        assertTrue(loop.status().contains("token cap"), loop.status());
+        now += 61 * 60_000;
+        ticks(1);
+        assertEquals(2, requests.size(), "the hour freed, so the order went on");
+        assertEquals(List.of("Done."), said);
+    }
+
+    @Test
+    void tokenCompactGoesOnAtOnceFromOneSummaryTurn() {
+        build(b -> b.sessionTokenCap = 1000);
+        script.add(heavy(tools(say("s1"))));
+        script.add(text("Done."));
+        loop.startOrder("F", "say hi");
+        pump();
+        ticks(5);
+        assertEquals(1, requests.size());
+        guardrails.resetTokens();
+        assertTrue(loop.compactNow(), "an order was there to compact");
+        pump();
+        ticks(1);
+        assertEquals(2, requests.size());
+        assertEquals(1, requests.get(1).messages().size(), "one fresh summary turn, whatever the prompt's size");
+        assertTrue(lastText(1).contains("<earlier>"), lastText(1));
+        assertTrue(lastText(1).contains("- say s1: ok"), lastText(1));
+        assertNoOrphans(1);
+        assertEquals(List.of("Done."), said);
+    }
+
+    @Test
+    void tokenCompactDuringACallCompactsTheNextTurn() {
+        build(b -> {});
+        movesFinish = true;
+        script.add(tools(move("m1")));
+        script.add(text("There."));
+        loop.startOrder("F", "walk");
+        assertTrue(loop.compactNow(), "the call is out, so the next turn compacts");
+        pump();
+        ticks(5);
+        assertEquals(2, requests.size());
+        assertEquals(1, requests.get(1).messages().size());
+        assertTrue(lastText(1).contains("move_to→ok"), lastText(1));
+        assertEquals(List.of("There."), said);
+    }
+
+    @Test
+    void tokenCompactWithNoOrderHasNothingToDo() {
+        build(b -> {});
+        assertFalse(loop.compactNow());
+        pump();
+        assertTrue(requests.isEmpty());
+    }
+
     @Test
     void stopCancelsTheQueueAndALateReplyIsIgnored() {
         build(b -> {});
