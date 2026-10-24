@@ -94,7 +94,7 @@ public record Settings(
         public List<Double> usageWarnAt = List.of(0.80, 0.90);
         public double cavemanAt = 0.80;
         public String cavemanSkillPath = "";
-        public int compactAtTokens = 16_000;
+        public int compactAtTokens = 32_000;
 
         public Settings build() {
             return new Settings(brain, claudeCodePath, claudeCodeTimeoutSeconds, model, apiKeyEnv, effort, maxTokens, requestTimeoutSeconds, promptCaching, logPrompts,

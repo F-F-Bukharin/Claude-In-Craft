@@ -164,7 +164,7 @@ The cloud session's branch `claude/gifted-newton-nrhrer` grew from `d5b0bde` bes
 - **Caveman:** `CavemanSkill` loads the newest caveman `SKILL.md` under `~/.claude/skills` (or `caveman_skill_path`). An order that starts at or above `caveman_at` gets the rules in its system prompt; a running order gets them once as a note.
 - **Think-harder:** `ThinkHarder` plus AgentRuntime. An order with a `think_harder_phrases` phrase offers max effort to that player only (`C y` / `C n`, 30 s, no answer means no), unless a hostile is within `hostile_range` in a straight line. A yes restarts the Claude Code session at max effort from the whole transcript. Any threat (reflex, quiet re-flee or interrupt) ends it.
 - **Token cap:** weighted tokens per rolling hour (`session_token_cap`), `/cp resetcap` (ops), and autonomy waits out the cap instead of turning off.
-- **Autocompact:** when one call's prompt reaches `compact_at_tokens` (16000), the order's earlier turns collapse into a single code-built summary turn (`<earlier>`, `<results>`), with no extra model call. CLAUDE.md's append-only rule names it as the one exception. `dev`'s late images ride along as plain blocks.
+- **Autocompact:** when one call's prompt reaches `compact_at_tokens` (32000; 16000 at first, raised on F's call because it compacted after about 4 turns), the order's earlier turns collapse into a single code-built summary turn (`<earlier>`, `<results>`), with no extra model call. CLAUDE.md's append-only rule names it as the one exception. `dev`'s late images ride along as plain blocks.
 
 **Open findings from the Opus code review** (46 found; the fixed ones are in the history). Each needs a test first:
 1. **Think-harder runtime.**

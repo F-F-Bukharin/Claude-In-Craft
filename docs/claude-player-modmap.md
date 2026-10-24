@@ -200,7 +200,7 @@ Config (`Config.java`). A file that holds a key stays out of version control.
 | `think_harder_phrases`, `think_harder_timeout_seconds` | `["think harder", "think hard"]`, `30` | An order with a phrase offers max effort; no answer in time runs it normally |
 | `usage_warn_at` | `[0.80, 0.90]` | Usage fractions that post a chat warning, once per window each |
 | `caveman_at`, `caveman_skill_path` | `0.80`, empty | Caveman rules from this usage on; empty path searches `~/.claude/skills` |
-| `compact_at_tokens` | `16000` | Prompt size that triggers autocompact (2000 to 1000000) |
+| `compact_at_tokens` | `32000` | Prompt size that triggers autocompact (2000 to 1000000); with `max_steps` at 8 most orders never reach it |
 | `max_tokens` | `4096` | Per reply; thinking counts against it (added) |
 | `request_timeout_seconds` | `20` | HTTP timeout |
 | `prompt_caching` | `true` | Cache breakpoints on the system block and the newest turn |

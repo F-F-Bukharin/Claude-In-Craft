@@ -235,6 +235,18 @@ class AgentLoopTest {
     }
 
     @Test
+    void byDefaultAnOrderGrowsPastTwentyThousandTokensBeforeItCompacts() {
+        build(b -> b.maxCallsPerMinute = 100); // compact_at_tokens left at its default
+        script.add(promptOf(20_000, tools(say("s1"))));
+        script.add(text("Done."));
+        loop.startOrder("F", "greet");
+        pump();
+        ticks(40);
+        assertEquals(2, requests.size());
+        assertEquals(3, requests.get(1).messages().size(), "a 20k prompt is under the default: the transcript keeps growing");
+    }
+
+    @Test
     void belowTheThresholdTheTranscriptStaysAppendOnly() {
         build(b -> b.compactAtTokens = 2000);
         script.add(promptOf(1999, tools(say("s1"))));
