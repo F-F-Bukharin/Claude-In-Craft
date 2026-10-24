@@ -4,6 +4,7 @@ The one handoff. Updated 24 Oct 2026 (Opus 5.5), after the fix round, the standa
 
 ## Where things stand
 - **GitHub:** `origin/dev` holds the cloud branch's port (to `6ffb12f`). Local `dev` now merges it with the 24 Oct agent-army round (nine teams) and the attack fix; not pushed yet. `main` is still at `1669171` until F says to fast-forward it.
+- **Local `dev` (not pushed):** the 24 Oct agent-army round merged with `origin/dev` (`6caf943`) and the teams' shared-file fixes (`f7f3f6d`), 695 tests green. Rollback for the army round: `agent-army/checkpoint-20261024-2235`; `army/pre-origin-merge` is the round before the origin merge. Glance part 2 (`feat/glance-renderer`, the fork session) is still not merged, so the jar in F's profile is still the fork's glance build.
 - **The 24 Oct round, merged into `dev`:**
   - `fix/small-fixes`: ender chest refusal in `store` and `take`; `lava_near_player` is `denied:`; `use_bucket` takes an optional `fluid`; auto-eat counts hostiles within 16 blocks straight-line; a test pins a busy snapshot's JSON size.
   - `fix/reflex-followups`: the chase-heard remainder (F1 to F4) and every piece 1 follow-up (section below).
@@ -146,6 +147,19 @@ Early gates, done in F's CurseForge playtests (22 and 23 Oct): quickstart, the d
    - `C put your logs in the ender chest` and `C take from the ender chest` get the "ender chests are personal" explanation.
    - With a water and a lava bucket, `C pour lava there` pours lava (`use_bucket` with `fluid`); near another player it is `denied:lava_near_player`.
    - Hungry, with bread, and a zombie in a cave 20 blocks below: the body eats (the hostile is out of straight-line range).
+
+## Agent army round (24 Oct): what landed and what to check
+F asked for: liquid and crop fixes, more skills, spatial awareness, movement, and a real Brain panel. A foundation team wrote 13 tool contracts, then nine Opus teams built them in parallel (four had to work without sub-agents: the harness caps 20 agents at once). Each branch's diff was checked against its report before merging. Nothing has run in game.
+- **Liquids and crops** (`army/liquids-crops`): pouring at a solid block always failed (`emptyContents` got no hit result); fixed, with the lava rules judged at the block the fluid enters, fill on line of sight, the bucket held first. Planting knows sugar cane, berries, melon and pumpkin seeds and more; harvest takes melons, pumpkins, cane, cactus, bamboo, cocoa and berries, and picks up drops in water. 14 bugs in all. Check: pour water at the ground and into a slab; fill from a pond; harvest one of each crop; watch health near cacti.
+- **Builders**: `build` (block list) and `build_house` (5x5, door, bed inside becomes home). Check: give 71 planks, a door and a bed, `C build a house here`; then `C sleep` at night.
+- **Home life**: `sleep` (wakes for the next action) and `go_home` with store. Check: sleep at night, then give an order; go_home store with a full inventory next to two chests.
+- **Animals**: `hunt` (attack phase; never named, tamed, baby animals or villagers), `breed`, `tame`, `pet`. Check: hunt 2 cows; breed cows with wheat; tame a wolf with bones, then pet follow. A parrot gives up about 1 time in 5.
+- **Villagers and storage**: `trade_offers`, `trade` (emerald cap), `sort_chests`. Check: list a librarian's offers and buy one; sort three messy chests.
+- **Explore and fish**: `roam` and `fish`. The fishing bite is read from the hook's synced data: if Claude never reels in, that detection failed (fallback: reflection on `biting`). Check: roam radius 32 for 2 minutes; fish by a pond with cod in it.
+- **Senses**: height-aware map (`^`, `t`), `look` to 64, `creatures` in world_state, `see` to 96 blocks with landmarks. Check: a tree on a hill shows as `t`; ask "what do you see" near a village.
+- **Movement**: stuck handling, smoother paths, sprint, swimming, doors, steadier follow, crowd-aware flee. Check: walk through a wooden door; swim a pond; block its path and watch it jump, re-plan, then `stuck`.
+- **Brain GUI**: right-click the body for five sections: Order, Thinking (Claude's one-line `plan`), Queue, Recent, Status; it wraps, scrolls (wheel, arrows, Page Up/Down) and fits small windows. The panel packet is protocol 2: an older mod build can't join a server with this one.
+- **Follow-ups:** slot-aware `ContainerActions` (`takeSlot`/`storeSlot`) so sort can move the body's own item kinds; follow_player can't swim or open doors yet (move_to's helpers are private); roam in the Nether reads the roof as the surface; `interactOn` skips Forge's EntityInteract event, so protection mods don't see feeding; the catch counts any inventory gain during the reel window.
 
 ## Piece 1 follow-ups
 Done on `fix/reflex-followups` and merged 24 Oct, with the chase-heard remainder (F1 to F4): a failed reflex is a note in the next turn; a dropped order spares only `reflex-` entries; several reflexes during one call all go out; `follow_player` uses move_to's hazard probe; the prompt says to give an approach and its attack the same prio; a slab, stair or carpet under the feet is floor for the probe; a hit from beyond `hostile_range` gets no reflex. In-game checks C1 to C8 above.

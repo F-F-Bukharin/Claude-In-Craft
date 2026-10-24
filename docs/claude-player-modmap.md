@@ -68,6 +68,20 @@ Paths are under `src/main/java/com/example/claudeplayer/` unless noted. Everythi
 | `body/SeeActions.java` | Casts the `see` rays (`level.clip`, outline shapes, fluids, never loads chunks) and finds entities in the cone with line of sight |
 | `core/WorldMap.java` | Top-down text map at feet level (17 by 17 in world_state, up to 49 by 49 via `look`): floor, steps, drops, walls, trees, fluids, containers, players, hostiles |
 | `core/chat/ChatLines.java` | Caps the body's chat at two lines of 100 characters, split at a sentence end or a space |
+| `body/Placing.java` | Places a block the way a player does and records it as Claude's; place_block, build and build_house share it |
+| `body/BuildHandle.java`, `core/work/BuildPlan.java` | `build`: places a block list in order, skips what's there, walks to standing spots; `BuildHandle.run` (no 64 cap) is what build_house uses |
+| `body/HouseHandle.java`, `core/work/HousePlan.java` | `build_house`: 71 blocks (5x5, walls 3 high, flat roof), door, bed inside; home becomes the bed's head |
+| `body/SleepHandle.java` | `sleep`: nearest bed within 16 or the home bed, vanilla `startSleepInBed`; AgentPlayer and the executor wake it for the next action |
+| `body/HomeHandle.java`, `core/work/StorePlan.java` | `go_home`: walks home in legs; with store, keeps tools, weapons, armor, food, torches, a bed and one stack of building blocks |
+| `body/HuntHandle.java`, `core/safety/HuntRules.java` | `hunt` (attack phase): never players, villagers, golems, named, tamed, leashed or baby animals; re-checked before every swing |
+| `body/BreedHandle.java`, `core/work/Breeding.java` | `breed`: two ready adults, the right food, `interactOn` like a player |
+| `body/TameActions.java`, `core/work/Taming.java` | `tame` (feeds until tamed, gives up after 15) and `pet` (sit or follow) |
+| `body/TradeActions.java`, `core/work/TradeRules.java` | `trade_offers` and `trade` without a menu; `notifyTrade` counts each trade once; at most `trade_max_emeralds` per call |
+| `body/SortHandle.java`, `core/work/SortPlan.java` | `sort_chests`: one kind per chest or barrel, fewest containers per kind, never overfills; skips ids the body is using |
+| `body/RoamHandle.java`, `core/work/RoamPlan.java` | `roam`: 8 compass sectors, least-seen first, notes finds (capped), turns back at half time, one report |
+| `body/FishHandle.java`, `core/work/Fishing.java` | `fish`: casts with the rod, bite read from the hook's synced data (the riskiest part), reels, counts the catch |
+| `core/work/Planting.java` | Pure soil rules per plantable item, Forge's till results, the pour target |
+| `core/nav/` (`Progress`, `PathSmoother`, `Gait`, `FollowGap`, `EscapeScore`) | Pure movement rules: stuck (jump 1 s, re-plan 2 s, `stuck` after 3), smoothing, sprint, follow hysteresis, crowd-aware escape |
 | `body/ActionExecutor.java` | Runs world actions; Guardrails and CautionPolicy before any effect |
 | `nav/Navigator.java` | Steers the body along paths planned by an off-world zombie |
 | `nav/MoveHandle.java`, `nav/FollowHandle.java` | move_to and follow_player; both refuse lava, fire and deadly drops (one shared probe) |
@@ -94,6 +108,7 @@ Tests live in `src/test/java/com/example/claudeplayer/`: PurityTest; `core/act/A
 - On death, the loop stops, the agent says so in chat, and waits for `C respawn` or `/cp respawn`.
 
 ### 3. State snapshot
+- 24 Oct: the map is height-aware (`^` high ground or a cliff, `t` a tree above, up to about 12 blocks); `look` reaches 64 with coarse cells past 24 (first line says the scale); `creatures` lists up to 8 animals, villagers and other non-hostile mobs within 24 blocks (id, type, dist, pos, baby, tamed by Claude, name, job). The busy-scene size is 3827 bytes (StateSnapshotTest pins 4200).
 - Built on the server thread at each message to the model and for each `get_state` call. Immutable. Sent as compact JSON, target under 2 KB. Threat scans run separately, every 2 ticks, in DamageWatcher.
 - Contents: position, dimension, facing; HP and food; held item and armor; top inventory slots; up to 10 nearest hostiles (type, distance, HP); up to 10 nearby players (name, distance, `pos`); block summary within 3 tiles (counts by type); `map` and `map_origin` (the 17 by 17 WorldMap view); `points` (up to 12 nearest containers, ender chests, crafting tables and bed heads, each with block id and x, y, z, listed after `blocks_near`); time of day and weather; caution level; queue state (running action, actions still waiting).
 
@@ -149,6 +164,7 @@ public record Verdict(boolean allowed, String reason) {}
 - Unknown tool names are denied with `denied:unknown_tool`.
 
 ### 8. Navigation
+- 24 Oct: move_to jumps when stalled 1 s, re-plans at 2 s and fails `stuck` after 3 re-plans; aims at the farthest of the next 4 nodes on a straight safe line; sprints on 8+ block straight runs with food above 6, never near hazards; in water holds jump, heads for dry nodes and rises for air; opens wooden doors and fence gates on the path and closes the ones it opened (iron doors never). follow_player keeps 2 to 3.5 blocks with hysteresis. EscapePlanner scores 12 ring spots against every threat, at most 4 path searches, cached 4 ticks.
 - v1: vanilla navigation toward a target. No path gives `failed:no_path`. 10 s without arriving gives `failed:timeout`.
 - EscapePlanner uses the same pathing. A custom search is added only if vanilla navigation can't answer the escape question (decided in Phase 4).
 - Each tick, move_to and follow_player probe 0.8 blocks ahead of the body. Lava, fire, or a drop that would kill refuses the move: the body halts and the move fails with `failed:hazard_lava`, `hazard_fire` or `hazard_drop`. A drop onto water is safe, and a slab, stair or carpet in the feet block is floor.
@@ -201,6 +217,7 @@ Config (`Config.java`). A file that holds a key stays out of version control.
 | `usage_warn_at` | `[0.80, 0.90]` | Usage fractions that post a chat warning, once per window each |
 | `caveman_at`, `caveman_skill_path` | `0.80`, empty | Caveman rules from this usage on; empty path searches `~/.claude/skills` |
 | `compact_at_tokens` | `32000` | Prompt size that triggers autocompact (2000 to 1000000); with `max_steps` at 8 most orders never reach it |
+| `trade_max_emeralds` | `32` | Most emeralds one `trade` call may spend (0 to 640; 0 turns trading off) |
 | `max_tokens` | `4096` | Per reply; thinking counts against it (added) |
 | `request_timeout_seconds` | `20` | HTTP timeout |
 | `prompt_caching` | `true` | Cache breakpoints on the system block and the newest turn |
@@ -243,6 +260,7 @@ Gated by `tool_phase` (default 2).
 - Phases 1 and 2, on by default: `get_state`, `look(radius)`, `see(direction?)` (text vision: a fan of 55 rays, 70 by 40 degrees, 32 blocks, from the eyes, plus entities in view; answers in under 1 KB with ores, containers and ripe crops first and exact; a direction other than `forward` turns the body first), `move_to(x, y, z)`, `flee`, `say(text)`, `wait(seconds)`, `stop`; memory `note`, `remember`, `forget`; containers `inspect_container`, `store(x,y,z,item,count)`, `take(x,y,z,item,count)`; `eat`, `follow_player(name, seconds)`; blocks `mine_block(x,y,z)`, `place_block(x,y,z,item)`, `equip(item)`; `craft(item, count)` (3x3 needs a table within 4.5), `smelt(item, count)` (loads a furnace and returns; collect with `take`); routines `gather(target, count)` (groups: log, stone, coal, iron, ...) and `dig(direction, length)` (tunnel or staircase, stops at fluids). Break rule: natural blocks anywhere, others only if Claude placed them. `inspect_container` reads the containers listed in `world_state.points` (within 6 blocks); an ender chest fails with `failed:ender_chest_personal`. `move_to` to a player uses the `pos` in `world_state.players`.
 - Also phase 2: farming `till`, `plant`, `harvest` (a routine that replants) and `use_bucket(x, y, z, fluid?)` (an optional `fluid`, water or lava, picks which bucket pours or fills; lava only in the work area, and `denied:lava_near_player` within 4 blocks of a player); `glance` (no arguments: a `vision_width`×`vision_height` PNG from the body's eyes for important moments; at most one per turn and one per `vision_cooldown_seconds`, enforced by `VisionGate` in AgentLoop; answers `failed:no_client` until the renderer, glance part 2, lands).
 - Phase 4: `attack_entity(entity_id)` (one swing) and `fight(entity_id)` (gear up, walk and swing until it ends), behind CautionPolicy.
+- Skills (24 Oct), phase 2: `build(blocks)` (up to 64 {x, y, z, item}), `build_house(x, y, z, facing?, material?)`, `roam(radius, minutes)`, `breed(animal, pairs)`, `tame(animal, entity_id?)`, `pet(entity_id, sit|follow)`, `sleep`, `go_home(store)`, `fish(count, seconds)`, `trade_offers(entity_id)`, `trade(entity_id, offer, times)`, `sort_chests(radius)`. Phase 4: `hunt(animal, count)`. `see` now reaches 96 blocks (189 rays, 21 by 9) with a landmarks line; harvest takes every common crop (melons, pumpkins, cane, cactus, bamboo, cocoa, sweet berries too).
 - Never tools: change caution level, edit the allowlist, run commands, touch config. ToolParseTest checks it.
 - Every tool takes an optional `prio`: 1 routine (default), 2 important (paused and resumed after danger), 3 safety. Only `flee`, `stop`, `attack_entity` and `fight` may ask for 3; anything else at 3 runs at 2, and a `prio_lowered` note goes out in the next turn.
 - Results are short codes: `ok`, `denied:<reason>`, `failed:<reason>`, `cancelled`, `scrapped` (level 1 work dropped by a level 3 entry), `queued`.
@@ -274,4 +292,5 @@ COMPILED means the code compiles against forge-1.20.1-47.4.28 with official mapp
 - 23 Oct 2026: playtest 2 work merged into dev and pushed (`ca91c94`): level gaze and crops on the map, farming and buckets, `see`, `fight` with auto-gear, and glance part 1 (the model side). `./gradlew build` is green with 263 unit tests. Not checked in game yet.
 - 24 Oct 2026: fix round merged into dev: the small fixes (ender chest in store and take, `lava_near_player` denied, `use_bucket` fluid, auto-eat at 16 blocks straight-line, a snapshot size pin at 3108 bytes), the chase-heard remainder and the piece 1 follow-ups, and warm-session bugs 1, 2, 4 and 5. The standalone helper landed in `helper/`. `./gradlew build` is green with 282 unit tests, the helper's build with 57. Not checked in game yet.
 - 24 Oct 2026: the cloud branch ported onto dev: Blockman, done replies, `claude_effort`, the usage ledger and warnings, caveman, think-harder, the hourly token cap with `/cp resetcap`, and autocompact. `./gradlew build` is green with 371 unit tests. Not checked in game yet.
+- 24 Oct 2026: the agent-army round merged into dev with the port: 13 skill tools, the height-aware senses, movement, the liquid and crop fixes, and the Brain panel's five sections (order, thinking, queue, recent, status; protocol 2). `./gradlew build` is green with 695 unit tests. Not checked in game; not pushed.
 - Next: glance part 2 (the renderer), then F's playtest. Details in the handoff.
