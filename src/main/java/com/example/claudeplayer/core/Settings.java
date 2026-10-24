@@ -86,7 +86,7 @@ public record Settings(
         public int prefetchAt = 4;
         public int maxSteps = 8;
         public int maxCallsPerMinute = 12;
-        public long sessionTokenCap = 200_000;
+        public long sessionTokenCap = 1_000_000;
         public int hostileRange = 16;
         public int escapeDistance = 8;
         public int escapeMaxSteps = 12;

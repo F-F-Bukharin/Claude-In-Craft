@@ -207,7 +207,7 @@ Config (`Config.java`). A file that holds a key stays out of version control.
 | `prefetch_at` | `4` | Waiting actions in a batch that trigger the results message |
 | `max_steps` | `8` | Tool rounds per order |
 | `max_calls_per_minute` | `12` | Call rate cap |
-| `session_token_cap` | `200000` | Weighted tokens per rolling hour |
+| `session_token_cap` | `1000000` | Weighted tokens per rolling hour (raised from 200000 on 24 Oct: a busy turn weighs about 3k, and 200k ran out within an hour of play) |
 | `hostile_range` | `16` | Threat radius |
 | `escape_distance` | `8` | Safe distance from threats |
 | `escape_max_steps` | `12` | Max retreat path length |

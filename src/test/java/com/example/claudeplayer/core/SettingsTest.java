@@ -19,4 +19,10 @@ class SettingsTest {
         assertEquals("", four.attacksOffNote());
         assertTrue(Settings.of(b -> b.toolPhase = 6).attacksEnabled());
     }
+
+    @Test
+    void theHourlyTokenCapLeavesRoomForAnHourOfBusyPlay() {
+        // A busy order turn weighs about 3k (cache writes in full, reads at a tenth); 200k ran out within an hour.
+        assertEquals(1_000_000L, Settings.DEFAULTS.sessionTokenCap());
+    }
 }
