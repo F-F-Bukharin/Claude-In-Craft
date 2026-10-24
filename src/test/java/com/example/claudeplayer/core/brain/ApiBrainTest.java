@@ -34,7 +34,7 @@ class ApiBrainTest {
                 .getAsJsonObject("cache_control").get("type").getAsString());
         assertEquals("auto", body.getAsJsonObject("tool_choice").get("type").getAsString());
         assertEquals("low", body.getAsJsonObject("output_config").get("effort").getAsString());
-        assertEquals(28, body.getAsJsonArray("tools").size());
+        assertEquals(40, body.getAsJsonArray("tools").size());
         JsonObject lastBlock = body.getAsJsonArray("messages").get(0).getAsJsonObject().getAsJsonArray("content").get(0).getAsJsonObject();
         assertTrue(lastBlock.has("cache_control"), "the newest turn is a cache breakpoint");
         assertFalse(req.messages().toString().contains("cache_control"), "the caller's transcript is untouched");

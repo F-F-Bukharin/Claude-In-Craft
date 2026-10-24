@@ -111,6 +111,9 @@ public final class Config {
             .comment("Width in pixels of a glance picture.").defineInRange("vision_width", D.visionWidth(), 64, 640);
     private static final ForgeConfigSpec.IntValue VISION_HEIGHT = B
             .comment("Height in pixels of a glance picture.").defineInRange("vision_height", D.visionHeight(), 64, 640);
+    private static final ForgeConfigSpec.IntValue TRADE_MAX_EMERALDS = B
+            .comment("Most emeralds one trade call may spend on a villager's offer (0 turns trading off).")
+            .defineInRange("trade_max_emeralds", D.tradeMaxEmeralds(), 0, 640);
 
     static final ForgeConfigSpec SPEC = B.build();
 
@@ -154,6 +157,7 @@ public final class Config {
             b.visionCooldownSeconds = VISION_COOLDOWN.get();
             b.visionWidth = VISION_WIDTH.get();
             b.visionHeight = VISION_HEIGHT.get();
+            b.tradeMaxEmeralds = TRADE_MAX_EMERALDS.get();
         });
     }
 

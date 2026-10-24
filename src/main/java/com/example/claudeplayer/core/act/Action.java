@@ -1,5 +1,7 @@
 package com.example.claudeplayer.core.act;
 
+import java.util.List;
+
 /**
  * One parsed, validated tool call. Records only: ToolSchemas builds them, the game-side ActionRunner executes
  * them. Adding a tool means a record here, a schema entry in ToolSchemas, and a branch in the executor.
@@ -92,4 +94,55 @@ public sealed interface Action {
 
     /** A low-res picture of what the body sees, gated by VisionGate (once per turn, then a cooldown). */
     record Glance() implements Action {}
+
+    // skills (24 Oct)
+    /** One block of a {@link Build}; {@code item} is a short id, lower case, without the minecraft: prefix. Not an Action. */
+    record BuildBlock(int x, int y, int z, String item) {}
+
+    /** Places 1 to 64 blocks in list order, walking within reach of each and skipping blocks already there. */
+    record Build(List<BuildBlock> blocks) implements Action {
+        public Build {
+            blocks = List.copyOf(blocks);
+        }
+    }
+
+    /**
+     * Builds a 5x5 (outside) house with 3x3 inside, walls 3 high and a flat roof. x, y, z is the north-west outer corner
+     * at floor level (the walls stand on the blocks at y-1). {@code facing} (north, south, east or west) is the door's wall;
+     * {@code material} is a short block id, or null for the building block carried most of.
+     */
+    record BuildHouse(int x, int y, int z, String facing, String material) implements Action {}
+
+    /** Wanders {@code radius} blocks (8 to 64) from here for {@code minutes} (0.5 to 5), noting what it finds, then comes back. */
+    record Roam(int radius, double minutes) implements Action {}
+
+    /** Kills {@code count} (1 to 8) of one passive animal kind (cow, pig, sheep, chicken, rabbit) and picks up the drops. */
+    record Hunt(String animal, int count) implements Action {}
+
+    /** Breeds {@code pairs} (1 to 4) of one animal kind (cow, pig, sheep, chicken, rabbit). */
+    record Breed(String animal, int pairs) implements Action {}
+
+    /** Tames a wolf, cat or parrot; {@code entityId} is null for the nearest one. */
+    record Tame(String animal, Integer entityId) implements Action {}
+
+    /** Tells a pet tamed by the body to sit or follow ({@code command}). */
+    record Pet(int entityId, String command) implements Action {}
+
+    /** Walks to a bed and sleeps (at night or in a thunderstorm). */
+    record Sleep() implements Action {}
+
+    /** Walks home; with {@code store}, puts loot into the containers near home. */
+    record GoHome(boolean store) implements Action {}
+
+    /** Fishes until {@code count} (1 to 16) catches or {@code seconds} (10 to 120) pass. */
+    record Fish(int count, int seconds) implements Action {}
+
+    /** Lists a villager's trade offers. */
+    record TradeOffers(int entityId) implements Action {}
+
+    /** Buys offer number {@code offer} (0 to 31, from trade_offers) from a villager, {@code times} (1 to 16) times. */
+    record Trade(int entityId, int offer, int times) implements Action {}
+
+    /** Sorts the items among the containers within {@code radius} (2 to 8) of the body, by kind. */
+    record SortChests(int radius) implements Action {}
 }
