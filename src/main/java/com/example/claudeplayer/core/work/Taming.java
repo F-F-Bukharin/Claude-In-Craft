@@ -29,7 +29,7 @@ public final class Taming {
     private static final Map<String, List<String>> FOODS = Map.of(
             "wolf", List.of("bone"),
             "cat", List.of("cod", "salmon"),
-            "parrot", List.of("wheat_seeds", "melon_seeds", "pumpkin_seeds", "beetroot_seeds"));
+            "parrot", List.of("wheat_seeds", "melon_seeds", "pumpkin_seeds", "beetroot_seeds", "torchflower_seeds", "pitcher_pod"));
 
     private Taming() {}
 
@@ -131,8 +131,8 @@ public final class Taming {
                 .collect(Collectors.joining(", "));
     }
 
-    /** bone gives bones; cod, salmon and the seeds are already plural or a mass noun. */
+    /** bone gives bones, pitcher_pod pitcher_pods; cod, salmon and the seeds are already plural or a mass noun. */
     private static String noun(String item, int n) {
-        return n != 1 && item.equals("bone") ? "bones" : item;
+        return n != 1 && (item.equals("bone") || item.equals("pitcher_pod")) ? item + "s" : item;
     }
 }
