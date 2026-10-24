@@ -1,17 +1,22 @@
 # Claude Player: handoff
 
-The one handoff. Updated 23 Oct 2026 (night, Opus 5.5): `claude-player-next-session.md` is folded in here and removed. Read this first, then `CLAUDE.md`, then the modmap RULES.
+The one handoff. Updated 24 Oct 2026 (Opus 5.5), after the fix round and the standalone helper. Read this first, then `CLAUDE.md`, then the modmap RULES.
 
 ## Where things stand
-- **GitHub:** `dev` is pushed at `ca91c94` and matches `origin/dev`. `main` is at `1669171`, 28 commits behind `dev`, until F says to fast-forward it.
-- **`dev` holds, on top of `main`:**
+- **GitHub:** `dev` is pushed (24 Oct) and matches `origin/dev`. `main` is still at `1669171` until F says to fast-forward it.
+- **The 24 Oct round, merged into `dev`:**
+  - `fix/small-fixes`: ender chest refusal in `store` and `take`; `lava_near_player` is `denied:`; `use_bucket` takes an optional `fluid`; auto-eat counts hostiles within 16 blocks straight-line; a test pins a busy snapshot's JSON size.
+  - `fix/reflex-followups`: the chase-heard remainder (F1 to F4) and every piece 1 follow-up (section below).
+  - `fix/bridge-bugs`: warm-session bugs 1, 2, 4 and 5.
+  - `feat/claude-code-helper`: the standalone helper in `helper/` (section below).
+- **`dev` also holds, from 23 Oct:**
   - level gaze while walking, and crops and farmland on the map (`fix/gaze-and-crops`);
   - the Brain panel as a live text screen (`feat/claude-brain-text-gui`);
   - `till`, `plant`, `harvest` and `use_bucket` (`feat/farming-buckets`);
   - text vision, the `see` tool (`feat/text-vision`);
   - the combat routine, `fight` with auto-gear (`feat/combat-routine`);
   - glance part 1, the model side (`feat/glance-model-side`). The executor still answers `failed:no_client` until part 2.
-- `./gradlew build` is green with 263 tests (checked 23 Oct, night).
+- `./gradlew build` is green with 282 tests; `./gradlew -p helper build` is green with 57 (24 Oct).
 - F's flow: pull `dev`, push `dev`, fast-forward `main` on F's word.
 - **Account:** F is on the Max plan (23 Oct).
 - **Gradle needs Java 17:** `export JAVA_HOME="/c/Program Files/Eclipse Adoptium/jdk-17.0.20.101-hotspot"`. The PATH Java is a 32-bit Java 8 that breaks Gradle.
@@ -22,17 +27,12 @@ The one handoff. Updated 23 Oct 2026 (night, Opus 5.5): `claude-player-next-sess
 - **The game log** to read after F plays: `<profile>\logs\latest.log`. Look for `reflex` lines and `claude code reply ... tokens` lines.
 
 ## Work in flight
-Only `fix/chase-heard` (old base `23abe80`, before the 23 Oct merges). Review fixes for the chase rule:
-- F1 is committed (`93d292f`: only a mob the model heard about can chase).
-- F2 (a NONE decision rechecks after 10 ticks) is half done in `chase-heard-wip-F2.patch`, in the old session's scratchpad: `C:\Users\Huntress\AppData\Local\Temp\claude\C--Users-Huntress-OneDrive-Documents-Faculdade-Mods-Claude-In-Craft\26f10b8d-daec-48fa-b2ce-a6b4c1252d3c\scratchpad\`. The builder reports from 23 Oct sit there too.
-- F3 (a test for `reflexQuiet`'s `checkProgress`) and F4 (the Guardrails javadoc, and `/cp status` saying "weighted tokens") are not started.
-- Rebase onto `dev` first: `DamageWatcher` and `Reflexes` changed in the merges (combat touched both).
+Nothing. The 24 Oct builders' worktrees under `.claude/worktrees/` can be removed (`git worktree remove`); their branches are merged. Their reports are in session `02761c29`'s scratchpad: `C:\Users\Huntress\AppData\Local\Temp\claude\C--Users-Huntress--claude-spares-spare-ZmkL3R\02761c29-3a11-4d52-9219-e82b88985d0a\scratchpad\` (`small-fixes-report.md`, `reflex-followups-report.md`, `bridge-bugs-report.md`, `helper-report.md`).
 
-`feat/glance-vision` (at `78c0e13`) holds no code: its builder stopped while exploring. Its findings are in `glance-vision-report.md` in that scratchpad.
+`feat/glance-vision` (at `78c0e13`) holds no code: its builder stopped while exploring. Its findings are in `glance-vision-report.md` in the 23 Oct session's scratchpad (`...\26f10b8d-daec-48fa-b2ce-a6b4c1252d3c\scratchpad\`).
 
 ## Next, in order
-1. **Land the chase-heard remainder** (above).
-2. **Glance part 2, the renderer.**
+1. **Glance part 2, the renderer.**
    - Plugs in at `ActionExecutor` (the `Glance` branch): return `ActionResult.picture(png)` in place of `failed:no_client`, sized by `settings().visionWidth()`/`visionHeight()`. AgentLoop already admits at most one glance per turn and applies the cooldown (`VisionGate`), so the executor makes no gate calls.
    - A client-only class behind `FMLEnvironment.dist == Dist.CLIENT`.
    - The server thread asks the client thread (`Minecraft.getInstance().execute`) to render the level from the body's eyes (the client entity with the same network id) into an off-screen `TextureTarget` of `vision_width`×`vision_height`, with no HUD and no hand.
@@ -42,7 +42,8 @@ Only `fix/chase-heard` (old base `23abe80`, before the 23 Oct merges). Review fi
    - If a clean off-screen render isn't possible in 1.20.1, say so; don't ship something half-working.
    - Proven: Claude Code with the brain's lockdown flags takes a base64 PNG image block over stream-json mid-session, and Haiku 5.5 reads it. Image tokens are about w×h/750, so 320×180 is about 80 tokens.
    - Part 1 decisions for F to review: the cooldown starts at admission, so a failed glance still costs 15 s; a picture reported late forces one more model round.
-3. **Install and playtest:** the in-game checks below, plus farming, buckets, fight, `see` and `glance`.
+2. **Install and playtest:** the in-game checks below, plus farming, buckets, fight, `see` and `glance`.
+3. **A code-structure review on Fable** (F's idea, 24 Oct): a fresh reviewer that reads the code without the builders' framing, now that this round is in.
 
 ## Ideas: what we could and should do
 
@@ -58,15 +59,12 @@ Only `fix/chase-heard` (old base `23abe80`, before the 23 Oct merges). Review fi
 - **Usage warnings** (spec piece 4): read `rate_limit_event` (`five_hour` and `seven_day` utilization) from the warm session's stream-json; warn in chat at 80% and 90%; from 80% on, put caveman (the installed `caveman/SKILL.md` text) in the prompt; show it in `/cp status`. Less urgent for F on Max; it matters most for the friends package, where each friend plays on their own account.
 - **Think-harder:** an offer of `(y)/(n)` to switch to `claude_think_effort = max`, never while a hostile is within 16 blocks horizontally (spec section 8).
 - **Blockman** (spec piece 2, partly done by F's short chat): the pinned ORDER/STEP/POS/THREATS/QUEUE block at the end of each turn, so Claude doesn't lose track of the order.
-- **Warm-session bridge bugs** (item 4 under "In-game checks" has the list). Fix 1 and 2 before relying on it.
-- **Small fixes:**
-  - `store` and `take` on an ender chest should return `ender_chest_personal` (only `inspect` does);
-  - `HungerWatcher` still uses `hostilesXZ`, so decide whether 16 blocks straight-line fits it too;
-  - the lava refusal `lava_near_player` is `failed:`, while other policy refusals are `denied:`;
-  - `use_bucket` can't choose lava while it also carries a water bucket, so add an optional `fluid` argument;
-  - measure the snapshot with `map` plus `points` against the 2 KB target;
-  - the piece 1 follow-ups (below).
-- **Cleanup:** remove the finished worktrees under `.claude/worktrees/` (`git worktree remove`); all seven branches there are merged except `feat/glance-vision`, which is empty. `.gitignore` already covers `.claude/worktrees/`.
+- **The snapshot is over its target:** a busy scene measures 3108 bytes, against the 2 KB goal (`StateSnapshotTest` pins it at 3500). Decide whether to trim it (fewer inventory slots, shorter keys, players and hostiles capped lower) or raise the target.
+- **Bridge leftovers** (from `bridge-bugs-report.md`):
+  - a reset that lands before `send()` registers the call still lets that call run; AgentLoop drops its reply, so the cost is one wasted model call. Closing it needs a small AgentLoop change;
+  - `killLeftovers()` in `ClaudeCodeBrain`'s constructor still walks processes on whatever thread builds the brain.
+- **Switch the mod to the helper library**, so the bridge lives in one place (`helper/` and `core/brain/ClaudeCode*` are two copies now).
+- **Helper usage measurement and guard:** log tokens per model next to `rate_limit_event`'s 5-hour and weekly readings, so tokens per percent of the plan can be measured; then warn at 80% and refuse requests past a limit the user sets.
 
 **Could do:** sleep in a bed at night (the body counts toward the sleep vote); a `build` routine from a short block list; fishing; sorting chests; trading with villagers; taming; a `home` command so Claude goes back and stores loot.
 
@@ -109,14 +107,14 @@ Early gates, done in F's CurseForge playtests (22 and 23 Oct): quickstart, the d
    - Farming and buckets: `till`, `plant`, `harvest` (replants), `use_bucket` (lava only in the work area, never within 4 blocks of a player).
    - Helper: warm sessions are merged. Measured with the real prompt: opening turns 1.7 to 4.9 s, follow-up turns about 2 to 3.4 s, against 7.7 s cold before. Most of what's left is Haiku's thinking, which this CLI can't turn off (`MAX_THINKING_TOKENS`, `alwaysThinkingEnabled` and `CLAUDE_CODE_DISABLE_THINKING` were all tried).
    - Fixed: Haiku called game actions as native tools on 4 of 4 opening turns. The rendered prompt now says StructuredOutput is the only tool and lists actions compactly. Measured afterwards: 0 of 24.
-   - **Known bridge bugs, open**, from a fresh review of the warm sessions (verdict: ship after fixes). Fix 1 and 2 before relying on it:
-     1. The turn timeout doesn't cover the stdin write: a cold child stalled before reading stdin can hang the brain thread. `/cp stop` or a new order kills it.
-     2. A `reset()` during an opening's start is lost, so `/cp stop` right after an order doesn't stop that model call.
+   - **Bridge bugs**, from a fresh review of the warm sessions. All fixed; none checked in game:
+     1. FIXED 24 Oct: the turn timeout covers the stdin write (the prompt goes out from a writer thread), so a stalled cold child times out and is killed.
+     2. FIXED 24 Oct: a reset at any point of a call (start, write, read) ends it as cancelled, so `/cp stop` right after an order stops that model call.
      3. FIXED 23 Oct (untested on Linux and macOS): `isClaude` also matches by command line (`--input-format stream-json` plus `--system-prompt-file`) when the path is a resolved symlink or node.
-     4. `reset()` does a process walk and pid-file I/O on the server thread.
-     5. The idle sweep can race a turn's start.
+     4. FIXED 24 Oct: a reset on the server thread only flags the call; the process walk and pid-file I/O run on a reaper thread (measured under 0.3 ms on the caller).
+     5. FIXED 24 Oct: a call claims its session under the sessions lock, so the idle sweep never stops it.
      6. FIXED 23 Oct: the scrub also removes `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY` and `AWS_BEARER_TOKEN_BEDROCK`.
-     - Branch `fix/warm-sessions` (commit 3328d70) was meant to hold an unfinished start on these, but it no longer exists locally. Start fresh.
+     - Watch: a stop during a session's start also kills the warm spare, so the next order starts cold (about 3.6 s).
    - The system prompt points to gather and dig for anything beyond a block or two. Autonomy says a failed goal call once, not every interval. Gather no longer stops with `inventory_full` when a partial stack of the target has room.
    - Next latency win: let a reply mark the order done, so a simple order ("come here", "say hi") skips the report turn. That's one model call instead of two.
 5. **Map view and short chat.** Every world_state carries `map` (17 by 17, feet level, crops 2 below to 1 above) and `map_origin`; `look` gives up to 49 by 49. Chat is capped at two lines of 100 characters, and the prompt asks for 15 words at most.
@@ -131,9 +129,34 @@ Early gates, done in F's CurseForge playtests (22 and 23 Oct): quickstart, the d
    - B3. While a level 3 flee runs, the panel shows the flee as running and any paused level 2 action as paused. It refreshes about once a second.
    - B4. Esc closes the panel, and the game keeps running behind it.
    - Watch in B1: a very long order makes a tall panel; check that it fits a small window.
+8. **The 24 Oct reflex fixes.**
+   - C1. Level 3, the body boxed in (no escape), a zombie walking in from 5 blocks. `fight` starts within about half a second of the zombie reaching 2 blocks (`reflex FIGHT`), not up to 2 s later.
+   - C2. At a HOLD level, a zombie that stays 4 blocks away gives only the first `near:` interrupt and no `reflex` lines, until it closes in.
+   - C3. Level 4, boxed in, a zombie arrives during an order. The flee fails, and the next turn carries `reflex flee: failed:no_escape`.
+   - C4. At `tool_phase` 4: `C kill that zombie`, then `C come here` mid-fight. The fight stops at once and the body walks to you; nothing from the first order runs afterwards.
+   - C5. `C follow me`, then walk along a lava pool, or step off a 20-block drop with the body at low HP. It halts at the edge, and the follow ends with `failed:hazard_lava` or `hazard_drop`.
+   - C6. At about 4 HP, `C walk to` a point across a slab or carpet bridge over a deep ravine. It crosses without `hazard_drop`.
+   - C7. In the Nether, a ghast hits from far off during a routine order. No `reflex FLEE`, the routine isn't scrapped, and the interrupt says "beyond 16 blocks".
+   - C8. `/cp status` says "weighted tokens".
+   - Watch TPS with several mobs near at a HOLD level: each recheck runs up to 8 path searches, now every half second per mob.
+9. **The 24 Oct small fixes.**
+   - `C put your logs in the ender chest` and `C take from the ender chest` get the "ender chests are personal" explanation.
+   - With a water and a lava bucket, `C pour lava there` pours lava (`use_bucket` with `fluid`); near another player it is `denied:lava_near_player`.
+   - Hungry, with bread, and a zombie in a cave 20 blocks below: the body eats (the hostile is out of straight-line range).
 
 ## Piece 1 follow-ups
-Done on `fix/reflex-followups` (23 Oct), with the chase-heard remainder (F1 to F4): a failed reflex is a note in the next turn; a dropped order spares only `reflex-` entries; several reflexes during one call all go out; `follow_player` uses move_to's hazard probe; the prompt says to give an approach and its attack the same prio; a slab, stair or carpet under the feet is floor for the probe; a hit from beyond `hostile_range` gets no reflex. Not checked in game yet.
+Done on `fix/reflex-followups` and merged 24 Oct, with the chase-heard remainder (F1 to F4): a failed reflex is a note in the next turn; a dropped order spares only `reflex-` entries; several reflexes during one call all go out; `follow_player` uses move_to's hazard probe; the prompt says to give an approach and its attack the same prio; a slab, stair or carpet under the feet is floor for the probe; a hit from beyond `hostile_range` gets no reflex. In-game checks C1 to C8 above.
+
+## The standalone Claude Code helper (`helper/`, 24 Oct)
+For F's friend, who wants Claude without an API key and without the mod.
+- A separate Gradle build, not part of the mod's: `./gradlew -p helper build` (57 tests). Package `com.example.claudecodehelper`; Gson is its only dependency, bundled into a fat jar.
+- A plain Java library: warm Claude Code sessions on the user's own login, with text, images, an optional JSON schema, usage and the `rate_limit_event` reading.
+- A server on 127.0.0.1:8787 shaped like the Messages API: `POST /v1/messages` (system, multi-turn, base64 PNG and JPEG, tools emulated with structured output, `stream: true` replayed as standard events), `GET /health`, an optional `--token`, a cap of 4 sessions (529 past it), and refusals for web pages and other Host names.
+- The zip: `helper/build/distributions/claude-code-helper-0.1.0.zip` holds the jar, `start-helper.bat`, `start-helper.sh` and `HOW-IT-WORKS.txt` (how it works, six setup steps, SDK examples, troubleshooting, limits, safety, terms). A copy went to F as `build/helper/claude-code-helper-0.1.0.zip`.
+- Smoke-tested against the real `claude` on Max: replies in 1.2 to 4.8 s, follow-ups reusing the warm session, tools, images, streaming, a wrong token refused. The Python and TypeScript SDK examples weren't run.
+- For F to review: tool input schemas go in the system prompt rather than being enforced; sessions stay warm after `end_turn` until the 10-minute idle stop; `/health` needs no token.
+- Frame (F, 24 Oct): one person, their own plan, on their own PC. Every request counts against that plan's limits.
+- Measured on 24 Oct from Claude Code's transcripts: building and testing the mod (22 to 24 Oct) would have cost about $102 at API rates (Opus 5.5 $97). The in-game brain's 94 logged replies on Haiku 5.5 came to $0.04.
 
 ## Playtest 1 (22 Oct, CurseForge)
 
@@ -194,7 +217,7 @@ Playtest 2 (23 Oct) asked for level gaze, crops on the map, farming, buckets, co
 
 ## How to pick up
 - To add a tool: a record in `core/act/Action.java`, an entry in `core/brain/ToolSchemas.java` (with a phase), a branch in `body/ActionExecutor.java` (or a core runner like `MemoryActions` for pure tools), and a ToolParseTest case. The pinned tool lists in ToolParseTest and ApiBrainTest (28 tools at phase 2) move with it.
-- Team: Opus 5.5 plans and reviews. Haiku 5.5 Max writes. Sonnet 5.5 takes the hard jobs. Briefs quote exact files.
+- Team (F, 24 Oct): Opus 5.5 plans, reviews, and builds the important fixes and new pieces; Haiku 5.5 builds the small, numerous fixes; Fable for a structure review. Builders run in parallel worktrees, commit on their branch, and never push. Briefs quote exact files.
 
 ## Gate log
 
@@ -212,4 +235,5 @@ Playtest 2 (23 Oct) asked for level gaze, crops on the map, farming, buckets, co
 - `docs/claude-player-modmap.md`: rules, layout, systems, keys, tools, facts, status.
 - `docs/claude-player-handoff.md`: this file.
 - `docs/superpowers/`: the Claude Code bridge spec and the piece 1 plan.
+- `helper/`: the standalone Claude Code helper, its own build; `helper/dist/HOW-IT-WORKS.txt` (also in the zip) is its guide.
 - `README.md`: setup and use. `CLAUDE.md`: rules for agents working in this repo.
