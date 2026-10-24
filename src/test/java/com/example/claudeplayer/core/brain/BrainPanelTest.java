@@ -58,7 +58,7 @@ class BrainPanelTest {
         assertEquals(List.of("(no plan)"), lines(v, "Thinking"));
         assertEquals(List.of("Nothing queued"), lines(v, "Queue"));
         assertEquals(List.of("Nothing yet"), lines(v, "Recent"));
-        assertEquals(List.of("caution 3 (Reasonable)", "attacks on", "step 0/12", "0 calls, 0 weighted tokens"),
+        assertEquals(List.of("caution 3 (Reasonable)", "attacks on", "step 0/12", "0 calls, 0 weighted tokens this hour"),
                 lines(v, "Status"));
     }
 
@@ -91,7 +91,7 @@ class BrainPanelTest {
 
     @Test
     void thinkingShowsThePlanAndWhatWasSaid() {
-        assertEquals(List.of("Mining oak to the north: F wants planks", "said: \"On my way.\""),
+        assertEquals(List.of("Mining oak to the north: F wants planks", "said in chat: \"On my way.\""),
                 lines(thinking("Mining oak to the north: F wants planks", "On my way.", false), "Thinking"));
     }
 
@@ -149,7 +149,7 @@ class BrainPanelTest {
     void statusShowsCautionAttacksStepsAndTokens() {
         BrainPanel.View v = new BrainPanel.View("Felipe", "go", false, false, null, null, false, List.of(), List.of(),
                 4, 12, 5, "Innocent", false, 7, 12345);
-        assertEquals(List.of("caution 5 (Innocent)", "attacks off", "step 4/12", "7 calls, 12345 weighted tokens"),
+        assertEquals(List.of("caution 5 (Innocent)", "attacks off", "step 4/12", "7 calls, 12345 weighted tokens this hour"),
                 lines(v, "Status"));
     }
 

@@ -1244,10 +1244,14 @@ class AgentLoopTest {
         return new Brain.Reply(r.id(), r.content(), r.toolCalls(), r.text(), r.stopReason(), r.usage(), plan);
     }
 
+    private static Brain.Reply withText(Brain.Reply r, String text) {
+        return new Brain.Reply(r.id(), r.content(), r.toolCalls(), text, r.stopReason(), r.usage(), r.plan());
+    }
+
     @Test
     void thePanelKeepsTheLatestPlanAndReplyTextUntilTheNextOrder() {
         build(b -> b.maxSteps = 7);
-        script.add(withPlan(tools(say("t1")), "Greeting F: F asked me to"));
+        script.add(withText(withPlan(tools(say("t1")), "Greeting F: F asked me to"), "Let me think."));
         script.add(text("Done!"));
         loop.startOrder("F", "say hi");
         assertTrue(loop.callInFlight(), "the first call is out");
@@ -1257,10 +1261,11 @@ class AgentLoopTest {
         pump();
         assertFalse(loop.callInFlight());
         assertEquals("Greeting F: F asked me to", loop.plan());
-        assertEquals(null, loop.lastReplyText(), "a reply with only tool calls has no text");
+        assertEquals(null, loop.lastReplyText(), "text beside tool calls never reaches chat, so the panel doesn't show it");
         ticks(1);
         assertEquals("Greeting F: F asked me to", loop.plan(), "a reply without a plan keeps the last one");
-        assertEquals("Done!", loop.lastReplyText());
+        assertEquals(List.of("Done!"), said);
+        assertEquals("Done!", loop.lastReplyText(), "what went to chat");
         assertFalse(loop.active());
 
         script.add(text("Again."));

@@ -9,12 +9,14 @@ import com.example.claudeplayer.core.brain.BrainPanel;
 import com.example.claudeplayer.core.safety.CautionLevel;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Supplier;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.fml.DistExecutor;
+import net.minecraftforge.network.NetworkDirection;
 import net.minecraftforge.network.NetworkEvent;
 import net.minecraftforge.network.NetworkRegistry;
 import net.minecraftforge.network.PacketDistributor;
@@ -40,9 +42,11 @@ public final class BrainNetwork {
     private BrainNetwork() {}
 
     public static void register() {
-        CHANNEL.registerMessage(0, PanelPacket.class, PanelPacket::encode, PanelPacket::decode, PanelPacket::handle);
+        // Each packet has one direction: a client (a LAN guest included) can't send the host a panel to open.
+        CHANNEL.registerMessage(0, PanelPacket.class, PanelPacket::encode, PanelPacket::decode, PanelPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
         CHANNEL.registerMessage(1, RefreshRequest.class, RefreshRequest::encode, RefreshRequest::decode,
-                RefreshRequest::handle);
+                RefreshRequest::handle, Optional.of(NetworkDirection.PLAY_TO_SERVER));
     }
 
     /** Whether this player may see the panel: the same players who may use /cp. */
@@ -107,8 +111,9 @@ public final class BrainNetwork {
         }
 
         void handle(Supplier<NetworkEvent.Context> ctx) {
-            ctx.get().enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> BrainScreen.receive(open, sections)));
             ctx.get().setPacketHandled(true);
+            if (ctx.get().getDirection() != NetworkDirection.PLAY_TO_CLIENT) return; // never from a client
+            ctx.get().enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> BrainScreen.receive(open, sections)));
         }
 
         /** Never null, and short enough for writeUtf's cap (which counts chars). */
@@ -129,6 +134,8 @@ public final class BrainNetwork {
         }
 
         void handle(Supplier<NetworkEvent.Context> ctx) {
+            ctx.get().setPacketHandled(true);
+            if (ctx.get().getDirection() != NetworkDirection.PLAY_TO_SERVER) return; // only a client asks
             ServerPlayer sender = ctx.get().getSender();
             ctx.get().enqueueWork(() -> {
                 AgentRuntime rt = AgentRuntime.get();
