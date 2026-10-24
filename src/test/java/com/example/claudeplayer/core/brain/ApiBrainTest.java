@@ -89,6 +89,7 @@ class ApiBrainTest {
         assertEquals("move_to", reply.toolCalls().get(0).name());
         assertEquals(64, reply.toolCalls().get(0).input().get("y").getAsInt());
         assertEquals(new Brain.Usage(120, 40, 0, 900), reply.usage());
+        assertEquals(null, reply.plan(), "the API brain's text is its chat reply; it has no separate plan");
     }
 
     @Test

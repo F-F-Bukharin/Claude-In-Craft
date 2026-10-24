@@ -40,8 +40,12 @@ import org.slf4j.LoggerFactory;
 public final class ClaudeCodeBrain implements Brain {
     private static final Logger LOG = LoggerFactory.getLogger(ClaudeCodeBrain.class);
     private static final boolean WINDOWS = System.getProperty("os.name", "").startsWith("Windows");
+    /** The longest plan kept; the schema does not cap it, so longer ones are clipped here. */
+    static final int PLAN_MAX = 120;
     static final String SCHEMA = "{\"type\":\"object\",\"properties\":{"
             + "\"say\":{\"type\":\"string\",\"description\":\"Your chat report. Shown to players only when calls is empty.\"},"
+            + "\"plan\":{\"type\":\"string\",\"description\":\"Optional. One short line of at most 120 characters on what "
+            + "you are doing and why. Shown in the Brain panel, never in chat.\"},"
             + "\"calls\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{"
             + "\"name\":{\"type\":\"string\"},\"input\":{\"type\":\"object\"}},\"required\":[\"name\",\"input\"]}}},"
             + "\"required\":[\"say\",\"calls\"]}";
@@ -56,7 +60,9 @@ public final class ClaudeCodeBrain implements Brain {
             # How you act
             Answer with {"say": ..., "calls": [...]}. Each entry in calls is {"name": <action>, "input": {...}}, with \
             input as shown below; add "prio": 1, 2 or 3 to input when it matters. The results come back in the next \
-            turn. When the order is finished, or you can't go on, leave calls empty and put your report in say.
+            turn. When the order is finished, or you can't go on, leave calls empty and put your report in say. \
+            Add "plan": one short line (at most 120 characters) on what you are doing and why, for example \
+            "Mining the oak to the north: F wants planks". Players see it in the Brain panel, never in chat.
 
             # Actions (list them in calls; never call them directly)
             """;
@@ -397,12 +403,18 @@ public final class ClaudeCodeBrain implements Brain {
                 content.add(block);
             }
         }
+        // The plan is for the Brain panel only: it stays out of content, so the transcript is exactly as without it.
+        String plan = string(answer, "plan").strip();
+        if (plan.length() > PLAN_MAX) {
+            int cut = Character.isHighSurrogate(plan.charAt(PLAN_MAX - 1)) ? PLAN_MAX - 1 : PLAN_MAX;
+            plan = plan.substring(0, cut);
+        }
         JsonElement rawUsage = json.get("usage");
         JsonObject usage = rawUsage != null && rawUsage.isJsonObject() ? rawUsage.getAsJsonObject() : new JsonObject();
         return new Reply(string(json, "session_id"), content, List.copyOf(calls), say,
                 calls.isEmpty() ? "end_turn" : "tool_use", new Usage(integer(usage, "input_tokens"),
                 integer(usage, "output_tokens"), integer(usage, "cache_creation_input_tokens"),
-                integer(usage, "cache_read_input_tokens")));
+                integer(usage, "cache_read_input_tokens")), plan.isEmpty() ? null : plan);
     }
 
     private String run(Path systemFile, String prompt) throws BrainException {

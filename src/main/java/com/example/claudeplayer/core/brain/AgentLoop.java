@@ -133,6 +133,11 @@ public final class AgentLoop implements ActionQueue.Listener {
     private int goalCount;
     private final Deque<String> outcomes = new ArrayDeque<>(); // the last goals' result codes, oldest first
     private String lastGoalFailure; // the notice of the last failed goal call, so a repeat stays quiet
+    // For the Brain panel only; nothing here reaches the model or the transcript.
+    static final int RECENT_MAX = 5;
+    private String plan; // the latest non-blank plan; reset when an order, goal or reaction begins
+    private String lastReplyText; // the latest non-blank reply text; reset with plan
+    private final Deque<Recent> recent = new ArrayDeque<>(); // newest first, at most RECENT_MAX
 
     public AgentLoop(Settings settings, Brain brain, Executor brainThread, Executor mainThread, ActionQueue queue,
                      Guardrails guardrails, PromptBuilder prompts, ToolSchemas tools, Memory memory, Host host,
@@ -282,6 +287,38 @@ public final class AgentLoop implements ActionQueue.Listener {
         if (autonomyBy != null && orderFrom == null && queue.idle() && clockMillis.getAsLong() >= nextGoalAt) startGoal();
     }
 
+    /** One finished action, for the Brain panel. */
+    public record Recent(String tool, String code) {}
+
+    /** The latest plan of the current order (the last one shown after it ends); null if none. Server thread only. */
+    public String plan() {
+        return plan;
+    }
+
+    /** The latest non-blank reply text of the current order (the last one after it ends); null if none. */
+    public String lastReplyText() {
+        return lastReplyText;
+    }
+
+    /** The last {@link #RECENT_MAX} action results, newest first, across orders. */
+    public List<Recent> recentResults() {
+        return List.copyOf(recent);
+    }
+
+    /** Model rounds the current order has used. */
+    public int steps() {
+        return steps;
+    }
+
+    public int maxSteps() {
+        return settings.maxSteps();
+    }
+
+    /** Whether a model call is out right now. */
+    public boolean callInFlight() {
+        return inFlight;
+    }
+
     public String status() {
         if (orderFrom == null) return guardrails.halted() ? "halted" : "idle";
         String who = goal ? "autonomous goal #" + goalCount : orderFrom.isEmpty() ? "reacting to a threat" : "order from " + orderFrom;
@@ -297,6 +334,7 @@ public final class AgentLoop implements ActionQueue.Listener {
 
     @Override
     public void onFinished(ActionQueue.Entry entry, ActionResult result) {
+        remember(entry.tool(), result);
         Call call = pending.remove(entry.callId());
         if (call == null) { // a reflex, or a call from an abandoned order
             if (isReflex(entry) && result.isError() && orderFrom != null) {
@@ -340,6 +378,8 @@ public final class AgentLoop implements ActionQueue.Listener {
     private void begin(Opening first) {
         if (goal) recordGoal(first.kind() == Kind.ORDER ? "; an order took over" : "; a threat took over");
         abandon();
+        plan = null;
+        lastReplyText = null;
         opening = first;
         goal = first.kind() == Kind.GOAL;
         orderFrom = goal ? "" : first.player();
@@ -355,6 +395,8 @@ public final class AgentLoop implements ActionQueue.Listener {
             return;
         }
         guardrails.recordTokens(reply.usage().weighted());
+        if (reply.plan() != null && !reply.plan().isBlank()) plan = reply.plan();
+        if (reply.text() != null && !reply.text().isBlank()) lastReplyText = reply.text();
         JsonArray content = reply.content();
         if (content.isEmpty()) content = single(textBlock("(no reply)")); // the API rejects empty assistant turns
         messages.add(message("assistant", content));
@@ -385,6 +427,12 @@ public final class AgentLoop implements ActionQueue.Listener {
         startBatch(reply.toolCalls());
     }
 
+    /** Keeps an action result for the Brain panel: newest first, at most RECENT_MAX. */
+    private void remember(String tool, ActionResult result) {
+        recent.addFirst(new Recent(tool == null ? "" : tool, result.code()));
+        while (recent.size() > RECENT_MAX) recent.removeLast();
+    }
+
     private void startBatch(List<Brain.ToolCall> calls) {
         Batch next = new Batch();
         List<ActionQueue.Entry> entries = new ArrayList<>();
@@ -395,17 +443,20 @@ public final class AgentLoop implements ActionQueue.Listener {
             next.calls.add(call);
             if (i >= settings.batchSize()) {
                 call.result = ActionResult.denied("batch_limit");
+                remember(tc.name(), call.result);
                 continue;
             }
             ToolSchemas.Parsed parsed = tools.parse(tc.name(), tc.input());
             if (parsed.error() != null) {
                 call.result = parsed.error();
+                remember(tc.name(), call.result);
                 continue;
             }
             if (parsed.action() instanceof Action.Glance) {
                 String denied = vision.admit();
                 if (denied != null) {
                     call.result = ActionResult.denied(denied);
+                    remember(tc.name(), call.result);
                     continue;
                 }
             }
