@@ -127,4 +127,29 @@ class EscapeScoreTest {
         assertFalse(EscapeScore.clear(14, 0, threats, ESCAPE));
         assertTrue(EscapeScore.clear(3, 3, List.of(), ESCAPE));
     }
+
+    @Test
+    void aPathThatRunsPastAThreatIsRejected() {
+        Point body = new Point(0.5, 0.5);
+        List<Point> threats = List.of(new Point(5.5, 0.5));
+        List<Point> through = List.of(new Point(0.5, 0.5), new Point(3.5, 0.5), new Point(6.5, 0.5), new Point(10.5, 0.5));
+        List<Point> away = List.of(new Point(0.5, 0.5), new Point(-3.5, 0.5), new Point(-8.5, 0.5));
+        List<Point> wide = List.of(new Point(0.5, 0.5), new Point(3.5, 3.5), new Point(5.5, 3.5), new Point(9.5, 3.5));
+        List<Point> grazing = List.of(new Point(0.5, 0.5), new Point(5.5, 2.5), new Point(9.5, 2.5));
+        assertTrue(EscapeScore.runsPast(body, through, threats));
+        assertFalse(EscapeScore.runsPast(body, away, threats));
+        assertFalse(EscapeScore.runsPast(body, wide, threats), "3 blocks off the threat is past the 2.5 gap");
+        assertTrue(EscapeScore.runsPast(body, grazing, threats), "2 blocks off it is too close");
+        assertTrue(EscapeScore.runsPast(body, away, List.of(new Point(-6.5, 1.5), new Point(5.5, 0.5))), "any threat counts");
+    }
+
+    @Test
+    void aThreatAlreadyBesideTheBodyOnlyRejectsPathsThatGetCloser() {
+        Point body = new Point(0.5, 0.5);
+        List<Point> threats = List.of(new Point(2, 0.5));
+        assertFalse(EscapeScore.runsPast(body, List.of(new Point(0.5, 0.5), new Point(-0.5, 0.5), new Point(-4.5, 0.5)), threats),
+                "starting 1.5 away and backing off is fine");
+        assertTrue(EscapeScore.runsPast(body, List.of(new Point(0.5, 0.5), new Point(1.5, 0.5), new Point(5.5, 0.5)), threats));
+    }
+
 }

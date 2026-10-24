@@ -67,6 +67,24 @@ public final class EscapeScore {
         return true;
     }
 
+    /** A flee path never takes the body this close (flat) to a threat. */
+    public static final double PATH_GAP = 2.5;
+
+    /**
+     * Whether a flee path runs past a threat: some node comes within {@link #PATH_GAP} (flat) of any threat and closer
+     * to it than the body stands now. A threat already beside the body only rules out paths that close on it further.
+     */
+    public static boolean runsPast(Point body, List<Point> nodes, List<Point> threats) {
+        for (Point t : threats) {
+            double now = Math.hypot(body.x() - t.x(), body.z() - t.z());
+            double limit = Math.min(PATH_GAP, now);
+            for (Point n : nodes) {
+                if (Math.hypot(n.x() - t.x(), n.z() - t.z()) < limit) return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * The candidates worth path-checking, best first. A candidate within {@code escapeDistance} of ANY threat is
      * dropped (not only the nearest one). The rest are scored by their distance to the nearest threat, their mean
