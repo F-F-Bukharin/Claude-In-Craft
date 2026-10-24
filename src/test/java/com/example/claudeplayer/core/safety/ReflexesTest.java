@@ -47,6 +47,17 @@ class ReflexesTest {
     }
 
     @Test
+    void aThreatBeyondHostileRangeGetsNoReflex() {
+        // flee and fight only work on hostiles within hostile_range: a ghast's fireball from 30 blocks would scrap
+        // routine work for a flee that answers ok:no_threats
+        assertEquals(Reflexes.Move.NONE, Reflexes.decide(CautionLevel.REASONABLE, s(30, 1.0, true), false, true, 16), "flee stance");
+        assertEquals(Reflexes.Move.NONE, Reflexes.decide(CautionLevel.INNOCENT, s(16.5, 0.2, true), false, true, 16));
+        assertEquals(Reflexes.Move.NONE, Reflexes.decide(CautionLevel.GUNS_BLAZING, s(20, 1.0, true), false, true, 16), "fight stance");
+        assertEquals(Reflexes.Move.FLEE, Reflexes.decide(CautionLevel.REASONABLE, s(16, 1.0, true), false, true, 16), "16 is in range");
+        assertEquals(Reflexes.Move.FIGHT, Reflexes.decide(CautionLevel.GUNS_BLAZING, s(14, 1.0, true), false, true, 16));
+    }
+
+    @Test
     void holdDoesNothing() {
         assertEquals(Reflexes.Move.NONE, Reflexes.decide(CautionLevel.READY, s(10, 1.0, true), false, true));
     }
@@ -83,13 +94,28 @@ class ReflexesTest {
     }
 
     @Test
-    void aChaseIsDueWithinSixBlocksEveryTwoSeconds() {
-        assertTrue(Reflexes.chaseDue(4.0, 1000, 900, false), "in range and due");
-        assertTrue(Reflexes.chaseDue(6.0, 1000, 900, false), "6 blocks is in range");
-        assertFalse(Reflexes.chaseDue(6.5, 1000, 900, false), "too far");
-        assertFalse(Reflexes.chaseDue(4.0, 1000, 900, true), "a level 3 is running");
-        assertFalse(Reflexes.chaseDue(4.0, 1000, 961, false), "fired 39 ticks ago");
-        assertTrue(Reflexes.chaseDue(4.0, 1000, 960, false), "fired 40 ticks ago");
+    void aChaseIsDueWithinSixBlocksOnceItsWaitIsOver() {
+        assertTrue(Reflexes.chaseDue(4.0, 1000, 900, true, false), "in range and due");
+        assertTrue(Reflexes.chaseDue(6.0, 1000, 900, true, false), "6 blocks is in range");
+        assertFalse(Reflexes.chaseDue(6.5, 1000, 900, true, false), "too far");
+        assertFalse(Reflexes.chaseDue(4.0, 1000, 900, true, true), "a level 3 is running");
+        assertFalse(Reflexes.chaseDue(4.0, 1000, 1001, true, false), "due next tick");
+        assertTrue(Reflexes.chaseDue(4.0, 1000, 1000, true, false), "due this tick");
+    }
+
+    @Test
+    void aMoveWaitsTwoSecondsAndNoneHalfASecond() {
+        assertEquals(40, Reflexes.chaseWait(true), "a flee or a fight");
+        assertEquals(10, Reflexes.chaseWait(false), "NONE: a HOLD at 4 blocks gets its FIGHT soon once adjacent");
+        long due = 1000 + Reflexes.chaseWait(false); // NONE at 4 blocks on tick 1000
+        assertFalse(Reflexes.chaseDue(1.5, 1009, due, true, false));
+        assertTrue(Reflexes.chaseDue(1.5, 1010, due, true, false), "adjacent 10 ticks later, rechecked then, not at 40");
+    }
+
+    @Test
+    void aMobTheModelNeverHeardAboutNeverChases() {
+        assertFalse(Reflexes.chaseDue(1.0, 1000, Long.MIN_VALUE, false, false), "never stamped, right next to the body");
+        assertFalse(Reflexes.chaseDue(4.0, 1000, 900, false, false), "in range and past the gap");
     }
 
     @Test

@@ -227,6 +227,21 @@ class ActionQueueTest {
         assertEquals("move_to", q.runningTool());
     }
 
+    @Test
+    void cancelExceptKeepsOnlyTheEntriesItIsTold() {
+        ActionQueue q = queue(3.0);
+        q.enqueue(List.of(e("reflex-1", "flee", MOVE, 3)));
+        run(q, 1); // the reflex runs
+        q.enqueue(List.of(e("x", "stop", new Action.Stop(), 3), e("reflex-2", "flee", MOVE, 3), e("s", "say", SAY, 1)));
+        q.cancelExcept(entry -> entry.callId().startsWith("reflex-"));
+        assertEquals(List.of("x=cancelled", "s=cancelled"), results);
+        assertEquals("flee", q.runningTool(), "the running reflex is spared");
+        assertEquals(List.of("reflex-1", "reflex-2"), snapshotIds(q.snapshot()));
+        q.cancelExcept(entry -> false);
+        assertTrue(q.idle());
+        assertEquals(List.of("x=cancelled", "s=cancelled", "move cancelled", "reflex-1=cancelled", "reflex-2=cancelled"), results);
+    }
+
     private static List<String> snapshotIds(List<ActionQueue.Item> items) {
         return items.stream().map(i -> i.entry().callId()).toList();
     }

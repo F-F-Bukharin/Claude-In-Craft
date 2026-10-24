@@ -301,7 +301,7 @@ public final class AgentRuntime {
     public String status() {
         String state = body.alive() ? "in the world" : body.dead() ? "dead" : "not spawned";
         CautionLevel l = level();
-        return String.format(Locale.ROOT, "%s is %s | caution %d (%s) | %s | %s | queue: %s, %d waiting | memory: %d short, %d long | %d calls, %d tokens this session",
+        return String.format(Locale.ROOT, "%s is %s | caution %d (%s) | %s | %s | queue: %s, %d waiting | memory: %d short, %d long | %d calls, %d weighted tokens this session",
                 settings.bodyName(), state, l.number(), l.title, loop.status(), loop.autonomyStatus(),
                 Objects.requireNonNullElse(queue.runningTool(), "idle"), queue.waitingCount(),
                 memory.shortTerm().size(), memory.longTerm().size(), guardrails.callsMade(), guardrails.tokensUsed());

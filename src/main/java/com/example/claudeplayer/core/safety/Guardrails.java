@@ -35,7 +35,11 @@ public final class Guardrails {
         calls++;
     }
 
-    /** Counts every token the API processed, cache reads included, so the cap errs on the safe side. */
+    /**
+     * Adds one reply's weighted tokens, {@code Brain.Usage.weighted()}: input, output and cache writes in full,
+     * cache reads at a tenth (they cost about that). The token cap compares this sum with session_token_cap;
+     * {@code Usage.total()} still counts everything, for the logs.
+     */
     public void recordTokens(long count) {
         tokens += count;
     }
@@ -82,6 +86,7 @@ public final class Guardrails {
         return halted;
     }
 
+    /** Weighted tokens this session, the count the cap is checked against. */
     public long tokensUsed() {
         return tokens;
     }

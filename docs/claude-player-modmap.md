@@ -66,7 +66,7 @@ Paths are under `src/main/java/com/example/claudeplayer/` unless noted. Everythi
 | `core/chat/ChatLines.java` | Caps the body's chat at two lines of 100 characters, split at a sentence end or a space |
 | `body/ActionExecutor.java` | Runs world actions; Guardrails and CautionPolicy before any effect |
 | `nav/Navigator.java` | Steers the body along paths planned by an off-world zombie |
-| `nav/MoveHandle.java`, `nav/FollowHandle.java` | move_to (refuses lava, fire and deadly drops) and follow_player |
+| `nav/MoveHandle.java`, `nav/FollowHandle.java` | move_to and follow_player; both refuse lava, fire and deadly drops (one shared probe) |
 | `nav/EscapePlanner.java` | "Does a retreat path exist?" for the policy, and where `flee` runs to: straight away from the nearest threat first |
 | `event/ServerEvents.java` | Forge event wiring; right-click on the body sends the Brain panel |
 | `event/DamageWatcher.java` | Threat scan every 2 ticks (3D, `hostile_range`), the quiet chase re-flee, and hits: reflexes and interrupts; help calls at level 5 |
@@ -144,16 +144,18 @@ public record Verdict(boolean allowed, String reason) {}
 ### 8. Navigation
 - v1: vanilla navigation toward a target. No path gives `failed:no_path`. 10 s without arriving gives `failed:timeout`.
 - EscapePlanner uses the same pathing. A custom search is added only if vanilla navigation can't answer the escape question (decided in Phase 4).
-- Each tick, move_to probes 0.8 blocks ahead of the body. Lava, fire, or a drop that would kill refuses the move: the body halts and the move fails with `failed:hazard_lava`, `hazard_fire` or `hazard_drop`. A drop onto water is safe.
+- Each tick, move_to and follow_player probe 0.8 blocks ahead of the body. Lava, fire, or a drop that would kill refuses the move: the body halts and the move fails with `failed:hazard_lava`, `hazard_fire` or `hazard_drop`. A drop onto water is safe, and a slab, stair or carpet in the feet block is floor.
 
 ### 9. Interrupts
 - Interrupts: a threat (a hostile within `hostile_range` in a straight line, height included, or any hit on the body), a new order, or `stop`.
-- With `reflexes` on, code acts first. `Reflexes.decide` turns the level's stance into `flee` or a FIGHT, which queues `fight` (the routine) at level 3; below `tool_phase` 4 a FIGHT becomes a flee. A lit creeper is always fled from. Players and non-hostile mobs never trigger a reflex. The interrupt then tells Claude what ran, what was paused and what was scrapped; otherwise the queue is left alone. HOLD, or FIGHT out of reach, is an interrupt with no reflex.
+- With `reflexes` on, code acts first. `Reflexes.decide` turns the level's stance into `flee` or a FIGHT, which queues `fight` (the routine) at level 3; below `tool_phase` 4 a FIGHT becomes a flee. A lit creeper is always fled from. Players and non-hostile mobs never trigger a reflex. The interrupt then tells Claude what ran, what was paused and what was scrapped; otherwise the queue is left alone. HOLD is an interrupt with no reflex, and so is a hit from beyond `hostile_range` (a ghast): flee and fight only see hostiles within range.
 - With `reflexes` off, a threat interrupt cancels everything below level 3, sends results at once (unfinished actions report `cancelled`), and starts a new message.
 - Threat interrupts are debounced: one per threat, and no more than one every 5 seconds. Lit creepers have their own tracker with no gap. The scan runs every 2 ticks.
-- Chase rule: with `reflexes` on and no level 3 running or waiting, a hostile within 6 blocks re-runs the reflex decision at most once per mob every 2 s. A FLEE or FIGHT is queued as a reflex; NONE sends nothing. The rule is quiet: only the first reflex for a threat (the `near:`, `lit:` and `hit:` paths) tells the model. A re-fire only queues its level 3 actions, with no interrupt and no reaction call (`AgentLoop.reflexQuiet`).
+- Chase rule: with `reflexes` on and no level 3 running or waiting, a hostile within 6 blocks that the model heard about (its first reflex was delivered) re-runs the reflex decision: 2 s after a move, 10 ticks after a NONE. A FLEE or FIGHT is queued as a reflex; NONE sends nothing. The rule is quiet: only the first reflex for a threat (the `near:`, `lit:` and `hit:` paths) tells the model. A re-fire only queues its level 3 actions, with no interrupt and no reaction call (`AgentLoop.reflexQuiet`).
 - Reflexes still run after `C stop`; no model call follows while the kill switch is on.
-- An interrupt during a model call: the reply's tool calls are answered `cancelled` and the interrupt goes out with them. With no order running, an interrupt starts a reaction turn (`idle_reactions`), unless the kill switch is on.
+- A reflex that ends in an error (`failed:no_escape`, `hazard_*`, a denied swing) is a note in the next turn: `reflex flee: failed:no_escape`.
+- A dropped order (a new order, a reaction) cancels all its own calls, prio 3 included; only reflexes keep running.
+- An interrupt during a model call: the reply's tool calls are answered `cancelled` and the interrupt goes out with them; several interrupts during one call all go out. With no order running, an interrupt starts a reaction turn (`idle_reactions`), unless the kill switch is on.
 - Each interrupt carries the caution policy's advice (fight, hold, flee, flee and call for help).
 
 ### 10. Memory
@@ -212,7 +214,7 @@ Commands (`/cp`):
 | `/cp respawn` | Respawn after death, at home |
 | `/cp level <0-5>` | Set caution level (ops only) |
 | `/cp stop` | Halt now |
-| `/cp status` | Level, queue, calls and tokens this session |
+| `/cp status` | Level, queue, calls and weighted tokens (the token cap's count) this session |
 | `/cp keycheck` | One free count_tokens call to confirm the key and model work |
 | `/cp memory` | Show short- and long-term memory |
 | `/cp allow <name>`, `/cp deny <name>` | Edit the allowlist (ops) |
