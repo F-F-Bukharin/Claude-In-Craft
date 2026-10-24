@@ -31,6 +31,16 @@ public interface Brain {
         }
     }
 
-    /** {@code content} is the raw assistant content; it goes back into the transcript unchanged (thinking included). */
-    record Reply(String id, JsonArray content, List<ToolCall> toolCalls, String text, String stopReason, Usage usage) {}
+    /**
+     * {@code content} is the raw assistant content; it goes back into the transcript unchanged (thinking included).
+     * {@code plan} is one short line on what the model is doing and why, for the Brain panel only: never in chat and
+     * never in the transcript. Null when the backend gives none (the API brain's text is its chat reply).
+     */
+    record Reply(String id, JsonArray content, List<ToolCall> toolCalls, String text, String stopReason, Usage usage,
+                 String plan) {
+        /** A reply without a plan. */
+        public Reply(String id, JsonArray content, List<ToolCall> toolCalls, String text, String stopReason, Usage usage) {
+            this(id, content, toolCalls, text, stopReason, usage, null);
+        }
+    }
 }

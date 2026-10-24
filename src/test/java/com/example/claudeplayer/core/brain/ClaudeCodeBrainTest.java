@@ -151,4 +151,46 @@ class ClaudeCodeBrainTest {
         assertFalse(system.contains("input_schema") || system.contains("\"properties\""), "no JSON schemas: they read like tools");
         assertFalse(system.contains("\"prio\": integer"), "prio is optional and explained once");
     }
+
+    @Test
+    void thePlanIsParsedButStaysOutOfTheTranscript() throws BrainException {
+        String withPlan = SUCCESS.replace("{\"say\":\"On my way.\"",
+                "{\"say\":\"On my way.\",\"plan\":\"  Walking to F: F called me  \"");
+        Brain.Reply r = ClaudeCodeBrain.parseResult(withPlan, "cc4_");
+        assertEquals("Walking to F: F called me", r.plan());
+        assertEquals(3, r.content().size(), "text and two tool_use blocks, as without a plan");
+        assertFalse(r.content().toString().contains("Walking"), "the plan never enters the transcript");
+    }
+
+    @Test
+    void aMissingOrBlankPlanIsNull() throws BrainException {
+        assertEquals(null, ClaudeCodeBrain.parseResult(SUCCESS, "cc1_").plan());
+        String blank = SUCCESS.replace("{\"say\":\"On my way.\"", "{\"say\":\"On my way.\",\"plan\":\"   \"");
+        assertEquals(null, ClaudeCodeBrain.parseResult(blank, "cc1_").plan());
+        String notText = SUCCESS.replace("{\"say\":\"On my way.\"", "{\"say\":\"On my way.\",\"plan\":{\"x\":1}");
+        assertEquals(null, ClaudeCodeBrain.parseResult(notText, "cc1_").plan());
+    }
+
+    @Test
+    void aLongPlanIsClipped() throws BrainException {
+        String long_ = SUCCESS.replace("{\"say\":\"On my way.\"",
+                "{\"say\":\"On my way.\",\"plan\":\"" + "p".repeat(300) + "\"");
+        assertEquals(ClaudeCodeBrain.PLAN_MAX, ClaudeCodeBrain.parseResult(long_, "cc1_").plan().length());
+    }
+
+    @Test
+    void theSchemaOffersAPlanWithoutRequiringIt() {
+        var schema = JsonParser.parseString(ClaudeCodeBrain.SCHEMA).getAsJsonObject();
+        assertEquals("string", schema.getAsJsonObject("properties").getAsJsonObject("plan").get("type").getAsString());
+        assertFalse(schema.getAsJsonArray("required").toString().contains("plan"));
+        assertFalse(schema.getAsJsonObject("properties").getAsJsonObject("plan").has("maxLength"), "clipped in code");
+    }
+
+    @Test
+    void howToActTeachesThePlan() {
+        String system = ClaudeCodeBrain.renderSystem("You are Claude.", new JsonArray());
+        assertTrue(system.contains("\"plan\""), system);
+        assertTrue(system.contains("120 characters"), system);
+        assertTrue(system.contains("never in chat"), system);
+    }
 }

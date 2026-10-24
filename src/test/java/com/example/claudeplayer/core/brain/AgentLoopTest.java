@@ -850,4 +850,62 @@ class AgentLoopTest {
         assertTrue(on.contains("Use fight for a whole fight"), on);
         assertFalse(on.contains("switched off"), on);
     }
+
+    private static Brain.Reply withPlan(Brain.Reply r, String plan) {
+        return new Brain.Reply(r.id(), r.content(), r.toolCalls(), r.text(), r.stopReason(), r.usage(), plan);
+    }
+
+    @Test
+    void thePanelKeepsTheLatestPlanAndReplyTextUntilTheNextOrder() {
+        build(b -> b.maxSteps = 7);
+        script.add(withPlan(tools(say("t1")), "Greeting F: F asked me to"));
+        script.add(text("Done!"));
+        loop.startOrder("F", "say hi");
+        assertTrue(loop.callInFlight(), "the first call is out");
+        assertEquals(1, loop.steps());
+        assertEquals(7, loop.maxSteps());
+        assertEquals(null, loop.plan());
+        pump();
+        assertFalse(loop.callInFlight());
+        assertEquals("Greeting F: F asked me to", loop.plan());
+        assertEquals(null, loop.lastReplyText(), "a reply with only tool calls has no text");
+        ticks(1);
+        assertEquals("Greeting F: F asked me to", loop.plan(), "a reply without a plan keeps the last one");
+        assertEquals("Done!", loop.lastReplyText());
+        assertFalse(loop.active());
+
+        script.add(text("Again."));
+        loop.startOrder("F", "again");
+        assertEquals(null, loop.plan(), "a new order starts without the old plan");
+        assertEquals(null, loop.lastReplyText());
+        pump();
+        assertEquals("Again.", loop.lastReplyText());
+    }
+
+    @Test
+    void thePanelKeepsTheLastFiveResultsNewestFirst() {
+        build(b -> {});
+        script.add(tools(say("a"), call("b", "wait", "{\"seconds\":1}"), call("c", "get_state", "{}"),
+                call("d", "look", "{\"radius\":8}"), say("e"), call("f", "get_state", "{}")));
+        script.add(text("Done."));
+        loop.startOrder("F", "busy");
+        pump();
+        ticks(100);
+        assertEquals(List.of(new AgentLoop.Recent("get_state", "ok"), new AgentLoop.Recent("say", "ok"),
+                        new AgentLoop.Recent("look", "ok"), new AgentLoop.Recent("get_state", "ok"),
+                        new AgentLoop.Recent("wait", "ok")),
+                loop.recentResults());
+    }
+
+    @Test
+    void aCallRefusedBeforeTheQueueIsARecentResultToo() {
+        build(b -> {});
+        script.add(tools(call("x", "no_such_tool", "{}")));
+        script.add(text("Sorry."));
+        loop.startOrder("F", "do the impossible");
+        pump();
+        assertEquals(1, loop.recentResults().size());
+        assertEquals("no_such_tool", loop.recentResults().get(0).tool());
+        assertFalse(loop.recentResults().get(0).code().equals("ok"), loop.recentResults().get(0).code());
+    }
 }
