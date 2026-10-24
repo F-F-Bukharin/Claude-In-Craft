@@ -210,4 +210,23 @@ class HousePlanTest {
         assertEquals("needs 71 oak_planks, carries 40", HousePlan.countText(71, "oak_planks", 40));
         assertEquals("needs 71 blocks of one material, carries none", HousePlan.countText(71, null, 0));
     }
+
+    @Test
+    void aSiteTooFarFromTheBodyIsCaughtAtAnyCorner() {
+        assertFalse(HousePlan.siteTooFar(X, Z, X + 2.5, Z + 2.5));
+        assertFalse(HousePlan.siteTooFar(X, Z, X - 59, Z + 2.5), "the far corners are 63.5 east and 2 aside");
+        assertTrue(HousePlan.siteTooFar(X, Z, X - 60.5, Z + 2.5), "the east side is past 64");
+        assertTrue(HousePlan.siteTooFar(X, Z, X + 100, Z));
+    }
+
+    @Test
+    void standingOnACellMeansNearItsCentre() {
+        HousePlan.Cell c = new HousePlan.Cell(5, 64, -3);
+        assertTrue(HousePlan.onStand(5.5, 64, -2.5, c));
+        assertTrue(HousePlan.onStand(5.5 + 0.15, 64, -2.5 - 0.1, c));
+        assertFalse(HousePlan.onStand(5.5 + 0.3, 64, -2.5, c), "the body would reach into the next cell");
+        assertFalse(HousePlan.onStand(5.5, 65, -2.5, c), "a block up is another cell");
+        assertFalse(HousePlan.onStand(4.9, 64, -2.5, c), "the block next to it");
+        assertTrue(HousePlan.STAND_TOLERANCE + 0.3 <= 0.5, "a 0.6-wide body inside the tolerance stays inside the cell");
+    }
 }
