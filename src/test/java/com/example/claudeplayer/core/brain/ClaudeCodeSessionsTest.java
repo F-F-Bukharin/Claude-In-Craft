@@ -275,6 +275,39 @@ class ClaudeCodeSessionsTest {
     }
 
     @Test
+    void theSweepNeverStopsTheSessionALaterTurnClaimed() throws BrainException {
+        ClaudeCodeBrain brain = brain(5);
+        script.add(List.of(result(1, "[" + MOVE + "]")));
+        JsonArray messages = opening();
+        Brain.Reply first = brain.send(request(messages));
+        now.addAndGet(10 * 60_000); // a long action: the session has idled the whole time
+        brain.picked = brain::sweepIdle;
+        script.add(List.of(result(1, "[" + MOVE + "]")));
+
+        Brain.Reply second = brain.send(request(next(messages, first, "update two")));
+
+        assertEquals("tool_use", second.stopReason());
+        assertEquals(2, procs.get(0).written.size(), "the claimed session answered");
+        assertTrue(procs.get(0).alive);
+    }
+
+    @Test
+    void theSweepNeverStopsTheSpareAnOpeningClaimed() throws BrainException {
+        ClaudeCodeBrain brain = brain(5);
+        brain.prewarm("You are Claude.", new JsonArray());
+        now.addAndGet(10 * 60_000 - 1); // the spare is a moment from idle
+        brain.picked = () -> {
+            now.addAndGet(2);
+            brain.sweepIdle();
+        };
+        script.add(List.of(result(1, "[" + MOVE + "]")));
+
+        assertEquals("tool_use", brain.send(request(opening())).stopReason());
+        assertEquals(1, procs.get(0).written.size(), "the opening went to the spare it took");
+        assertTrue(procs.get(0).alive);
+    }
+
+    @Test
     void scrubRemovesEveryAnthropicVariable() {
         Map<String, String> env = new HashMap<>(Map.of("ANTHROPIC_API_KEY", "k", "ANTHROPIC_AUTH_TOKEN", "t",
                 "ANTHROPIC_BASE_URL", "u", "ANTHROPIC_MODEL", "m", "Anthropic_Custom", "c", "PATH", "p", "HOME", "h"));

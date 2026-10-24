@@ -65,6 +65,8 @@ public final class ClaudeCodeBrain implements Brain {
     private final ClaudeCodeEnv env;
     private final ClaudeCodeSessions sessions;
     private final AtomicLong replies = new AtomicLong();
+    /** Tests: runs after a call picks its session and before its prompt goes out (where the idle sweep could race it). */
+    volatile Runnable picked = () -> { };
 
     /** {@code workDir} must sit outside any project, so Claude Code finds no CLAUDE.md to load. */
     public ClaudeCodeBrain(Settings settings, Path workDir) {
@@ -115,6 +117,7 @@ public final class ClaudeCodeBrain implements Brain {
             session = sessions.take(command, turn);
             from = 0;
         }
+        picked.run();
         session.write(userLine(renderContent(messages, from)));
         sessions.refill(command); // the next spare starts while the model thinks
         Reply reply;

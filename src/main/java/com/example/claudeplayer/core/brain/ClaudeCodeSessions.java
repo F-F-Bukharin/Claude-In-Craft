@@ -87,7 +87,7 @@ final class ClaudeCodeSessions {
         private Thread errPump;
         private volatile String writeError;
         private volatile long lastUsed;
-        private volatile boolean busy;
+        private boolean claimed; // a call holds it: the sweep leaves it alone. Guarded by ClaudeCodeSessions.this
 
         private Session(Proc proc, List<String> command) {
             this.proc = proc;
@@ -101,8 +101,6 @@ final class ClaudeCodeSessions {
          * process frees the writer.
          */
         void write(String line) {
-            busy = true;
-            lastUsed = clock.getAsLong();
             byte[] bytes = (line + "\n").getBytes(StandardCharsets.UTF_8);
             daemon("claudeplayer-cc-in", () -> {
                 try {
@@ -148,9 +146,6 @@ final class ClaudeCodeSessions {
                 end(this);
                 Thread.currentThread().interrupt();
                 throw new BrainException(BrainException.Kind.INTERRUPTED, "interrupted");
-            } finally {
-                busy = false;
-                lastUsed = clock.getAsLong();
             }
         }
 
@@ -195,9 +190,14 @@ final class ClaudeCodeSessions {
         t.check();
     }
 
-    /** Ends the call, whatever happened to it. */
+    /** Ends the call, whatever happened to it: its session counts as idle from now. */
     synchronized void release(Turn t) {
         if (turn == t) turn = null;
+        if (t.session != null) {
+            t.session.claimed = false;
+            t.session.lastUsed = clock.getAsLong();
+            t.session = null;
+        }
     }
 
     /**
@@ -233,6 +233,7 @@ final class ClaudeCodeSessions {
             } else if (t.cancelled) {
                 refused = cancelled();
             } else {
+                s.claimed = true; // in the same step that makes it current, so the sweep never sees it unclaimed
                 current = s;
                 t.session = s;
                 return s;
@@ -242,9 +243,13 @@ final class ClaudeCodeSessions {
         throw refused;
     }
 
-    /** The current session for {@code t}, or null if there is none or {@code t} was cancelled. */
+    /**
+     * Claims the current session for {@code t}, or returns null if there is none (the sweep may have just stopped it)
+     * or {@code t} was cancelled. Claimed, the sweep can't stop it until {@link #release}.
+     */
     synchronized Session claimCurrent(Turn t) {
         if (current == null || t.cancelled) return null;
+        current.claimed = true;
         t.session = current;
         return current;
     }
@@ -308,16 +313,19 @@ final class ClaudeCodeSessions {
         return new BrainException(BrainException.Kind.INTERRUPTED, "cancelled");
     }
 
-    /** Stops the spare and the current session if unused for the idle time; a session mid-turn is never idle. */
+    /**
+     * Stops the spare and the current session if unused for the idle time. A session a call has claimed (or is
+     * taking: it is then in neither field) is never idle: claims and this check share the lock.
+     */
     void sweep() {
-        long now = clock.getAsLong();
         List<Session> idle = new ArrayList<>();
         synchronized (this) {
+            long now = clock.getAsLong();
             if (spare != null && now - spare.lastUsed >= idleMillis) {
                 idle.add(spare);
                 spare = null;
             }
-            if (current != null && !current.busy && now - current.lastUsed >= idleMillis) {
+            if (current != null && !current.claimed && now - current.lastUsed >= idleMillis) {
                 idle.add(current);
                 current = null;
             }
