@@ -51,9 +51,9 @@ public final class ToolSchemas {
         // v1
         add("get_state", 1, "Get a fresh world snapshot. Every message already ends with one; use this mid-batch to re-check.",
                 in -> new Action.GetState());
-        add("look", 1, "See farther: the same top-down map as world_state.map, with a radius of 4 to 24 blocks instead of 8. A radius of 24 is about 900 tokens, so ask for what you need.",
-                in -> new Action.Look(in.integer("radius", 4, 24)),
-                integer("radius", "Blocks from you to the map's edge, 4 to 24."));
+        add("look", 1, "See farther: the same top-down map as world_state.map, with a radius of 4 to 64 blocks instead of 8. Up to radius 24 each cell is one block and a radius of 24 is about 900 tokens; past that the view stays at most 49 cells across and each cell covers several blocks (the map's first line says the scale). Ask for what you need.",
+                in -> new Action.Look(in.integer("radius", 4, 64)),
+                integer("radius", "Blocks from you to the map's edge, 4 to 64."));
         add("see", 2, "See what is in your line of sight, as text, for when the map doesn't show it (the map can't see through walls): the blocks in front of you grouped by id with a count and the nearest one's position and distance, ores, containers and ripe crops listed first with exact positions, water and lava, and the living things in view with ids. A fan of rays 70 degrees wide and 40 tall, up to 32 blocks, under 1 KB. With a direction other than forward you turn to look that way first (up and down tilt your head).",
                 in -> new Action.See(seeDirection(in)),
                 optional(text("direction", "forward (default, the way you face), north, south, east, west, up or down.")));
@@ -142,6 +142,53 @@ public final class ToolSchemas {
         // vision
         add("glance", 2, "Take a low-res picture of what you see right now. For important moments: a rare or valuable target, or a player asking you to look. It has a cooldown.",
                 in -> new Action.Glance());
+        // skills (24 Oct)
+        add("build", 2, "Place up to 64 blocks in the order given: walks within reach of each block, places it, and skips blocks that are already there. List a block's support before the blocks that lean on it. ok reports how many were placed and skipped. Fails with missing_item:<id> (you don't carry it), no_support, blocked, no_path, or stopped_at:<index>:<reason>, which also says how many were placed.",
+                in -> new Action.Build(blocks(in)),
+                blockList("blocks", "1 to 64 blocks, placed in this order. Each is an object with x, y, z (the block's position) and item (the id to place, for example cobblestone)."));
+        add("build_house", 2, "Build a small house in one call: 5x5 outside, 3x3 inside, walls 3 high, a flat roof, and a door in the middle of the facing wall. If you carry a bed it goes inside and becomes your home. It needs 71 blocks of the material and a wooden door in your inventory (it doesn't craft). x, y, z is the house's north-west outer corner at floor level, so the walls stand on the blocks at y-1. Fails with missing_blocks (says how many are needed and carried), missing_door, site_blocked (the first blocking position), uneven_ground or no_path.",
+                in -> new Action.BuildHouse(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000), facing(in), material(in)),
+                integer("x", "North-west outer corner x."), integer("y", "Floor level y; the walls stand on the blocks at y-1."), integer("z", "North-west outer corner z."),
+                optional(text("facing", "The door's wall: north, south, east or west. Default south.")),
+                optional(text("material", "Block id for the walls and roof, for example oak_planks. Leave it out for the building block you carry most of.")));
+        add("roam", 2, "Explore on your own: wanders in directions you haven't seen, notes trees, ores, water, villages and animals as short-term notes with positions, comes back and reports once. Danger scraps it (prio 1). ok lists what it found; failed:no_path if there is nowhere to go.",
+                in -> new Action.Roam(in.has("radius") ? in.integer("radius", 8, 64) : 32, in.has("minutes") ? in.number("minutes", 0.5, 5) : 2.0),
+                optional(integer("radius", "Blocks from where you start, 8 to 64. Default 32.")),
+                optional(number("minutes", "How long to wander, 0.5 to 5. Default 2.")));
+        add("hunt", Settings.ATTACK_PHASE, "Hunt passive animals for food: fights the nearest animal of that kind and picks up the drops. Needs attacks on. Never touches players, villagers, named, tamed, leashed or baby animals. ok reports the kills and the drops; failed:no_animals or failed:timeout.",
+                in -> new Action.Hunt(animal(in, FARM_ANIMALS), in.has("count") ? in.integer("count", 1, 8) : 1),
+                text("animal", "cow, pig, sheep, chicken or rabbit."),
+                optional(integer("count", "How many to kill, 1 to 8. Default 1.")));
+        add("breed", 2, "Breed farm animals: feeds two adults of one kind the right food (cow and sheep: wheat; pig: carrot, potato or beetroot; chicken: any seeds; rabbit: carrot or dandelion). Fails with missing_food, no_pair (fewer than two adults near) or not_ready (cooldown, or babies).",
+                in -> new Action.Breed(animal(in, FARM_ANIMALS), in.has("pairs") ? in.integer("pairs", 1, 4) : 1),
+                text("animal", "cow, pig, sheep, chicken or rabbit."),
+                optional(integer("pairs", "How many pairs to breed, 1 to 4. Default 1.")));
+        add("tame", 2, "Tame a wolf (with bones), a cat (with raw cod or raw salmon) or a parrot (with seeds): keeps feeding the animal until it is tamed. Fails with missing_item, no_animal or not_tamed (gave up).",
+                in -> new Action.Tame(animal(in, PETS), in.has("entity_id") ? in.integer("entity_id", 0, Integer.MAX_VALUE) : null),
+                text("animal", "wolf, cat or parrot."),
+                optional(integer("entity_id", "The animal's id from world_state. Leave it out for the nearest one.")));
+        add("pet", 2, "Tell a pet you tamed to sit or follow you. Fails with not_mine (you didn't tame it) or no_target.",
+                in -> new Action.Pet(in.integer("entity_id", 0, Integer.MAX_VALUE), petCommand(in)),
+                integer("entity_id", "The pet's id."), text("command", "sit or follow."));
+        add("sleep", 2, "Sleep through the night: at night or in a thunderstorm, walks to the nearest bed within 16 blocks, or your home bed, and lies down. ok once you are asleep. Fails with not_night, no_bed, monsters_nearby, occupied or no_path.",
+                in -> new Action.Sleep());
+        add("go_home", 2, "Walk home. With store true, you then put your loot into the containers within 6 blocks of home, keeping tools, weapons, armor, food, torches and one stack of building blocks. Fails with no_home, no_path or no_container.",
+                in -> new Action.GoHome(in.has("store") && in.bool("store")),
+                optional(bool("store", "true to also store your loot in the containers near home. Default false.")));
+        add("fish", 2, "Fish: needs a fishing rod in your inventory and water within 8 blocks; casts and reels in until count catches or the time is up. ok reports the catch; failed:missing_rod or failed:no_water.",
+                in -> new Action.Fish(in.has("count") ? in.integer("count", 1, 16) : 4, in.has("seconds") ? in.integer("seconds", 10, 120) : 60),
+                optional(integer("count", "Catches to stop at, 1 to 16. Default 4.")),
+                optional(integer("seconds", "Longest time to fish, 10 to 120. Default 60.")));
+        add("trade_offers", 2, "List a villager's trade offers (the villager must be within 6 blocks): each one's index, what it costs, what it gives and the uses left. Fails with not_a_villager, too_far or no_offers.",
+                in -> new Action.TradeOffers(in.integer("entity_id", 0, Integer.MAX_VALUE)),
+                integer("entity_id", "The villager's id from world_state."));
+        add("trade", 2, "Buy an offer from a villager (within 6 blocks), up to times times, never spending more emeralds than the server's trade_max_emeralds in one call. Look at trade_offers first for the offer number. Fails with not_a_villager, too_far, out_of_stock, missing_payment or over_limit.",
+                in -> new Action.Trade(in.integer("entity_id", 0, Integer.MAX_VALUE), in.integer("offer", 0, 31), in.has("times") ? in.integer("times", 1, 16) : 1),
+                integer("entity_id", "The villager's id."), integer("offer", "The offer's index from trade_offers, 0 to 31."),
+                optional(integer("times", "How many times to buy it, 1 to 16. Default 1.")));
+        add("sort_chests", 2, "Tidy up storage: sorts the items among the containers within radius of you (ender chests excluded) by kind: blocks, ores and ingots, food, tools and weapons, and the rest. Notes what each container now holds. Fails with no_chests (needs 2 or more).",
+                in -> new Action.SortChests(in.has("radius") ? in.integer("radius", 2, 8) : 6),
+                optional(integer("radius", "Blocks around you to look for containers, 2 to 8. Default 6.")));
     }
 
     /** The enabled tools in a fixed order; a stable list keeps the prompt cache valid. */
@@ -190,8 +237,63 @@ public final class ToolSchemas {
 
     /** An item id for store, take and plant, lower case and without the minecraft: prefix (all only means something to store and take). */
     private static String item(Input in) {
-        String id = in.text("item", 64).toLowerCase(Locale.ROOT);
+        return item(in, "item");
+    }
+
+    private static String item(Input in, String key) {
+        String id = in.text(key, 64).toLowerCase(Locale.ROOT);
         return id.startsWith("minecraft:") ? id.substring("minecraft:".length()) : id;
+    }
+
+    private static final Set<String> FARM_ANIMALS = Set.of("cow", "pig", "sheep", "chicken", "rabbit");
+    private static final Set<String> PETS = Set.of("wolf", "cat", "parrot");
+    private static final Set<String> FACINGS = Set.of("north", "south", "east", "west");
+    private static final int MAX_BUILD_BLOCKS = 64;
+
+    /** One of {@code allowed}, lower case, from the "animal" field. */
+    private static String animal(Input in, Set<String> allowed) {
+        String a = in.text("animal", 16).toLowerCase(Locale.ROOT);
+        if (!allowed.contains(a)) throw new BadInput("animal");
+        return a;
+    }
+
+    /** sit or follow. */
+    private static String petCommand(Input in) {
+        String c = in.text("command", 8).toLowerCase(Locale.ROOT);
+        if (!Set.of("sit", "follow").contains(c)) throw new BadInput("command");
+        return c;
+    }
+
+    /** The door's wall for build_house: north, south, east or west, south when absent. */
+    private static String facing(Input in) {
+        if (!in.has("facing")) return "south";
+        String f = in.text("facing", 8).toLowerCase(Locale.ROOT);
+        if (!FACINGS.contains(f)) throw new BadInput("facing");
+        return f;
+    }
+
+    /** build_house's block id, or null when absent. */
+    private static String material(Input in) {
+        return in.has("material") ? item(in, "material") : null;
+    }
+
+    /** build's list: 1 to 64 objects with x, y, z and item; anything else is bad_input:blocks. */
+    private static List<Action.BuildBlock> blocks(Input in) {
+        JsonElement e = in.json().get("blocks");
+        if (e == null || !e.isJsonArray()) throw new BadInput("blocks");
+        JsonArray array = e.getAsJsonArray();
+        if (array.isEmpty() || array.size() > MAX_BUILD_BLOCKS) throw new BadInput("blocks");
+        List<Action.BuildBlock> out = new ArrayList<>(array.size());
+        for (JsonElement entry : array) {
+            if (!entry.isJsonObject()) throw new BadInput("blocks");
+            try {
+                Input b = new Input(entry.getAsJsonObject());
+                out.add(new Action.BuildBlock(b.integer("x", -30_000_000, 30_000_000), b.integer("y", -64, 320), b.integer("z", -30_000_000, 30_000_000), item(b, "item")));
+            } catch (BadInput bad) {
+                throw new BadInput("blocks");
+            }
+        }
+        return out;
     }
 
     /** "water" or "lava" for use_bucket, or null when absent. */
@@ -238,6 +340,33 @@ public final class ToolSchemas {
         return prop(name, "string", description);
     }
 
+    private static Prop bool(String name, String description) {
+        return prop(name, "boolean", description);
+    }
+
+    /** An array of 1 to 64 objects, each with x, y, z (integers) and item (a string), all required. */
+    private static Prop blockList(String name, String description) {
+        JsonObject entry = new JsonObject();
+        JsonObject entryProps = new JsonObject();
+        entryProps.add("x", integer("x", "Block x.").schema());
+        entryProps.add("y", integer("y", "Block y.").schema());
+        entryProps.add("z", integer("z", "Block z.").schema());
+        entryProps.add("item", text("item", "Item id to place, for example cobblestone.").schema());
+        JsonArray entryRequired = new JsonArray();
+        for (String k : List.of("x", "y", "z", "item")) entryRequired.add(k);
+        entry.addProperty("type", "object");
+        entry.add("properties", entryProps);
+        entry.add("required", entryRequired);
+        entry.addProperty("additionalProperties", false);
+        JsonObject schema = new JsonObject();
+        schema.addProperty("type", "array");
+        schema.addProperty("description", description);
+        schema.addProperty("minItems", 1);
+        schema.addProperty("maxItems", MAX_BUILD_BLOCKS);
+        schema.add("items", entry);
+        return new Prop(name, schema);
+    }
+
     private static Prop prop(String name, String type, String description) {
         JsonObject schema = new JsonObject();
         schema.addProperty("type", type);
@@ -262,6 +391,17 @@ public final class ToolSchemas {
             double v = numeric(key);
             if (v != Math.rint(v) || v < min || v > max) throw new BadInput(key);
             return (int) v;
+        }
+
+        /** A JSON boolean, or the string "true" or "false". */
+        boolean bool(String key) {
+            JsonElement e = json.get(key);
+            if (e == null || !e.isJsonPrimitive()) throw new BadInput(key);
+            if (e.getAsJsonPrimitive().isBoolean()) return e.getAsBoolean();
+            String s = e.getAsString().strip().toLowerCase(Locale.ROOT);
+            if (s.equals("true")) return true;
+            if (s.equals("false")) return false;
+            throw new BadInput(key);
         }
 
         String text(String key, int maxLen) {

@@ -18,7 +18,8 @@ public record Settings(
         int toolPhase, boolean idleReactions, boolean reflexes, boolean autoEat,
         int shortTermCapacity, int shortTermMinutes, int longTermCapacity,
         int claudeCodeIdleMinutes, int autonomyIntervalSeconds,
-        int visionCooldownSeconds, int visionWidth, int visionHeight) {
+        int visionCooldownSeconds, int visionWidth, int visionHeight,
+        int tradeMaxEmeralds) {
 
     /** {@code brain}: the player's Claude Code CLI (their subscription), or the Messages API with a key. */
     public static final String BRAIN_CLAUDE_CODE = "claude_code";
@@ -97,6 +98,8 @@ public record Settings(
         public int visionCooldownSeconds = 15;
         public int visionWidth = 320;
         public int visionHeight = 180;
+        /** Most emeralds one trade call may spend; 0 turns trading off. */
+        public int tradeMaxEmeralds = 32;
 
         public Settings build() {
             return new Settings(brain, claudeCodePath, claudeCodeTimeoutSeconds, model, apiKeyEnv, effort, maxTokens, requestTimeoutSeconds, promptCaching, logPrompts,
@@ -105,7 +108,8 @@ public record Settings(
                     escapeDistance, escapeMaxSteps, toolPhase, idleReactions, reflexes, autoEat,
                     shortTermCapacity, shortTermMinutes, longTermCapacity,
                     claudeCodeIdleMinutes, autonomyIntervalSeconds,
-                    visionCooldownSeconds, visionWidth, visionHeight);
+                    visionCooldownSeconds, visionWidth, visionHeight,
+                    tradeMaxEmeralds);
         }
     }
 }
