@@ -4,7 +4,7 @@ import com.example.claudeplayer.AgentRuntime;
 import com.example.claudeplayer.ClaudePlayerMod;
 import com.example.claudeplayer.body.AgentPlayer;
 import com.example.claudeplayer.command.CpCommands;
-import com.example.claudeplayer.gui.BrainMenu;
+import com.example.claudeplayer.net.BrainNetwork;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraftforge.event.RegisterCommandsEvent;
@@ -62,14 +62,14 @@ public final class ServerEvents {
         if (rt != null) rt.damage().onHurt(event);
     }
 
-    /** Right-clicking the body opens the Brain screen, for the same players who may use /cp. Anyone else gets nothing. */
+    /** Right-clicking the body sends the Brain panel, to the same players who may use /cp. Anyone else gets nothing. */
     @SubscribeEvent
     public static void onEntityInteract(PlayerInteractEvent.EntityInteract event) {
         AgentRuntime rt = AgentRuntime.get();
         if (rt == null || event.getLevel().isClientSide() || event.getHand() != InteractionHand.MAIN_HAND) return;
         if (!(event.getTarget() instanceof AgentPlayer) || !(event.getEntity() instanceof ServerPlayer player)) return;
-        if (!CpCommands.canControl(player.createCommandSourceStack())) return;
-        BrainMenu.open(player, rt);
+        if (!BrainNetwork.mayOpen(player)) return;
+        BrainNetwork.sendPanel(player, rt, true);
         event.setCanceled(true);
     }
 }

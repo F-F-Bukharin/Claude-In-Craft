@@ -1,0 +1,6 @@
+// A build of its own: the root build (the mod) never includes it. Build it with ./gradlew -p helper build.
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '0.7.0'
+}
+
+rootProject.name = 'claude-code-helper'

@@ -1,8 +1,17 @@
 package com.example.claudeplayer.core.act;
 
-/** The outcome of one tool call, sent back to the model as a short code. */
-public record ActionResult(Status status, String reason, String data) {
+/** The outcome of one tool call, sent back to the model as a short code; glance adds a PNG ({@code png}, else null). */
+public record ActionResult(Status status, String reason, String data, byte[] png) {
     public enum Status { OK, DENIED, FAILED, CANCELLED, SCRAPPED, QUEUED }
+
+    public ActionResult(Status status, String reason, String data) {
+        this(status, reason, data, null);
+    }
+
+    /** ok plus a picture (glance): the model gets the image and the code. */
+    public static ActionResult picture(byte[] png) {
+        return new ActionResult(Status.OK, null, null, png);
+    }
 
     public static ActionResult ok() {
         return new ActionResult(Status.OK, null, null);

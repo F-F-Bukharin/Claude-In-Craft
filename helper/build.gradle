@@ -1,0 +1,79 @@
+plugins {
+    id 'java'
+}
+
+group = 'com.example'
+version = '0.1.0'
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // The only runtime dependency, bundled into the jar.
+    implementation 'com.google.code.gson:gson:2.10.1'
+
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 17
+}
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        events 'failed'
+        exceptionFormat 'full'
+    }
+}
+
+// One fat jar: the library and the server, with Gson inside. `java -jar claude-code-helper.jar` starts the server.
+jar {
+    archiveFileName = 'claude-code-helper.jar'
+    manifest {
+        attributes 'Main-Class': 'com.example.claudecodehelper.server.Main',
+                'Implementation-Title': 'claude-code-helper',
+                'Implementation-Version': project.version
+    }
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    } {
+        exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'META-INF/MANIFEST.MF',
+                'module-info.class', 'META-INF/versions/*/module-info.class'
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+// build/distributions/claude-code-helper-<version>.zip: the jar, the start scripts and HOW-IT-WORKS.txt.
+def helperZip = tasks.register('helperZip', Zip) {
+    group = 'distribution'
+    description = 'Builds the zip a person downloads: jar, start scripts, HOW-IT-WORKS.txt.'
+    archiveBaseName = 'claude-code-helper'
+    archiveVersion = project.version.toString()
+    destinationDirectory = layout.buildDirectory.dir('distributions')
+    into("claude-code-helper-${project.version}") {
+        from(tasks.named('jar'))
+        // Line endings fixed here, whatever the checkout did: CRLF for Windows files, LF for the shell script.
+        from('dist') {
+            include 'HOW-IT-WORKS.txt', 'start-helper.bat'
+            filter(org.apache.tools.ant.filters.FixCrLfFilter,
+                    eol: org.apache.tools.ant.filters.FixCrLfFilter.CrLf.newInstance('crlf'))
+        }
+        from('dist') {
+            include 'start-helper.sh'
+            filePermissions { unix('rwxr-xr-x') }
+            filter(org.apache.tools.ant.filters.FixCrLfFilter,
+                    eol: org.apache.tools.ant.filters.FixCrLfFilter.CrLf.newInstance('lf'))
+        }
+    }
+}
+
+tasks.named('assemble') {
+    dependsOn helperZip
+}

@@ -19,6 +19,7 @@ import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
@@ -70,6 +71,8 @@ public final class ClaudeCodeBrain implements Brain {
     private final AtomicLong replies = new AtomicLong();
     private final UsageLedger ledger;
     private volatile CavemanSkill caveman; // null: no skill, so caveman stays off
+    /** Tests: runs after a call picks its session and before its prompt goes out (where the idle sweep could race it). */
+    volatile Runnable picked = () -> { };
 
     /** {@code workDir} must sit outside any project, so Claude Code finds no CLAUDE.md to load. */
     public ClaudeCodeBrain(Settings settings, Path workDir, UsageLedger ledger) {
@@ -78,12 +81,14 @@ public final class ClaudeCodeBrain implements Brain {
         this.ledger = ledger;
         this.env = new ClaudeCodeEnv(workDir);
         env.killLeftovers();
-        this.sessions = new ClaudeCodeSessions(env, settings.claudeCodeIdleMinutes() * 60_000L, System::currentTimeMillis, true);
+        this.sessions = new ClaudeCodeSessions(env, settings.claudeCodeIdleMinutes() * 60_000L, System::currentTimeMillis,
+                true, ClaudeCodeSessions.reaper());
     }
 
-    /** Tests: scripted processes, a fake clock, idle stops only when the test sweeps, and kills run inline. */
-    ClaudeCodeBrain(Settings settings, Path workDir, ClaudeCodeSessions.Launcher launcher, LongSupplier clock) {
-        this(settings, workDir, launcher, clock, new UsageLedger(settings.usageWarnAt(), new UsageLedger.Store() {
+    /** Tests: scripted processes, a fake clock, the test's reaper, idle stops only when the test sweeps, no usage file. */
+    ClaudeCodeBrain(Settings settings, Path workDir, ClaudeCodeSessions.Launcher launcher, LongSupplier clock,
+            Executor reaper) {
+        this(settings, workDir, launcher, clock, reaper, new UsageLedger(settings.usageWarnAt(), new UsageLedger.Store() {
             @Override
             public JsonObject load() {
                 return new JsonObject();
@@ -96,12 +101,12 @@ public final class ClaudeCodeBrain implements Brain {
 
     /** As above, with the ledger the test reads back. */
     ClaudeCodeBrain(Settings settings, Path workDir, ClaudeCodeSessions.Launcher launcher, LongSupplier clock,
-                    UsageLedger ledger) {
+            Executor reaper, UsageLedger ledger) {
         this.settings = settings;
         this.workDir = workDir;
         this.ledger = ledger;
         this.env = new ClaudeCodeEnv(workDir);
-        this.sessions = new ClaudeCodeSessions(launcher, settings.claudeCodeIdleMinutes() * 60_000L, clock, false, Runnable::run);
+        this.sessions = new ClaudeCodeSessions(launcher, settings.claudeCodeIdleMinutes() * 60_000L, clock, false, reaper);
     }
 
     @Override
@@ -112,7 +117,25 @@ public final class ClaudeCodeBrain implements Brain {
         JsonArray messages = request.messages();
         if (messages.size() == 1) ledger.startOrder(); // a transcript's first turn is a new order
         long started = System.nanoTime();
-        ClaudeCodeSessions.Session session = sessions.claimCurrent();
+        long deadline = started + settings.claudeCodeTimeoutSeconds() * 1_000_000_000L; // the whole turn, write included
+        ClaudeCodeSessions.Turn turn = sessions.begin(); // a reset from here on cancels this call
+        Reply reply;
+        try {
+            reply = turn(command, spareCommand, messages, deadline, turn);
+            sessions.finish(turn);
+        } finally {
+            sessions.release(turn);
+        }
+        Usage u = reply.usage();
+        LOG.info("claude code reply {}: stop={} calls={} ms={} tokens in={} out={} cache_write={} cache_read={}", reply.id(),
+                reply.stopReason(), reply.toolCalls().size(), (System.nanoTime() - started) / 1_000_000, u.input(),
+                u.output(), u.cacheWrite(), u.cacheRead());
+        return reply;
+    }
+
+    private Reply turn(List<String> command, List<String> spareCommand, JsonArray messages, long deadline,
+            ClaudeCodeSessions.Turn turn) throws BrainException {
+        ClaudeCodeSessions.Session session = sessions.claimCurrent(turn);
         int from = session == null ? -1 : continues(session.seen, messages);
         // A session started with other flags (the effort changed) can't carry on: a new one reads the whole transcript.
         if (session != null && !session.command.equals(command)) from = -1;
@@ -120,23 +143,24 @@ public final class ClaudeCodeBrain implements Brain {
             if (messages.size() > 1) {
                 LOG.info("claude code session restarts from the whole transcript ({} messages)", messages.size());
             }
-            session = sessions.take(command);
+            session = sessions.take(command, turn);
             from = 0;
         }
-        session.write(userLine(renderTranscript(messages, from)), settings.claudeCodeTimeoutSeconds() * 1000L);
-        sessions.refill(spareCommand); // the next spare starts while the model thinks
+        picked.run();
+        session.write(userLine(renderContent(messages, from)));
+        sessions.refill(spareCommand); // the next spare starts while the model thinks, at the configured effort
         Reply reply;
         try {
             String result;
             try {
-                result = session.await(settings.claudeCodeTimeoutSeconds() * 1000L);
+                result = session.await(deadline, turn);
             } finally {
                 feedLedger(); // the event comes before the result, and matters most when the turn fails
             }
             reply = parseResult(result, "cc" + replies.incrementAndGet() + "_");
         } catch (BrainException e) {
             sessions.end(session);
-            throw atLimit(e);
+            throw atLimit(turn.or(e));
         }
         ledger.onTokens(reply.usage().total());
         if (reply.toolCalls().isEmpty()) {
@@ -149,10 +173,6 @@ public final class ClaudeCodeBrain implements Brain {
             seen.add(answer);
             session.seen = seen;
         }
-        Usage u = reply.usage();
-        LOG.info("claude code reply {}: stop={} calls={} ms={} tokens in={} out={} cache_write={} cache_read={}", reply.id(),
-                reply.stopReason(), reply.toolCalls().size(), (System.nanoTime() - started) / 1_000_000, u.input(),
-                u.output(), u.cacheWrite(), u.cacheRead());
         return reply;
     }
 
@@ -178,7 +198,10 @@ public final class ClaudeCodeBrain implements Brain {
                 "Claude Code limit reached" + (resets.isEmpty() ? "" : ", resets " + resets), e.requestId());
     }
 
-    /** Kills the current order's session (the spare stays). Only destroys processes, so any thread may call it. */
+    /**
+     * Cancels the model call in flight (it ends as cancelled, wherever it was) and kills the current order's
+     * session; the spare stays. Any thread may call it.
+     */
     @Override
     public void reset() {
         sessions.endCurrent();
@@ -302,12 +325,26 @@ public final class ClaudeCodeBrain implements Brain {
 
     /** Only the messages from {@code from} on; earlier ones still name the tools their results refer to. */
     static String renderTranscript(JsonArray messages, int from) {
+        StringBuilder sb = new StringBuilder();
+        for (JsonElement b : renderContent(messages, from)) {
+            if (!Images.isImage(b)) sb.append(string(b.getAsJsonObject(), "text"));
+        }
+        return sb.toString();
+    }
+
+    /**
+     * The same text as one text block; the tail's pictures (glance) split it into text and image blocks where
+     * they occur. Without pictures the line is exactly what plain text gave, so a warm session's cache holds.
+     */
+    static JsonArray renderContent(JsonArray messages, int from) {
         Map<String, String> toolNames = new HashMap<>();
+        JsonArray blocks = new JsonArray();
         StringBuilder sb = new StringBuilder();
         StringBuilder skipped = new StringBuilder(); // already read: rendered only to learn tool names
         for (int i = 0; i < messages.size(); i++) {
             if (!messages.get(i).isJsonObject()) continue;
             StringBuilder to = i < from ? skipped : sb;
+            JsonArray images = i < from ? null : blocks;
             JsonObject message = messages.get(i).getAsJsonObject();
             boolean assistant = string(message, "role").equals("assistant");
             to.append(assistant ? "[you]\n" : "[game]\n");
@@ -316,18 +353,24 @@ public final class ClaudeCodeBrain implements Brain {
                 to.append(content.getAsString()).append('\n');
             } else if (content != null && content.isJsonArray()) {
                 for (JsonElement b : content.getAsJsonArray()) {
-                    if (b.isJsonObject()) renderBlock(b.getAsJsonObject(), toolNames, to);
+                    if (b.isJsonObject()) renderBlock(b.getAsJsonObject(), toolNames, to, images);
                 }
             }
             to.append('\n');
         }
-        return sb.append("Answer with your next step as JSON.").toString();
+        blocks.add(textBlock(sb.append("Answer with your next step as JSON.").toString()));
+        return blocks;
     }
 
     /** One stream-json user line carrying {@code text}. */
     static String userLine(String text) {
         JsonArray content = new JsonArray();
         content.add(textBlock(text));
+        return userLine(content);
+    }
+
+    /** One stream-json user line carrying these content blocks. */
+    static String userLine(JsonArray content) {
         JsonObject message = new JsonObject();
         message.addProperty("role", "user");
         message.add("content", content);
@@ -346,7 +389,8 @@ public final class ClaudeCodeBrain implements Brain {
         return seen.size();
     }
 
-    private static void renderBlock(JsonObject block, Map<String, String> toolNames, StringBuilder sb) {
+    /** {@code images}: where the tail's pictures go, after the text so far; null for an already-read message. */
+    private static void renderBlock(JsonObject block, Map<String, String> toolNames, StringBuilder sb, JsonArray images) {
         switch (string(block, "type")) {
             case "text" -> sb.append(string(block, "text")).append('\n');
             case "tool_use" -> {
@@ -358,9 +402,21 @@ public final class ClaudeCodeBrain implements Brain {
                 String name = toolNames.getOrDefault(string(block, "tool_use_id"), "tool");
                 sb.append("result of ").append(name).append(block.has("is_error") ? " (error)" : "").append(": ")
                         .append(resultText(block.get("content"))).append('\n');
+                if (block.get("content") instanceof JsonArray parts) {
+                    for (JsonElement part : parts) if (Images.isImage(part)) picture(part.getAsJsonObject(), sb, images);
+                }
             }
+            case "image" -> picture(block, sb, images);
             default -> { } // thinking and other blocks don't exist on this path
         }
+    }
+
+    /** Ends the text so far as its own block, then the picture. */
+    private static void picture(JsonObject image, StringBuilder sb, JsonArray images) {
+        if (images == null) return;
+        if (sb.length() > 0) images.add(textBlock(sb.toString()));
+        sb.setLength(0);
+        images.add(image.deepCopy());
     }
 
     /** Turns the CLI's {@code --output-format json} result into a Reply, or the right BrainException. */

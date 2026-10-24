@@ -228,38 +228,18 @@ class ActionQueueTest {
     }
 
     @Test
-    void cancelIfRemovesOnlyTheMatchingWaitingEntries() {
+    void cancelExceptKeepsOnlyTheEntriesItIsTold() {
         ActionQueue q = queue(3.0);
-        q.enqueue(List.of(e("m", "move_to", MOVE, 3)));
-        run(q, 2);
-        q.enqueue(List.of(e("a", "say", SAY, 3), e("b", "say", SAY, 3)));
-        q.cancelIf(en -> en.callId().equals("a"));
-        assertEquals(List.of("a=cancelled"), results);
-        assertEquals(List.of("m", "b"), snapshotIds(q.snapshot()));
-    }
-
-    @Test
-    void cancelIfCancelsAMatchingRunningEntry() {
-        ActionQueue q = queue(3.0);
-        q.enqueue(List.of(e("m", "move_to", MOVE, 1)));
-        run(q, 2);
-        q.cancelIf(en -> en.callId().equals("m"));
-        assertEquals(List.of("move cancelled", "m=cancelled"), results);
+        q.enqueue(List.of(e("reflex-1", "flee", MOVE, 3)));
+        run(q, 1); // the reflex runs
+        q.enqueue(List.of(e("x", "stop", new Action.Stop(), 3), e("reflex-2", "flee", MOVE, 3), e("s", "say", SAY, 1)));
+        q.cancelExcept(entry -> entry.callId().startsWith("reflex-"));
+        assertEquals(List.of("x=cancelled", "s=cancelled"), results);
+        assertEquals("flee", q.runningTool(), "the running reflex is spared");
+        assertEquals(List.of("reflex-1", "reflex-2"), snapshotIds(q.snapshot()));
+        q.cancelExcept(entry -> false);
         assertTrue(q.idle());
-    }
-
-    @Test
-    void cancelIfKeepsTheOrderOfWhatItSpares() {
-        ActionQueue q = queue(3.0);
-        q.enqueue(List.of(e("m", "move_to", MOVE, 3)));
-        run(q, 2);
-        q.enqueue(List.of(e("a1", "say", SAY, 1), e("b1", "say", SAY, 1), e("a2", "say", SAY, 1), e("b2", "say", SAY, 1)));
-        q.cancelIf(en -> en.callId().startsWith("b"));
-        assertEquals(List.of("b1=cancelled", "b2=cancelled"), results);
-        assertEquals(List.of("m", "a1", "a2"), snapshotIds(q.snapshot()));
-        q.cancelIf(en -> en.callId().equals("m"));
-        run(q, 40);
-        assertEquals(List.of("b1=cancelled", "b2=cancelled", "move cancelled", "m=cancelled", "a1=ok", "a2=ok"), results);
+        assertEquals(List.of("x=cancelled", "s=cancelled", "move cancelled", "reflex-1=cancelled", "reflex-2=cancelled"), results);
     }
 
     private static List<String> snapshotIds(List<ActionQueue.Item> items) {

@@ -40,7 +40,11 @@ public final class Guardrails {
         calls++;
     }
 
-    /** Counts one reply's weighted tokens (see Brain.Usage.weighted) toward the rolling hour. */
+    /**
+     * Adds one reply's weighted tokens, {@code Brain.Usage.weighted()}: input, output and cache writes in full,
+     * cache reads at a tenth (they cost about that). The token cap compares the last hour's sum with
+     * session_token_cap; {@code Usage.total()} still counts everything, for the logs.
+     */
     public void recordTokens(long count) {
         spend.addLast(new Spend(clockMillis.getAsLong(), count));
     }
@@ -76,6 +80,24 @@ public final class Guardrails {
         return ActionResult.ok();
     }
 
+    /** Lava pours only this close to home (D4's work area, kept for lava alone). */
+    public static final double LAVA_AREA = 32;
+    /** Lava never goes this close to another player: "players are never attacked" covers lava too. */
+    public static final double LAVA_PLAYER_GAP = 4;
+
+    /**
+     * The pour rule for use_bucket: never into the body's own feet or head block; water anywhere else in reach; lava
+     * only within {@link #LAVA_AREA} of home and more than {@link #LAVA_PLAYER_GAP} from every other player.
+     * Distances in blocks, infinity for no home or no other player.
+     */
+    public static ActionResult checkPour(boolean lava, boolean ownBlock, double fromHome, double nearestPlayer) {
+        if (ownBlock) return ActionResult.failed("own_block");
+        if (!lava) return ActionResult.ok();
+        if (!(fromHome <= LAVA_AREA)) return ActionResult.denied("outside_work_area");
+        if (nearestPlayer <= LAVA_PLAYER_GAP) return ActionResult.denied("lava_near_player");
+        return ActionResult.ok();
+    }
+
     /** Kill switch: blocks model calls until {@link #resume} (the next allowlisted order). */
     public void halt() {
         halted = true;
@@ -89,7 +111,7 @@ public final class Guardrails {
         return halted;
     }
 
-    /** Tokens used in the last hour. */
+    /** Weighted tokens in the last hour, the count the cap is checked against. */
     public long tokensUsed() {
         return windowTotal(clockMillis.getAsLong());
     }

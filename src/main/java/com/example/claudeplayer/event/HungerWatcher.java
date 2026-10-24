@@ -33,7 +33,7 @@ public final class HungerWatcher {
         int running = items.stream().filter(i -> i.state() == ActionQueue.State.RUNNING)
                 .mapToInt(i -> i.entry().prio()).findFirst().orElse(0);
         boolean plainFood = EatHandle.foods(p).stream().anyMatch(f -> f.kind() == Hunger.Kind.PLAIN);
-        boolean hostileNear = !SnapshotBuilder.hostilesXZ(p, rt.settings().hostileRange()).isEmpty();
+        boolean hostileNear = !SnapshotBuilder.hostiles(p, rt.settings().hostileRange()).isEmpty(); // 3D, as the reflexes
         if (Hunger.shouldAutoEat(p.getFoodData().getFoodLevel(), p.getHealth() < p.getMaxHealth(), plainFood, hostileNear, running)) {
             rt.queue().enqueue(List.of(new ActionQueue.Entry("auto-eat-" + ++count, "eat", new Action.Eat(true), 2)));
         }

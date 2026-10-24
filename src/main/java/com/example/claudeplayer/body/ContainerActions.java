@@ -13,6 +13,7 @@ import net.minecraft.world.Container;
 import net.minecraft.world.Nameable;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.entity.AbstractFurnaceBlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -36,6 +37,7 @@ final class ContainerActions {
     /** Reads a container without opening it, and keeps the exact contents as a short-term note. */
     ActionResult inspect(AgentPlayer p, BlockPos pos) {
         if (!inReach(p, pos)) return ActionResult.failed("too_far");
+        if (p.serverLevel().getBlockState(pos).is(Blocks.ENDER_CHEST)) return ActionResult.failed("ender_chest_personal"); // each player sees their own
         Container container = find(p, pos);
         if (container == null) return ActionResult.failed("not_a_container");
         return ActionResult.ok(note(p, pos, container));
@@ -45,6 +47,7 @@ final class ContainerActions {
     ActionResult store(AgentPlayer p, Action.Store s) {
         BlockPos pos = new BlockPos(s.x(), s.y(), s.z());
         if (!inReach(p, pos)) return ActionResult.failed("out_of_reach");
+        if (p.serverLevel().getBlockState(pos).is(Blocks.ENDER_CHEST)) return ActionResult.failed("ender_chest_personal"); // each player sees their own
         Container container = find(p, pos);
         if (container == null) return ActionResult.failed("not_a_container");
         boolean all = Action.ALL.equals(s.item());
@@ -77,6 +80,7 @@ final class ContainerActions {
     ActionResult take(AgentPlayer p, Action.Take t) {
         BlockPos pos = new BlockPos(t.x(), t.y(), t.z());
         if (!inReach(p, pos)) return ActionResult.failed("out_of_reach");
+        if (p.serverLevel().getBlockState(pos).is(Blocks.ENDER_CHEST)) return ActionResult.failed("ender_chest_personal"); // each player sees their own
         Container container = find(p, pos);
         if (container == null) return ActionResult.failed("not_a_container");
         boolean all = Action.ALL.equals(t.item());

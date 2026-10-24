@@ -45,7 +45,7 @@ public final class ApiBrain implements Brain {
     @Override
     public Reply send(Request request) throws BrainException {
         JsonObject body = requestBody(request, settings);
-        if (settings.logPrompts()) LOG.debug("Messages API request: {}", body);
+        if (settings.logPrompts()) LOG.debug("Messages API request: {}", logged(body));
         Reply reply = parseReply(post(MESSAGES, body));
         Usage u = reply.usage();
         LOG.info("model reply {}: stop={} calls={} tokens in={} out={} cache_write={} cache_read={}", reply.id(),
@@ -115,6 +115,11 @@ public final class ApiBrain implements Brain {
         }
         body.add("messages", messages);
         return body;
+    }
+
+    /** The body as log_prompts logs it: pictures become {@code <png NNNN bytes>}, never base64. */
+    static String logged(JsonObject body) {
+        return Images.redacted(body).toString();
     }
 
     static Reply parseReply(JsonObject json) {

@@ -16,7 +16,7 @@ class StatusBlockTest {
 
     private static StateSnapshot body(StateSnapshot.Vec pos, float health, int food, List<StateSnapshot.Mob> hostiles) {
         return new StateSnapshot(true, false, pos, "minecraft:overworld", "north", health, 20, food, "empty", List.of(),
-                List.of(), hostiles, List.of(), Map.of(), null, 1000, "clear", 3, null, null, 0);
+                List.of(), hostiles, List.of(), Map.of(), List.of(), null, 1000, "clear", 3, null, null, 0);
     }
 
     private static ActionQueue.Item item(String tool, int prio) {

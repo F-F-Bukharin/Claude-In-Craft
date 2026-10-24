@@ -151,7 +151,7 @@ public final class CpCommands {
         entry(help, "/cp despawn", "/cp despawn", "remove " + name + " from the world");
         entry(help, "/cp respawn", "/cp respawn", "back at home after a death");
         entry(help, "/cp stop", "/cp stop", "kill switch: cancel and block model calls");
-        entry(help, "/cp status", "/cp status", "body, caution level, queue, calls, tokens");
+        entry(help, "/cp status", "/cp status", "body, caution level, queue, calls, weighted tokens");
         entry(help, "/cp resetcap", "/cp resetcap", "clear the hourly token cap now (ops)");
         entry(help, "/cp memory", "/cp memory", "what " + name + " remembers");
         entry(help, "/cp keycheck", "/cp keycheck", s.usesApi() ? "test the API key (free)" : "test the Claude Code connection");

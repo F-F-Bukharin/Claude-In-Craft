@@ -122,6 +122,39 @@ class ClaudeCodeBrainTest {
         assertTrue(text.endsWith("Answer with your next step as JSON."));
     }
 
+    private static final String PNG = "iVBORw0KGgo=";
+    private static final String IMAGE = "{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"" + PNG + "\"}}";
+
+    @Test
+    void aTailWithoutPicturesIsTheSameLineAsBefore() {
+        JsonArray messages = JsonParser.parseString("["
+                + "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"<order>come</order>\"}]},"
+                + "{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"cc1_0\",\"name\":\"say\",\"input\":{\"text\":\"hi\"}}]},"
+                + "{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"cc1_0\",\"content\":\"ok\"},"
+                + "{\"type\":\"text\",\"text\":\"update\"}]}]").getAsJsonArray();
+        assertEquals("{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":"
+                + "\"[game]\\nresult of say: ok\\nupdate\\n\\nAnswer with your next step as JSON.\"}]}}",
+                ClaudeCodeBrain.userLine(ClaudeCodeBrain.renderContent(messages, 2)));
+    }
+
+    @Test
+    void aTailWithAPictureCarriesARealImageBlock() {
+        JsonArray messages = JsonParser.parseString("["
+                + "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"<order>look</order>\"}]},"
+                + "{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"cc1_0\",\"name\":\"glance\",\"input\":{}}]},"
+                + "{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"cc1_0\",\"content\":[" + IMAGE + ","
+                + "{\"type\":\"text\",\"text\":\"ok\"}]},{\"type\":\"text\",\"text\":\"update\"}]}]").getAsJsonArray();
+        JsonArray content = JsonParser.parseString(ClaudeCodeBrain.userLine(ClaudeCodeBrain.renderContent(messages, 2)))
+                .getAsJsonObject().getAsJsonObject("message").getAsJsonArray("content");
+        assertEquals(3, content.size(), content.toString());
+        assertEquals("[game]\nresult of glance: ok\n", content.get(0).getAsJsonObject().get("text").getAsString());
+        assertEquals(JsonParser.parseString(IMAGE), content.get(1));
+        assertEquals("update\n\nAnswer with your next step as JSON.", content.get(2).getAsJsonObject().get("text").getAsString());
+        assertEquals("[game]\nresult of glance: ok\nupdate\n\nAnswer with your next step as JSON.",
+                ClaudeCodeBrain.renderTranscript(messages, 2), "the text is what it always was");
+        assertEquals(1, ClaudeCodeBrain.renderContent(messages, 3).size(), "a picture the session already read isn't sent again");
+    }
+
     @Test
     void systemPromptListsEveryActionAsOneCompactLine() {
         JsonArray tools = new ToolSchemas(2).definitions();

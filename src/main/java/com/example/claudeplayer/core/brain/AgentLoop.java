@@ -5,6 +5,7 @@ import com.example.claudeplayer.core.StateSnapshot;
 import com.example.claudeplayer.core.act.Action;
 import com.example.claudeplayer.core.act.ActionQueue;
 import com.example.claudeplayer.core.act.ActionResult;
+import com.example.claudeplayer.core.act.VisionGate;
 import com.example.claudeplayer.core.chat.Conversation;
 import com.example.claudeplayer.core.memory.Memory;
 import com.example.claudeplayer.core.safety.Guardrails;
@@ -46,7 +47,8 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Priorities: each call runs at its {@code prio} level. A reflex is code acting first: its actions go in at
  * level 3, which scraps routine work and pauses level 2, and the model then hears what the body did and what was
- * displaced. A dropped order leaves its reflexes running, so a flee outlives the order that was interrupted.
+ * displaced. A dropped order leaves the reflexes running, so a flee outlives the order that was interrupted; a
+ * reflex that ends in an error is a note in the next turn.
  *
  * <p>Autonomy: while it is on and nothing else runs, a goal turn starts at most once per
  * {@code autonomy_interval_seconds}. A goal is one model call: its tool calls run and the goal ends without a
@@ -77,6 +79,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     private static final int EARLIER_LINES = 40; // turns a compacted summary keeps, newest last
     private static final int LINE_TEXT_MAX = 200;
     private static final Pattern NOTE_LINE = Pattern.compile("^- (\\S+) (\\S+): (\\S+)$", Pattern.MULTILINE);
+    private static final String REFLEX = "reflex-"; // call ids of code's own level 3 entries
 
     private static final class Call {
         final String id;
@@ -127,13 +130,15 @@ public final class AgentLoop implements ActionQueue.Listener {
     private JsonArray messages = new JsonArray();
     private final Map<String, Call> pending = new HashMap<>();
     private JsonArray pendingResults = new JsonArray();
+    private JsonArray lateImages = new JsonArray(); // pictures of calls reported early; they lead the next turn's text
+    private final VisionGate vision;
     private final List<String> notes = new ArrayList<>();
     private Batch batch;
     private boolean inFlight;
     private boolean deferred;
     private boolean cancelling;
     private boolean mustReport;
-    private final List<String> interruptInFlight = new ArrayList<>(); // notes for the reply on its way; it was planned on stale state
+    private final List<String> interruptsInFlight = new ArrayList<>(); // in arrival order; all go out with the reply
     private String finalText;
     private String doneText; // a done reply's text while its batch runs; said if the batch succeeds, null otherwise
     private int steps;
@@ -170,6 +175,7 @@ public final class AgentLoop implements ActionQueue.Listener {
         this.memory = memory;
         this.host = host;
         this.clockMillis = clockMillis;
+        this.vision = new VisionGate(settings.visionCooldownSeconds(), clockMillis);
         queue.setListener(this);
     }
 
@@ -256,7 +262,7 @@ public final class AgentLoop implements ActionQueue.Listener {
             return;
         }
         if (inFlight) {
-            interruptInFlight.add(note);
+            interruptsInFlight.add(note); // the reply on its way was planned on stale state
         } else {
             notes.add(note);
             mustReport = true;
@@ -271,9 +277,8 @@ public final class AgentLoop implements ActionQueue.Listener {
      * is on; the actions run either way.
      */
     public void reflex(String reason, List<Action> actions) {
-        List<ActionQueue.Entry> entries = new ArrayList<>();
+        List<ActionQueue.Entry> entries = reflexEntries(actions);
         thinkHarder = false; // a threat ends max effort: the next turn is back at the configured one
-        for (Action a : actions) entries.add(new ActionQueue.Entry("reflex-" + ++reflexCount, reflexTool(a), a, 3));
         ActionQueue.Preemption displaced = enqueue(entries);
         String did = " Reflex: " + entries.stream().map(ActionQueue.Entry::tool).collect(Collectors.joining(", ")) + ".";
         if (orderFrom == null || goal) {
@@ -281,6 +286,27 @@ public final class AgentLoop implements ActionQueue.Listener {
             return;
         }
         report("INTERRUPT: " + reason + did + listed(" Paused: ", displaced.paused()) + listed(" Scrapped: ", displaced.scrapped()));
+    }
+
+    /**
+     * A later reflex for a threat the model already heard about: queues {@code actions} at level 3 and tells no
+     * one. No note and no reaction; scrapped calls still reach the model as {@code scrapped} when their batch reports.
+     */
+    public void reflexQuiet(List<Action> actions) {
+        if (actions.isEmpty()) return;
+        thinkHarder = false; // still a threat, so max effort ends here too
+        enqueue(reflexEntries(actions));
+        checkProgress(); // a batch the preempt finished reports as usual
+    }
+
+    private List<ActionQueue.Entry> reflexEntries(List<Action> actions) {
+        List<ActionQueue.Entry> entries = new ArrayList<>();
+        for (Action a : actions) entries.add(new ActionQueue.Entry(REFLEX + ++reflexCount, reflexTool(a), a, 3));
+        return entries;
+    }
+
+    private static boolean isReflex(ActionQueue.Entry entry) {
+        return entry.callId().startsWith(REFLEX);
     }
 
     /** Kill switch: cancel everything, drop the order, end autonomy, block model calls until the next order. */
@@ -321,14 +347,9 @@ public final class AgentLoop implements ActionQueue.Listener {
     public void onFinished(ActionQueue.Entry entry, ActionResult result) {
         Call call = pending.remove(entry.callId());
         if (call == null) { // a reflex, or a call from an abandoned order
-            if (entry.callId().startsWith("reflex-") && result.isError() && orderFrom != null && !goal) {
-                String note = "Reflex " + entry.tool() + ": " + result.code(); // the model hears when a reflex fails
-                if (inFlight) { // news for the next turn; the reply on its way still stands
-                    notes.add(note);
-                    mustReport = true;
-                } else {
-                    report(note);
-                }
+            if (isReflex(entry) && result.isError() && orderFrom != null) {
+                String note = "reflex " + entry.tool() + ": " + result.code(); // the model otherwise never hears it
+                if (!notes.contains(note)) notes.add(note); // a chase re-firing into a wall says it once per turn
             }
             checkProgress(); // a final reply may be waiting for the queue to go idle
             return;
@@ -336,6 +357,10 @@ public final class AgentLoop implements ActionQueue.Listener {
         if (call.reportedEarly) {
             notes.add(call.name + " " + call.id + ": " + result.code());
             if (result.isError()) mustReport = true;
+            if (result.png() != null) {
+                lateImages.add(Images.block(result.png()));
+                mustReport = true; // the model asked to look: the picture must reach it
+            }
         } else {
             call.result = result;
         }
@@ -387,10 +412,10 @@ public final class AgentLoop implements ActionQueue.Listener {
         messages.add(message("assistant", content));
         Brain.Usage usage = reply.usage();
         lastPrompt = (long) usage.input() + usage.cacheRead() + usage.cacheWrite();
-        if (!interruptInFlight.isEmpty()) {
+        if (!interruptsInFlight.isEmpty()) {
             for (Brain.ToolCall call : reply.toolCalls()) pendingResults.add(toolResult(call.id(), ActionResult.cancelled()));
-            notes.addAll(interruptInFlight);
-            interruptInFlight.clear();
+            notes.addAll(interruptsInFlight);
+            interruptsInFlight.clear();
             mustReport = true;
             checkProgress();
             return;
@@ -418,6 +443,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     private void startBatch(List<Brain.ToolCall> calls) {
         Batch next = new Batch();
         List<ActionQueue.Entry> entries = new ArrayList<>();
+        vision.newTurn();
         for (int i = 0; i < calls.size(); i++) {
             Brain.ToolCall tc = calls.get(i);
             Call call = new Call(tc.id(), tc.name());
@@ -431,8 +457,15 @@ public final class AgentLoop implements ActionQueue.Listener {
                 call.result = parsed.error();
                 continue;
             }
+            if (parsed.action() instanceof Action.Glance) {
+                String denied = vision.admit();
+                if (denied != null) {
+                    call.result = ActionResult.denied(denied);
+                    continue;
+                }
+            }
             if (parsed.prioLowered()) {
-                notes.add(tc.name() + " " + tc.id() + ": prio_lowered to 2 (prio 3 is only for flee, stop and attack_entity)");
+                notes.add(tc.name() + " " + tc.id() + ": prio_lowered to 2 (prio 3 is only for flee, stop, attack_entity and fight)");
             }
             pending.put(tc.id(), call);
             entries.add(new ActionQueue.Entry(tc.id(), tc.name(), parsed.action(), parsed.prio()));
@@ -445,7 +478,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     /** Tells the model now: unfinished calls of the current batch report {@code queued}. */
     private void report(String note) {
         if (inFlight) {
-            interruptInFlight.add(note);
+            interruptsInFlight.add(note); // the reply on its way was planned on stale state
             return;
         }
         notes.add(note);
@@ -545,6 +578,7 @@ public final class AgentLoop implements ActionQueue.Listener {
         String purpose = goal ? "own goal" : orderText.isEmpty() ? "react to the threat" : orderText;
         text += "\n" + PromptBuilder.status(purpose, orderFrom, step(), snapshot, queue.snapshot());
         JsonArray content = compact ? new JsonArray() : pendingResults; // tool_result blocks must come first in the turn
+        content.addAll(lateImages); // images are plain blocks, so they survive a compact turn
         content.add(textBlock(text));
         if (compact) { // the results are text now: a tool_result needs its tool_use, which is gone
             LOG.info("compacted order transcript: {} messages -> 1 (prompt was {} tokens)", messages.size(), lastPrompt);
@@ -553,6 +587,7 @@ public final class AgentLoop implements ActionQueue.Listener {
         messages.add(message("user", content));
         pendingResults = new JsonArray();
         lastPrompt = 0;
+        lateImages = new JsonArray();
         notes.clear();
         opening = null;
         finalText = null;
@@ -710,8 +745,9 @@ public final class AgentLoop implements ActionQueue.Listener {
     }
 
     /**
-     * Drops the order quietly: cancels the order's queued calls but not the reflexes, forgets the transcript and lets
-     * the brain release the order's session. A reply still in flight is ignored.
+     * Drops the order quietly: cancels every queued call but the reflexes (the order's own prio 3 calls go too, so a
+     * leftover stop can't cancel the next order's batch), forgets the transcript and lets the brain release
+     * the order's session. A reply still in flight is ignored.
      */
     private void abandon() {
         epoch++;
@@ -724,16 +760,17 @@ public final class AgentLoop implements ActionQueue.Listener {
         opening = null;
         goal = false;
         goalText = null;
-        quietly(() -> queue.cancelIf(e -> !e.callId().startsWith("reflex-")));
+        quietly(() -> queue.cancelExcept(AgentLoop::isReflex)); // the order's own calls go, prio 3 included
         messages = new JsonArray();
         pending.clear();
         pendingResults = new JsonArray();
+        lateImages = new JsonArray();
         notes.clear();
         batch = null;
         inFlight = false;
         deferred = false;
         mustReport = false;
-        interruptInFlight.clear();
+        interruptsInFlight.clear();
         finalText = null;
         doneText = null;
         steps = 0;
@@ -775,6 +812,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     private static String reflexTool(Action action) {
         if (action instanceof Action.Flee) return "flee";
         if (action instanceof Action.AttackEntity) return "attack_entity";
+        if (action instanceof Action.Fight) return "fight";
         if (action instanceof Action.Say) return "say";
         if (action instanceof Action.Stop) return "stop";
         if (action instanceof Action.MoveTo) return "move_to";
@@ -805,7 +843,15 @@ public final class AgentLoop implements ActionQueue.Listener {
         JsonObject b = new JsonObject();
         b.addProperty("type", "tool_result");
         b.addProperty("tool_use_id", id);
-        b.addProperty("content", r.data() == null ? r.code() : r.code() + "\n" + r.data());
+        String text = r.data() == null ? r.code() : r.code() + "\n" + r.data();
+        if (r.png() == null) {
+            b.addProperty("content", text);
+        } else { // a picture first, then its code
+            JsonArray content = new JsonArray();
+            content.add(Images.block(r.png()));
+            content.add(textBlock(text));
+            b.add("content", content);
+        }
         if (r.isError()) b.addProperty("is_error", true);
         return b;
     }

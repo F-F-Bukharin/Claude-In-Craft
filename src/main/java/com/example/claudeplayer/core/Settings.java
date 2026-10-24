@@ -18,6 +18,7 @@ public record Settings(
         int toolPhase, boolean idleReactions, boolean reflexes, boolean autoEat,
         int shortTermCapacity, int shortTermMinutes, int longTermCapacity,
         int claudeCodeIdleMinutes, int autonomyIntervalSeconds,
+        int visionCooldownSeconds, int visionWidth, int visionHeight,
         String claudeEffort, String claudeThinkEffort, List<String> thinkHarderPhrases, int thinkHarderTimeoutSeconds,
         List<Double> usageWarnAt, double cavemanAt, String cavemanSkillPath, int compactAtTokens) {
 
@@ -83,6 +84,9 @@ public record Settings(
         public int longTermCapacity = 64;
         public int claudeCodeIdleMinutes = 10;
         public int autonomyIntervalSeconds = 60;
+        public int visionCooldownSeconds = 15;
+        public int visionWidth = 320;
+        public int visionHeight = 180;
         public String claudeEffort = "high";
         public String claudeThinkEffort = "max";
         public List<String> thinkHarderPhrases = List.of("think harder", "think hard");
@@ -99,6 +103,7 @@ public record Settings(
                     escapeDistance, escapeMaxSteps, toolPhase, idleReactions, reflexes, autoEat,
                     shortTermCapacity, shortTermMinutes, longTermCapacity,
                     claudeCodeIdleMinutes, autonomyIntervalSeconds,
+                    visionCooldownSeconds, visionWidth, visionHeight,
                     claudeEffort, claudeThinkEffort, thinkHarderPhrases, thinkHarderTimeoutSeconds,
                     usageWarnAt, cavemanAt, cavemanSkillPath, compactAtTokens);
         }

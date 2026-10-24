@@ -113,15 +113,18 @@ public final class ActionQueue {
         for (int l = Math.min(prio - 1, LEVELS); l >= 1; l--) drain(level(l), ActionResult.cancelled());
     }
 
-    /** Cancels the running entry if it matches, and every waiting one that matches at any level; each reports {@code cancelled}. */
-    public void cancelIf(Predicate<Entry> which) {
-        if (running != null && which.test(running)) {
+    /**
+     * Cancels the running action and every waiting one, highest level first, except those {@code keep} spares;
+     * each cancelled one reports {@code cancelled}. Kept entries keep their places.
+     */
+    public void cancelExcept(Predicate<Entry> keep) {
+        if (running != null && !keep.test(running)) {
             cancelHandle();
             finish(ActionResult.cancelled());
         }
         for (int l = LEVELS; l >= 1; l--) {
-            List<Entry> dropped = level(l).stream().filter(which).toList();
-            level(l).removeIf(which);
+            List<Entry> dropped = new ArrayList<>();
+            level(l).removeIf(e -> !keep.test(e) && dropped.add(e));
             for (Entry e : dropped) {
                 if (e == pausedEntry) pausedEntry = null;
                 listener.onFinished(e, ActionResult.cancelled());

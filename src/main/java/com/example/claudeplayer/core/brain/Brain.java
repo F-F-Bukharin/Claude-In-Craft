@@ -34,9 +34,9 @@ public interface Brain {
             return (long) input + output + cacheWrite + cacheRead;
         }
 
-        /** Cache reads cost about a tenth of fresh input, so they count a tenth toward the token cap. */
+        /** What the session token cap counts: cache reads cost about a tenth of other tokens. */
         public long weighted() {
-            return (long) input + output + cacheWrite + (long) Math.ceil(cacheRead / 10.0);
+            return (long) input + output + cacheWrite + cacheRead / 10;
         }
     }
 

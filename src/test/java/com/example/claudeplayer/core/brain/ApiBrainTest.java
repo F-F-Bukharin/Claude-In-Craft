@@ -34,11 +34,28 @@ class ApiBrainTest {
                 .getAsJsonObject("cache_control").get("type").getAsString());
         assertEquals("auto", body.getAsJsonObject("tool_choice").get("type").getAsString());
         assertEquals("low", body.getAsJsonObject("output_config").get("effort").getAsString());
-        assertEquals(22, body.getAsJsonArray("tools").size());
+        assertEquals(28, body.getAsJsonArray("tools").size());
         JsonObject lastBlock = body.getAsJsonArray("messages").get(0).getAsJsonObject().getAsJsonArray("content").get(0).getAsJsonObject();
         assertTrue(lastBlock.has("cache_control"), "the newest turn is a cache breakpoint");
         assertFalse(req.messages().toString().contains("cache_control"), "the caller's transcript is untouched");
         assertFalse(body.has("temperature"), "sampling parameters are rejected on API version 2026-10-21");
+    }
+
+    @Test
+    void picturesPassThroughButNeverReachTheLog() {
+        String b64 = java.util.Base64.getEncoder().encodeToString(new byte[1234]);
+        JsonArray messages = JsonParser.parseString("[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\","
+                + "\"tool_use_id\":\"t1\",\"content\":[{\"type\":\"image\",\"source\":{\"type\":\"base64\","
+                + "\"media_type\":\"image/png\",\"data\":\"" + b64 + "\"}},{\"type\":\"text\",\"text\":\"ok\"}]},"
+                + "{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"" + b64 + "\"}},"
+                + "{\"type\":\"text\",\"text\":\"update\"}]}]").getAsJsonArray();
+        JsonObject body = ApiBrain.requestBody(new Brain.Request("You are Claude.", new JsonArray(), messages), Settings.DEFAULTS);
+        assertTrue(body.toString().contains(b64), "the API gets the picture unchanged");
+        String logged = ApiBrain.logged(body);
+        assertFalse(logged.contains(b64), logged);
+        assertFalse(logged.contains("AAAAAAAA"), "no base64 at all");
+        assertEquals(2, logged.split("<png 1234 bytes>", -1).length - 1, logged);
+        assertTrue(body.toString().contains(b64), "redacting the log leaves the request alone");
     }
 
     @Test

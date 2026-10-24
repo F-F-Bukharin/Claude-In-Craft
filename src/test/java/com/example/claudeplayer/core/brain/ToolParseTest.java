@@ -91,9 +91,36 @@ class ToolParseTest {
     }
 
     @Test
+    void farmingAndBucketToolsParse() {
+        assertEquals(new Action.Till(4, 63, -2), v1.parse("till", json("{\"x\":4,\"y\":63,\"z\":-2}")).action());
+        assertEquals(new Action.Plant(4, 63, -2, "wheat_seeds"), v1.parse("plant", json("{\"x\":4,\"y\":63,\"z\":-2,\"item\":\"minecraft:Wheat_Seeds\"}")).action());
+        assertEquals(new Action.Harvest(10, 64, 10, 8), v1.parse("harvest", json("{\"x\":10,\"y\":64,\"z\":10,\"radius\":8}")).action());
+        assertEquals(new Action.Harvest(10, 64, 10, 1), v1.parse("harvest", json("{\"x\":10,\"y\":64,\"z\":10,\"radius\":\"1\"}")).action());
+        assertEquals(new Action.UseBucket(0, 70, 0, null), v1.parse("use_bucket", json("{\"x\":0,\"y\":70,\"z\":0}")).action());
+        assertEquals(new Action.UseBucket(0, 70, 0, "lava"), v1.parse("use_bucket", json("{\"x\":0,\"y\":70,\"z\":0,\"fluid\":\"lava\"}")).action());
+        assertEquals(new Action.UseBucket(0, 70, 0, "water"), v1.parse("use_bucket", json("{\"x\":0,\"y\":70,\"z\":0,\"fluid\":\"Water\"}")).action());
+        assertEquals(new Action.UseBucket(0, 70, 0, null), v1.parse("use_bucket", json("{\"x\":0,\"y\":70,\"z\":0,\"fluid\":null}")).action());
+        assertEquals("failed:bad_input:radius", error(v1, "harvest", "{\"x\":10,\"y\":64,\"z\":10,\"radius\":0}"));
+        assertEquals("failed:bad_input:radius", error(v1, "harvest", "{\"x\":10,\"y\":64,\"z\":10,\"radius\":9}"));
+        assertEquals("failed:bad_input:radius", error(v1, "harvest", "{\"x\":10,\"y\":64,\"z\":10}"));
+        assertEquals("failed:bad_input:item", error(v1, "plant", "{\"x\":4,\"y\":63,\"z\":-2}"));
+        assertEquals("failed:bad_input:item", error(v1, "plant", "{\"x\":4,\"y\":63,\"z\":-2,\"item\":\" \"}"));
+        assertEquals("failed:bad_input:y", error(v1, "till", "{\"x\":4,\"y\":400,\"z\":-2}"));
+        assertEquals("failed:bad_input:z", error(v1, "use_bucket", "{\"x\":0,\"y\":70}"));
+        assertEquals("failed:bad_input:fluid", error(v1, "use_bucket", "{\"x\":0,\"y\":70,\"z\":0,\"fluid\":\"milk\"}"));
+        assertEquals("failed:bad_input:fluid", error(v1, "use_bucket", "{\"x\":0,\"y\":70,\"z\":0,\"fluid\":\"\"}"));
+    }
+
+    @Test
     void longChatIsCutNotRejected() {
         Action.Say say = (Action.Say) v1.parse("say", json("{\"text\":\"" + "a".repeat(500) + "\"}")).action();
         assertEquals(200, say.text().length());
+    }
+
+    @Test
+    void glanceTakesNoArguments() {
+        assertEquals(new Action.Glance(), v1.parse("glance", json("{}")).action());
+        assertEquals("denied:unknown_tool", error(new ToolSchemas(1), "glance", "{}"), "a phase 2 tool");
     }
 
     @Test
@@ -101,6 +128,37 @@ class ToolParseTest {
         assertEquals("denied:unknown_tool", error(v1, "fly", "{}"));
         assertEquals("denied:unknown_tool", error(v1, "attack_entity", "{\"entity_id\":42}"));
         assertEquals(new Action.AttackEntity(42), new ToolSchemas(4).parse("attack_entity", json("{\"entity_id\":42}")).action());
+        assertEquals("denied:unknown_tool", error(new ToolSchemas(3), "fight", "{\"entity_id\":42}"));
+        assertEquals(new Action.Fight(42), new ToolSchemas(4).parse("fight", json("{\"entity_id\":42}")).action());
+        assertEquals("failed:bad_input:entity_id", error(new ToolSchemas(4), "fight", "{}"));
+    }
+
+    @Test
+    void phaseFourAddsAttackAndFight() {
+        List<String> names = new ArrayList<>();
+        for (JsonElement el : new ToolSchemas(4).definitions()) names.add(el.getAsJsonObject().get("name").getAsString());
+        assertTrue(names.contains("attack_entity"));
+        assertTrue(names.contains("fight"));
+        assertEquals(new ToolSchemas(2).definitions().size() + 2, names.size());
+    }
+
+    @Test
+    void seeTakesAnOptionalDirectionAndRejectsOthers() {
+        assertEquals(new Action.See("forward"), v1.parse("see", json("{}")).action());
+        assertEquals(new Action.See("forward"), v1.parse("see", json("{\"direction\":null}")).action());
+        for (String d : List.of("forward", "north", "south", "east", "west", "up", "down")) {
+            assertEquals(new Action.See(d), v1.parse("see", json("{\"direction\":\"" + d + "\"}")).action());
+        }
+        assertEquals(new Action.See("north"), v1.parse("see", json("{\"direction\":\" North \"}")).action());
+        assertEquals("failed:bad_input:direction", error(v1, "see", "{\"direction\":\"left\"}"));
+        assertEquals("failed:bad_input:direction", error(v1, "see", "{\"direction\":5}"));
+        assertEquals("denied:unknown_tool", error(new ToolSchemas(1), "see", "{}"));
+        for (JsonElement el : v1.definitions()) {
+            JsonObject def = el.getAsJsonObject();
+            if (def.get("name").getAsString().equals("see")) {
+                assertFalse(def.getAsJsonObject("input_schema").getAsJsonArray("required").contains(new JsonPrimitive("direction")));
+            }
+        }
     }
 
     @Test
@@ -111,9 +169,9 @@ class ToolParseTest {
             assertEquals("object", def.getAsJsonObject("input_schema").get("type").getAsString());
             names.add(def.get("name").getAsString());
         }
-        assertEquals(List.of("get_state", "look", "move_to", "say", "wait", "stop", "flee", "note", "remember", "forget", "inspect_container",
+        assertEquals(List.of("get_state", "look", "see", "move_to", "say", "wait", "stop", "flee", "note", "remember", "forget", "inspect_container",
                 "store", "take", "eat", "follow_player", "mine_block", "place_block", "equip", "craft", "smelt",
-                "gather", "dig"), names);
+                "gather", "dig", "till", "plant", "harvest", "use_bucket", "glance"), names);
     }
 
     @Test
@@ -138,6 +196,9 @@ class ToolParseTest {
         assertEquals(3, v1.parse("flee", json("{\"prio\":3}")).prio());
         assertEquals(3, v1.parse("stop", json("{\"prio\":3}")).prio());
         assertEquals(3, new ToolSchemas(4).parse("attack_entity", json("{\"entity_id\":7,\"prio\":3}")).prio());
+        ToolSchemas.Parsed fight = new ToolSchemas(4).parse("fight", json("{\"entity_id\":7,\"prio\":3}"));
+        assertEquals(3, fight.prio());
+        assertFalse(fight.prioLowered());
         ToolSchemas.Parsed lowered = v1.parse("say", json("{\"text\":\"hi\",\"prio\":3}"));
         assertEquals(2, lowered.prio());
         assertTrue(lowered.prioLowered());
