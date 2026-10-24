@@ -3,6 +3,7 @@ package com.example.claudeplayer.core.act;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Predicate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -110,6 +111,25 @@ public final class ActionQueue {
             finish(ActionResult.cancelled());
         }
         for (int l = Math.min(prio - 1, LEVELS); l >= 1; l--) drain(level(l), ActionResult.cancelled());
+    }
+
+    /**
+     * Cancels the running action and every waiting one, highest level first, except those {@code keep} spares;
+     * each cancelled one reports {@code cancelled}. Kept entries keep their places.
+     */
+    public void cancelExcept(Predicate<Entry> keep) {
+        if (running != null && !keep.test(running)) {
+            cancelHandle();
+            finish(ActionResult.cancelled());
+        }
+        for (int l = LEVELS; l >= 1; l--) {
+            List<Entry> dropped = new ArrayList<>();
+            level(l).removeIf(e -> !keep.test(e) && dropped.add(e));
+            for (Entry e : dropped) {
+                if (e == pausedEntry) pausedEntry = null;
+                listener.onFinished(e, ActionResult.cancelled());
+            }
+        }
     }
 
     public boolean idle() {

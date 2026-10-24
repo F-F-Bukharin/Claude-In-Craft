@@ -52,10 +52,13 @@ class AgentLoopTest {
     private static final byte[] PNG = {(byte) 0x89, 'P', 'N', 'G', 1, 2, 3};
     private static final String PNG_B64 = java.util.Base64.getEncoder().encodeToString(PNG);
 
-    /** move_to runs until cancelled; glance returns a picture; everything else finishes at once. */
+    private ActionResult fleeResult = ActionResult.ok();
+
+    /** move_to and fight run until cancelled; glance returns a picture; flee returns fleeResult; the rest is ok at once. */
     private final ActionRunner runner = action ->
-            action instanceof Action.MoveTo ? () -> null
-                    : ActionRunner.Handle.done(action instanceof Action.Glance ? ActionResult.picture(PNG) : ActionResult.ok());
+            action instanceof Action.MoveTo || action instanceof Action.Fight ? () -> null
+                    : ActionRunner.Handle.done(action instanceof Action.Glance ? ActionResult.picture(PNG)
+                    : action instanceof Action.Flee ? fleeResult : ActionResult.ok());
 
     private final AgentLoop.Host host = new AgentLoop.Host() {
         @Override
@@ -446,6 +449,82 @@ class AgentLoopTest {
         assertEquals(3, requests.size());
         assertEquals(List.of("cancelled"), results(2), "g never ran");
         assertTrue(lastText(2).contains("INTERRUPT: hit by zombie #7. Reflex: flee."), lastText(2));
+    }
+
+    @Test
+    void twoReflexesDuringOneCallBothReachTheModel() {
+        build(b -> {});
+        script.add(tools(say("a"), say("b"), say("c"), say("d"), say("e"), say("f")));
+        script.add(tools(say("g"))); // planned before the hits
+        script.add(text("ok"));
+        loop.startOrder("F", "chatter");
+        pump();
+        for (int i = 0; i < 100 && brainThread.isEmpty(); i++) {
+            queue.tick(); // run the queue without delivering the early-report call
+            loop.tick();
+        }
+        loop.reflex("hit by zombie #7.", List.of(new Action.Flee()));
+        loop.reflex("creeper #9 is 3.0 blocks away, fuse lit.", List.of(new Action.Flee()));
+        pump();
+        assertEquals(3, requests.size());
+        assertTrue(lastText(2).contains("INTERRUPT: hit by zombie #7. Reflex: flee."), lastText(2));
+        assertTrue(lastText(2).contains("INTERRUPT: creeper #9 is 3.0 blocks away, fuse lit. Reflex: flee."), lastText(2));
+    }
+
+    @Test
+    void aReflexThatFailsIsANoteInTheNextTurn() {
+        build(b -> {});
+        fleeResult = ActionResult.failed("no_escape");
+        script.add(tools(move("m")));
+        script.add(tools(say("s")));
+        script.add(text("Cornered."));
+        loop.startOrder("F", "walk");
+        pump();
+        ticks(3); // m is running
+        loop.reflex("zombie #7 is 2.0 blocks away.", List.of(new Action.Flee()));
+        pump(); // the interrupt went out and its reply queued s
+        assertEquals(2, requests.size());
+        ticks(20); // the flee fails, then s runs and its batch reports
+        assertEquals(3, requests.size());
+        assertTrue(lastText(2).contains("reflex flee: failed:no_escape"), lastText(2));
+        assertEquals(List.of("Cornered."), said);
+    }
+
+    @Test
+    void aReflexThatWorksAddsNoNote() {
+        build(b -> {});
+        script.add(tools(move("m")));
+        script.add(tools(say("s")));
+        script.add(text("Safe."));
+        loop.startOrder("F", "walk");
+        pump();
+        ticks(3);
+        loop.reflex("zombie #7 is 2.0 blocks away.", List.of(new Action.Flee()));
+        pump();
+        ticks(20);
+        assertEquals(3, requests.size());
+        assertFalse(lastText(2).contains("reflex flee"), lastText(2));
+    }
+
+    @Test
+    void aDroppedOrderCancelsItsOwnPrioThreeCallsButSparesReflexes() {
+        build(b -> b.toolPhase = 4);
+        script.add(tools(call("f", "fight", "{\"entity_id\":7,\"prio\":3}"), call("x", "stop", "{\"prio\":3}")));
+        loop.startOrder("F", "kill the zombie");
+        pump();
+        ticks(3); // f runs, x waits behind it at level 3
+        assertEquals("fight", queue.runningTool());
+        script.add(text("Fighting."));
+        loop.reflex("zombie #8 is 2.0 blocks away.", List.of(new Action.Fight(8))); // queued behind f
+        pump();
+        script.add(tools(move("m")));
+        loop.startOrder("F", "walk instead");
+        pump();
+        assertEquals(List.of("reflex-1", "m"), queue.snapshot().stream().map(i -> i.entry().callId()).toList(),
+                "f and the leftover stop are gone; the reflex and the new order's m remain");
+        ticks(3);
+        assertEquals("fight", queue.runningTool(), "the reflex runs first, and no leftover stop is left to cancel m");
+        assertEquals(List.of("reflex-1", "m"), queue.snapshot().stream().map(i -> i.entry().callId()).toList());
     }
 
     @Test
