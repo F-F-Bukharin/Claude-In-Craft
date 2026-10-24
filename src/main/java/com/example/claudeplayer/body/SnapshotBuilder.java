@@ -24,7 +24,9 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.MobCategory;
+import net.minecraft.world.entity.OwnableEntity;
 import net.minecraft.world.entity.monster.Creeper;
+import net.minecraft.world.entity.npc.Villager;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.Blocks;
@@ -33,6 +35,7 @@ import net.minecraft.world.level.block.NetherWartBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.Vec3;
 
@@ -41,6 +44,9 @@ public final class SnapshotBuilder {
     private static final int BLOCK_RADIUS = 3;
     private static final int MAX_MOBS = 10;
     private static final int MAX_PLAYERS = 10;
+    private static final int MAX_CREATURES = 8;
+    /** Passive and neutral mobs and villagers this close (blocks, straight line) go in world_state.creatures. */
+    public static final double CREATURE_RANGE = 24;
     private static final int MAX_SLOTS = 12;
     private static final int MAX_BLOCK_TYPES = 12;
     private static final int MAX_POINTS = 12;
@@ -50,7 +56,11 @@ public final class SnapshotBuilder {
 
     private SnapshotBuilder() {}
 
-    /** The top-down map around the body, with players (P) and hostile mobs (!) drawn on it. */
+    /**
+     * The top-down map around the body, with players (P) and hostile mobs (!) drawn on it. Up to radius 24 one
+     * cell is one block; past that the view stays at most 49 cells across (see {@link WorldMap#scale}). Reads
+     * never load chunks: unloaded columns are unknown.
+     */
     public static WorldMap.View map(ServerPlayer body, int radius, double hostileRange) {
         ServerLevel world = body.serverLevel();
         BlockPos feet = body.blockPosition();
@@ -64,7 +74,11 @@ public final class SnapshotBuilder {
             if (Math.abs(m.getY() - body.getY()) <= MARKER_HEIGHT) markers.add(new WorldMap.Marker(m.getBlockX(), m.getBlockZ(), '!'));
         }
         BlockPos.MutableBlockPos probe = new BlockPos.MutableBlockPos();
-        return WorldMap.render((x, y, z) -> kind(world, probe.set(x, y, z)), feet.getX(), feet.getY(), feet.getZ(), radius, markers);
+        BlockPos.MutableBlockPos columnProbe = new BlockPos.MutableBlockPos();
+        // Level.getHeight does not load chunks (a missing chunk reads as the build floor); the isLoaded check is belt and braces.
+        WorldMap.Heights heights = (x, z) -> world.isLoaded(columnProbe.set(x, feet.getY(), z))
+                ? world.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z) : Integer.MAX_VALUE;
+        return WorldMap.render((x, y, z) -> kind(world, probe.set(x, y, z)), heights, feet.getX(), feet.getY(), feet.getZ(), radius, markers);
     }
 
     private static WorldMap.Kind kind(ServerLevel world, BlockPos pos) {
@@ -73,6 +87,7 @@ public final class SnapshotBuilder {
         FluidState fluid = state.getFluidState();
         if (fluid.is(FluidTags.LAVA)) return WorldMap.Kind.LAVA;
         if (fluid.is(FluidTags.WATER)) return WorldMap.Kind.WATER;
+        if (state.is(Blocks.FIRE) || state.is(Blocks.SOUL_FIRE)) return WorldMap.Kind.LAVA; // drawn as L: just as deadly to walk into
         if (state.isAir()) return WorldMap.Kind.OPEN;
         if (state.is(BlockTags.LOGS) || state.is(BlockTags.LEAVES)) return WorldMap.Kind.TREE;
         if (state.hasBlockEntity() && world.getBlockEntity(pos) instanceof Container) return WorldMap.Kind.CONTAINER;
@@ -116,11 +131,12 @@ public final class SnapshotBuilder {
                 .sorted(Comparator.comparingDouble(p::distanceToSqr)).limit(MAX_PLAYERS)
                 .map(o -> new StateSnapshot.Seen(WorldText.clean(o.getGameProfile().getName(), WorldText.NAME_MAX), p.distanceTo(o), vec(o.position())))
                 .toList();
+        List<StateSnapshot.Creature> creatures = creatures(p, CREATURE_RANGE, MAX_CREATURES);
         String weather = world.isThundering() ? "thunder" : world.isRaining() ? "rain" : "clear";
         return new StateSnapshot(true, false, vec(p.position()), world.dimension().location().toString(),
                 p.getDirection().getSerializedName(), p.getHealth(), p.getMaxHealth(), p.getFoodData().getFoodLevel(),
                 p.getMainHandItem().isEmpty() ? "empty" : itemId(p.getMainHandItem()), armor, inventory, hostiles, players,
-                blocksAround(world, p.blockPosition()), pointsAround(world, p.blockPosition()),
+                creatures, blocksAround(world, p.blockPosition()), pointsAround(world, p.blockPosition()),
                 map(p, MAP_RADIUS, rt.settings().hostileRange()), world.getDayTime() % 24000, weather, level, home,
                 rt.queue().runningTool(), rt.queue().waitingCount());
     }
@@ -131,6 +147,35 @@ public final class SnapshotBuilder {
                 m -> m.isAlive() && isHostile(m) && m.distanceTo(body) <= range));
         mobs.sort(Comparator.comparingDouble(body::distanceToSqr));
         return mobs;
+    }
+
+    /**
+     * Passive and neutral mobs and villagers within range, nearest first, at most {@code max}: animals, water
+     * animals (squid, dolphins), villagers, wandering traders and golems. Monsters are in {@link #hostiles};
+     * bats and fish are left out. Each entry says whether it is a baby, whether the body tamed it, and a
+     * villager's profession.
+     */
+    public static List<StateSnapshot.Creature> creatures(ServerPlayer body, double range, int max) {
+        List<Mob> mobs = new ArrayList<>(body.serverLevel().getEntitiesOfClass(Mob.class, body.getBoundingBox().inflate(range),
+                m -> m.isAlive() && isCreature(m) && m.distanceTo(body) <= range));
+        mobs.sort(Comparator.comparingDouble(body::distanceToSqr));
+        List<StateSnapshot.Creature> out = new ArrayList<>(Math.min(max, mobs.size()));
+        for (Mob m : mobs) {
+            if (out.size() >= max) break;
+            boolean tamed = m instanceof OwnableEntity o && body.getUUID().equals(o.getOwnerUUID());
+            String job = m instanceof Villager v
+                    ? shortId(BuiltInRegistries.VILLAGER_PROFESSION.getKey(v.getVillagerData().getProfession()))
+                    : null;
+            out.add(new StateSnapshot.Creature(m.getId(), typeId(m), customName(m), body.distanceTo(m), m.isBaby(), tamed, job, vec(m.position())));
+        }
+        return out;
+    }
+
+    /** A mob that is neither a monster nor ambient (bats, fish): animals, villagers, traders, golems, squid. */
+    public static boolean isCreature(Entity entity) {
+        if (!(entity instanceof Mob)) return false;
+        MobCategory c = entity.getType().getCategory();
+        return c != MobCategory.MONSTER && c != MobCategory.AMBIENT && c != MobCategory.WATER_AMBIENT;
     }
 
     /** Monster-category mobs within range of the body on the ground plane, at any height, nearest first. */
