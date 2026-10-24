@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.example.claudeplayer.core.Settings;
+import com.example.claudeplayer.core.brain.Brain;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 
@@ -25,6 +26,25 @@ class SafetyTest {
     }
 
     @Test
+    void waterPoursAnywhereButIntoTheBody() {
+        double none = Double.POSITIVE_INFINITY;
+        assertEquals("ok", Guardrails.checkPour(false, false, none, 1).code(), "far from home, beside a player: fine for water");
+        assertEquals("failed:own_block", Guardrails.checkPour(false, true, 0, none).code());
+    }
+
+    @Test
+    void lavaPoursOnlyInTheWorkAreaAndNeverNearAPlayer() {
+        double none = Double.POSITIVE_INFINITY;
+        assertEquals("ok", Guardrails.checkPour(true, false, 10, none).code());
+        assertEquals("ok", Guardrails.checkPour(true, false, 32, 4.5).code());
+        assertEquals("denied:outside_work_area", Guardrails.checkPour(true, false, 33, none).code());
+        assertEquals("denied:outside_work_area", Guardrails.checkPour(true, false, none, none).code(), "no home, no lava");
+        assertEquals("denied:lava_near_player", Guardrails.checkPour(true, false, 10, 4).code());
+        assertEquals("denied:lava_near_player", Guardrails.checkPour(true, false, 10, 0.5).code());
+        assertEquals("failed:own_block", Guardrails.checkPour(true, true, 10, none).code());
+    }
+
+    @Test
     void tokenCapAndKillSwitch() {
         Guardrails g = new Guardrails(Settings.of(b -> b.sessionTokenCap = 1000), () -> now);
         g.recordTokens(999);
@@ -34,6 +54,56 @@ class SafetyTest {
         g.resume();
         g.recordTokens(1);
         assertEquals(Guardrails.Check.TOKEN_CAP, g.allowCall());
+    }
+
+    @Test
+    void cacheReadsCountATenthTowardTheCap() {
+        assertEquals(60, new Brain.Usage(10, 20, 30, 0).weighted());
+        assertEquals(160, new Brain.Usage(10, 20, 30, 1000).weighted(), "1000 cache reads weigh 100");
+    }
+
+    @Test
+    void tokensRecordedAnHourAgoNoLongerCount() {
+        Guardrails g = new Guardrails(Settings.of(b -> b.sessionTokenCap = 1000), () -> now);
+        g.recordTokens(900);
+        now += 61 * 60_000;
+        assertEquals(0, g.tokensUsed());
+        assertEquals(Guardrails.Check.OK, g.allowCall());
+    }
+
+    @Test
+    void theCapIsPerRollingHourAndFreesWhenTheOldestTokensAgeOut() {
+        Guardrails g = new Guardrails(Settings.of(b -> b.sessionTokenCap = 1000), () -> now);
+        g.recordTokens(600);
+        now = 10 * 60_000;
+        g.recordTokens(400);
+        assertEquals(Guardrails.Check.TOKEN_CAP, g.allowCall());
+        assertEquals(50 * 60_000L, g.capFreesInMillis(), "the oldest entry ages out at 60 minutes");
+        now = 60 * 60_000;
+        assertEquals(Guardrails.Check.OK, g.allowCall());
+        assertEquals(0, g.capFreesInMillis());
+    }
+
+    @Test
+    void capFreesOnlyWhenEnoughOldTokensHaveAgedOut() {
+        Guardrails g = new Guardrails(Settings.of(b -> b.sessionTokenCap = 1000), () -> now);
+        g.recordTokens(400);
+        now = 10 * 60_000;
+        g.recordTokens(600);
+        now = 20 * 60_000;
+        g.recordTokens(500);
+        assertEquals(50 * 60_000L, g.capFreesInMillis(), "the first entry alone is not enough; the second frees it at 70 minutes");
+    }
+
+    @Test
+    void resetTokensClearsTheWindow() {
+        Guardrails g = new Guardrails(Settings.of(b -> b.sessionTokenCap = 1000), () -> now);
+        g.recordTokens(1000);
+        assertEquals(Guardrails.Check.TOKEN_CAP, g.allowCall());
+        g.resetTokens();
+        assertEquals(Guardrails.Check.OK, g.allowCall());
+        assertEquals(0, g.tokensUsed());
+        assertEquals(0, g.capFreesInMillis());
     }
 
     @Test

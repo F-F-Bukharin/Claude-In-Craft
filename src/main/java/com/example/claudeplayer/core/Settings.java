@@ -17,7 +17,10 @@ public record Settings(
         int hostileRange, int escapeDistance, int escapeMaxSteps,
         int toolPhase, boolean idleReactions, boolean reflexes, boolean autoEat,
         int shortTermCapacity, int shortTermMinutes, int longTermCapacity,
-        int claudeCodeIdleMinutes, int autonomyIntervalSeconds) {
+        int claudeCodeIdleMinutes, int autonomyIntervalSeconds,
+        int visionCooldownSeconds, int visionWidth, int visionHeight,
+        String claudeEffort, String claudeThinkEffort, List<String> thinkHarderPhrases, int thinkHarderTimeoutSeconds,
+        List<Double> usageWarnAt, double cavemanAt, String cavemanSkillPath, int compactAtTokens) {
 
     /** {@code brain}: the player's Claude Code CLI (their subscription), or the Messages API with a key. */
     public static final String BRAIN_CLAUDE_CODE = "claude_code";
@@ -36,6 +39,8 @@ public record Settings(
 
     public Settings {
         ordersAllowlist = List.copyOf(ordersAllowlist);
+        thinkHarderPhrases = List.copyOf(thinkHarderPhrases);
+        usageWarnAt = List.copyOf(usageWarnAt);
     }
 
     public static Settings of(Consumer<Builder> edits) {
@@ -79,6 +84,17 @@ public record Settings(
         public int longTermCapacity = 64;
         public int claudeCodeIdleMinutes = 10;
         public int autonomyIntervalSeconds = 60;
+        public int visionCooldownSeconds = 15;
+        public int visionWidth = 320;
+        public int visionHeight = 180;
+        public String claudeEffort = "high";
+        public String claudeThinkEffort = "max";
+        public List<String> thinkHarderPhrases = List.of("think harder", "think hard");
+        public int thinkHarderTimeoutSeconds = 30;
+        public List<Double> usageWarnAt = List.of(0.80, 0.90);
+        public double cavemanAt = 0.80;
+        public String cavemanSkillPath = "";
+        public int compactAtTokens = 32_000;
 
         public Settings build() {
             return new Settings(brain, claudeCodePath, claudeCodeTimeoutSeconds, model, apiKeyEnv, effort, maxTokens, requestTimeoutSeconds, promptCaching, logPrompts,
@@ -86,7 +102,10 @@ public record Settings(
                     batchSize, prefetchAt, maxSteps, maxCallsPerMinute, sessionTokenCap, hostileRange,
                     escapeDistance, escapeMaxSteps, toolPhase, idleReactions, reflexes, autoEat,
                     shortTermCapacity, shortTermMinutes, longTermCapacity,
-                    claudeCodeIdleMinutes, autonomyIntervalSeconds);
+                    claudeCodeIdleMinutes, autonomyIntervalSeconds,
+                    visionCooldownSeconds, visionWidth, visionHeight,
+                    claudeEffort, claudeThinkEffort, thinkHarderPhrases, thinkHarderTimeoutSeconds,
+                    usageWarnAt, cavemanAt, cavemanSkillPath, compactAtTokens);
         }
     }
 }

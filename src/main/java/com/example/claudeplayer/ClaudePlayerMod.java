@@ -1,5 +1,6 @@
 package com.example.claudeplayer;
 
+import com.example.claudeplayer.net.BrainNetwork;
 import com.mojang.logging.LogUtils;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.config.ModConfig;
@@ -14,6 +15,7 @@ public final class ClaudePlayerMod {
 
     public ClaudePlayerMod(FMLJavaModLoadingContext context) {
         context.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
+        BrainNetwork.register();
         LOG.info("Claude Player loaded. Spawn the body with /cp spawn.");
     }
 }

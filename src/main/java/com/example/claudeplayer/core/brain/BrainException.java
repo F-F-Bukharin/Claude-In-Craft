@@ -10,7 +10,9 @@ public final class BrainException extends Exception {
         RATE_LIMITED(true), OVERLOADED(true), SERVER(true), TIMEOUT(true), NETWORK(true),
         INTERRUPTED(false), INTERNAL(false),
         // The Claude Code backend: the CLI is missing, or it ran and failed.
-        NO_CLI(false), CLI(false);
+        NO_CLI(false), CLI(false),
+        // Claude Code's subscription limit is used up; the message is the whole chat line.
+        LIMIT(false);
 
         public final boolean retryable;
 
@@ -73,6 +75,7 @@ public final class BrainException extends Exception {
             case INTERRUPTED, INTERNAL -> "Internal error talking to the API: " + getMessage();
             case NO_CLI -> "Claude Code wasn't found (" + getMessage() + "). Install it and log in once, or set claude_code_path.";
             case CLI -> "Claude Code failed: " + getMessage();
+            case LIMIT -> getMessage();
         };
     }
 

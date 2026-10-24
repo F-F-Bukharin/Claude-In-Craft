@@ -13,10 +13,15 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,14 +32,20 @@ import org.slf4j.LoggerFactory;
  * startup. A spare whose command no longer matches (new system prompt or flags) is replaced; a process unused for
  * {@code idleMillis} is stopped.
  *
- * <p>Threading: {@link #take}, {@link #refill} and the session's turn run on the brain thread; {@link #endCurrent}
- * may come from the server thread. The lock only guards the two fields: process starts, reads and writes happen
- * outside it, so the server thread never waits on process I/O.
+ * <p>Threading: {@link #take}, {@link #refill} and the session's turn run on the brain thread (the prompt line goes
+ * out from a writer thread, so the turn's deadline covers it); {@link #endCurrent} may come from the server thread.
+ * The lock only guards the fields and claims: process starts, reads and writes happen outside it. Kills go to the
+ * reaper thread, so a reset on the server thread only flags the call and queues the kill: no process walk, no pid
+ * file, no stream another thread may be blocked on.
  */
 final class ClaudeCodeSessions {
     private static final Logger LOG = LoggerFactory.getLogger(ClaudeCodeSessions.class);
     @SuppressWarnings("StringOperationCanBeSimplified")
     private static final String EOF = new String("eof"); // compared by identity: no stdout line is this object
+    @SuppressWarnings("StringOperationCanBeSimplified")
+    private static final String WRITE_FAILED = new String("write failed");
+    @SuppressWarnings("StringOperationCanBeSimplified")
+    private static final String CANCELLED = new String("cancelled"); // a reset: wakes the turn's await at once
 
     /** Starts one process. The real one is {@link ClaudeCodeEnv}; tests script a fake. */
     interface Launcher {
@@ -50,8 +61,30 @@ final class ClaudeCodeSessions {
 
         boolean alive();
 
-        /** Kills the process and its descendants. Never blocks on I/O. */
+        /**
+         * Kills the process and its descendants. May walk the process table and rewrite the pid file, so the
+         * sessions call it only from the reaper (or at shutdown), never from the server thread.
+         */
         void kill();
+    }
+
+    /**
+     * One model call, from {@link #begin} to {@link #finish}. A reset at any point of it (while a child starts,
+     * mid-write, mid-read, even after the answer arrived) cancels it: the call then ends as cancelled, not a reply.
+     */
+    final class Turn {
+        private volatile boolean cancelled;
+        private Session session; // guarded by ClaudeCodeSessions.this
+
+        /** Throws the cancellation if a reset came. */
+        void check() throws BrainException {
+            if (cancelled) throw cancelled();
+        }
+
+        /** {@code e}, or the cancellation if a reset caused it. */
+        BrainException or(BrainException e) {
+            return cancelled ? cancelled() : e;
+        }
     }
 
     /** One warm process. {@code seen} is the transcript prefix it has already read; brain thread only. */
@@ -62,8 +95,10 @@ final class ClaudeCodeSessions {
         private final BlockingQueue<String> lines = new LinkedBlockingQueue<>();
         private final StringBuilder err = new StringBuilder();
         private Thread errPump;
+        private volatile String writeError;
         private volatile long lastUsed;
-        private volatile boolean busy;
+        private boolean claimed; // a call holds it: the sweep leaves it alone. Guarded by ClaudeCodeSessions.this
+        private final AtomicBoolean stopped = new AtomicBoolean(); // its kill is on its way
 
         private Session(Proc proc, List<String> command) {
             this.proc = proc;
@@ -71,27 +106,37 @@ final class ClaudeCodeSessions {
             this.lastUsed = clock.getAsLong();
         }
 
-        /** Sends one stream-json line. */
-        void write(String line) throws BrainException {
-            busy = true;
-            lastUsed = clock.getAsLong();
-            try {
-                OutputStream in = proc.stdin();
-                in.write((line + "\n").getBytes(StandardCharsets.UTF_8));
-                in.flush();
-            } catch (IOException e) {
-                busy = false;
-                end(this);
-                throw new BrainException(BrainException.Kind.CLI, "couldn't write the prompt: " + e.getMessage());
-            }
+        /**
+         * Sends one stream-json line from a writer thread, so a child that never reads its stdin (a cold start that
+         * stalls, a full pipe) can't block the caller: {@link #await}'s deadline covers the write, and killing the
+         * process frees the writer.
+         */
+        void write(String line) {
+            byte[] bytes = (line + "\n").getBytes(StandardCharsets.UTF_8);
+            daemon("claudeplayer-cc-in", () -> {
+                try {
+                    OutputStream in = proc.stdin();
+                    in.write(bytes);
+                    in.flush();
+                } catch (IOException e) {
+                    writeError = e.getMessage();
+                    lines.add(WRITE_FAILED);
+                }
+            });
         }
 
-        /** Reads events until the turn's {@code result} event and returns it; any failure kills the session. */
-        String await(long timeoutMillis) throws BrainException {
-            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        /**
+         * Reads events until the turn's {@code result} event and returns it; any failure kills the session.
+         * {@code deadline} is a {@link System#nanoTime} instant, set when the turn began. A reset ends it as cancelled.
+         */
+        String await(long deadline, Turn turn) throws BrainException {
             try {
                 while (true) {
                     String line = lines.poll(deadline - System.nanoTime(), TimeUnit.NANOSECONDS);
+                    if (line == CANCELLED || turn.cancelled) {
+                        end(this);
+                        throw cancelled();
+                    }
                     if (line == null) {
                         end(this);
                         throw new BrainException(BrainException.Kind.TIMEOUT, "timed out");
@@ -100,17 +145,21 @@ final class ClaudeCodeSessions {
                         end(this);
                         throw new BrainException(BrainException.Kind.CLI, firstErrorLine());
                     }
+                    if (line == WRITE_FAILED) {
+                        end(this);
+                        throw new BrainException(BrainException.Kind.CLI, "couldn't write the prompt: " + writeError);
+                    }
                     String type = type(line);
                     if (type.equals("result")) return line;
-                    if (type.equals("rate_limit_event")) rateLimitEvent = line;
+                    if (type.equals("rate_limit_event")) {
+                        rateLimitEvent = line;
+                        freshRateLimitEvent.set(line);
+                    }
                 }
             } catch (InterruptedException e) {
                 end(this);
                 Thread.currentThread().interrupt();
                 throw new BrainException(BrainException.Kind.INTERRUPTED, "interrupted");
-            } finally {
-                busy = false;
-                lastUsed = clock.getAsLong();
             }
         }
 
@@ -128,50 +177,110 @@ final class ClaudeCodeSessions {
     private final long idleMillis;
     private final LongSupplier clock;
     private final boolean sweepInBackground;
+    private final Executor reaper;
     private Session current;
     private Session spare;
+    private Turn turn; // the model call in flight
     private boolean closed;
     private ScheduledExecutorService sweeper;
     private volatile String rateLimitEvent;
+    private final AtomicReference<String> freshRateLimitEvent = new AtomicReference<>(); // for the usage ledger
 
-    /** {@code sweepInBackground} false leaves idle stops to whoever calls {@link #sweep} (tests). */
-    ClaudeCodeSessions(Launcher launcher, long idleMillis, LongSupplier clock, boolean sweepInBackground) {
+    /**
+     * {@code sweepInBackground} false leaves idle stops to whoever calls {@link #sweep} (tests). {@code reaper} runs
+     * the kills ({@link Proc#kill} walks the process table and rewrites the pid file), off the caller's thread.
+     */
+    ClaudeCodeSessions(Launcher launcher, long idleMillis, LongSupplier clock, boolean sweepInBackground, Executor reaper) {
         this.launcher = launcher;
         this.idleMillis = idleMillis;
         this.clock = clock;
         this.sweepInBackground = sweepInBackground;
+        this.reaper = reaper;
     }
 
-    /** Ends the current session, then takes the spare if it matches {@code command} (else starts a process). */
-    Session take(List<String> command) throws BrainException {
+    /** The production reaper: one daemon thread. */
+    static ExecutorService reaper() {
+        return Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "claudeplayer-cc-reaper");
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
+    /** Starts a model call; from here until {@link #finish}, a {@link #endCurrent} cancels it. Brain thread. */
+    synchronized Turn begin() {
+        turn = new Turn();
+        return turn;
+    }
+
+    /** Ends the call: throws the cancellation if a reset came during it. A later reset only ends the session. */
+    void finish(Turn t) throws BrainException {
+        release(t);
+        t.check();
+    }
+
+    /** Ends the call, whatever happened to it: its session counts as idle from now. */
+    synchronized void release(Turn t) {
+        if (turn == t) turn = null;
+        if (t.session != null) {
+            t.session.claimed = false;
+            t.session.lastUsed = clock.getAsLong();
+            t.session = null;
+        }
+    }
+
+    /**
+     * Ends the current session, then takes the spare if it matches {@code command} (else starts a process), for
+     * {@code t}. A reset before or during the start cancels {@code t} and stops the new process.
+     */
+    Session take(List<String> command, Turn t) throws BrainException {
         Session old;
         Session s;
         synchronized (this) {
+            t.check(); // a reset already came: leave the spare for the next order
             old = current;
             current = null;
             s = spare;
             spare = null;
         }
-        if (old != null) old.proc.kill();
+        if (old != null) stop(old);
         if (s != null && (!s.command.equals(command) || !s.proc.alive())) {
-            s.proc.kill();
+            stop(s);
             s = null;
         }
         if (s == null) {
             try {
                 s = launch(command);
             } catch (IOException e) {
-                throw new BrainException(BrainException.Kind.NO_CLI, command.get(0) + ": " + e.getMessage());
+                throw t.or(new BrainException(BrainException.Kind.NO_CLI, command.get(0) + ": " + e.getMessage()));
             }
         }
+        BrainException refused;
         synchronized (this) {
-            if (!closed) {
+            if (closed) {
+                refused = new BrainException(BrainException.Kind.INTERRUPTED, "shutting down");
+            } else if (t.cancelled) {
+                refused = cancelled();
+            } else {
+                s.claimed = true; // in the same step that makes it current, so the sweep never sees it unclaimed
                 current = s;
+                t.session = s;
                 return s;
             }
         }
-        s.proc.kill();
-        throw new BrainException(BrainException.Kind.INTERRUPTED, "shutting down");
+        stop(s);
+        throw refused;
+    }
+
+    /**
+     * Claims the current session for {@code t}, or returns null if there is none (the sweep may have just stopped it)
+     * or {@code t} was cancelled. Claimed, the sweep can't stop it until {@link #release}.
+     */
+    synchronized Session claimCurrent(Turn t) {
+        if (current == null || t.cancelled) return null;
+        current.claimed = true;
+        t.session = current;
+        return current;
     }
 
     /** Makes sure an idle spare for {@code command} is running. A start failure only costs the next order its head start. */
@@ -182,7 +291,7 @@ final class ClaudeCodeSessions {
             stale = spare;
             spare = null;
         }
-        if (stale != null) stale.proc.kill();
+        if (stale != null) stop(stale);
         Session s;
         try {
             s = launch(command);
@@ -195,11 +304,7 @@ final class ClaudeCodeSessions {
             keep = !closed && spare == null;
             if (keep) spare = s;
         }
-        if (!keep) s.proc.kill();
-    }
-
-    synchronized Session current() {
-        return current;
+        if (!keep) stop(s);
     }
 
     /** Kills {@code s}, and forgets it if it is the current session. */
@@ -207,50 +312,102 @@ final class ClaudeCodeSessions {
         synchronized (this) {
             if (current == s) current = null;
         }
-        s.proc.kill();
+        stop(s);
     }
 
-    /** Kills the current session, not the spare. Safe from any thread. */
+    /** Cancels the call in flight, if any, and kills the current session, not the spare. Safe from any thread. */
     void endCurrent() {
         Session s;
+        Session waiting;
         synchronized (this) {
             s = current;
             current = null;
+            waiting = cancelTurn();
         }
-        if (s != null) s.proc.kill();
+        if (waiting != null) waiting.lines.add(CANCELLED);
+        if (s != null) stop(s);
+        if (waiting != null && waiting != s) stop(waiting);
     }
 
-    /** Stops the spare and the current session if unused for the idle time; a session mid-turn is never idle. */
+    /** Marks the call in flight cancelled; returns the session it waits on, if it has one yet. */
+    private Session cancelTurn() {
+        if (turn == null) return null;
+        turn.cancelled = true;
+        Session s = turn.session;
+        turn = null;
+        return s;
+    }
+
+    /**
+     * Hands the kill of {@code s} to the reaper: {@link Proc#kill} walks the process table and rewrites the pid
+     * file, which must not run on the server thread (a reset comes from there). Once per session.
+     */
+    private void stop(Session s) {
+        if (!s.stopped.compareAndSet(false, true)) return;
+        try {
+            reaper.execute(() -> kill(s));
+        } catch (RejectedExecutionException e) {
+            kill(s); // the reaper is gone (shutdown): do it here
+        }
+    }
+
+    /** Shutdown: kills {@code s} on this thread, before the JVM can exit under the reaper. */
+    private void stopNow(Session s) {
+        if (s.stopped.compareAndSet(false, true)) kill(s);
+    }
+
+    private static void kill(Session s) {
+        try {
+            s.proc.kill();
+        } catch (RuntimeException e) {
+            LOG.warn("couldn't stop a Claude Code process: {}", e.toString());
+        }
+    }
+
+    private static BrainException cancelled() {
+        return new BrainException(BrainException.Kind.INTERRUPTED, "cancelled");
+    }
+
+    /**
+     * Stops the spare and the current session if unused for the idle time. A session a call has claimed (or is
+     * taking: it is then in neither field) is never idle: claims and this check share the lock.
+     */
     void sweep() {
-        long now = clock.getAsLong();
         List<Session> idle = new ArrayList<>();
         synchronized (this) {
+            long now = clock.getAsLong();
             if (spare != null && now - spare.lastUsed >= idleMillis) {
                 idle.add(spare);
                 spare = null;
             }
-            if (current != null && !current.busy && now - current.lastUsed >= idleMillis) {
+            if (current != null && !current.claimed && now - current.lastUsed >= idleMillis) {
                 idle.add(current);
                 current = null;
             }
         }
-        idle.forEach(s -> s.proc.kill());
+        idle.forEach(this::stop);
         if (!idle.isEmpty()) LOG.info("stopped {} idle Claude Code process(es)", idle.size());
     }
 
+    /** Server shutdown: cancels the call in flight and kills every process here and now; kills already queued still run. */
     void close() {
         Session a;
         Session b;
+        Session waiting;
         synchronized (this) {
             closed = true;
             a = current;
             b = spare;
             current = null;
             spare = null;
+            waiting = cancelTurn();
             if (sweeper != null) sweeper.shutdownNow();
         }
-        if (a != null) a.proc.kill();
-        if (b != null) b.proc.kill();
+        if (waiting != null) waiting.lines.add(CANCELLED);
+        if (a != null) stopNow(a);
+        if (b != null) stopNow(b);
+        if (waiting != null && waiting != a) stopNow(waiting);
+        if (reaper instanceof ExecutorService service) service.shutdown();
     }
 
     synchronized Session spare() {
@@ -260,6 +417,11 @@ final class ClaudeCodeSessions {
     /** The last {@code rate_limit_event} line seen (Claude Code sends one on a session's first turn), or null. */
     String rateLimitEvent() {
         return rateLimitEvent;
+    }
+
+    /** The {@code rate_limit_event} line that arrived since the last call, or null. Taking it clears it. */
+    String takeRateLimitEvent() {
+        return freshRateLimitEvent.getAndSet(null);
     }
 
     private Session launch(List<String> command) throws IOException {

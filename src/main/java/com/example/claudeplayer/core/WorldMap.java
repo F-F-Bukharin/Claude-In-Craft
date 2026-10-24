@@ -11,7 +11,9 @@ import java.util.List;
  */
 public final class WorldMap {
     /** One block as the map cares about it. */
-    public enum Kind { OPEN, SOLID, WATER, LAVA, TREE, CONTAINER, UNKNOWN }
+    public enum Kind { OPEN, SOLID, WATER, LAVA, TREE, CONTAINER, UNKNOWN,
+        /** Walkable crops (no collision) and the farmland they grow on; farmland is solid ground. */
+        CROP_RIPE, CROP_GROWING, FARMLAND }
 
     @FunctionalInterface
     public interface Sampler {
@@ -29,9 +31,14 @@ public final class WorldMap {
     }
 
     public static final String KEY = ". floor at your level, + one block up (jump), - one block down, v drop of 2 or more, "
-            + "# wall, T tree, ~ water, L lava, C container, @ you, P player, ! hostile, space unknown";
+            + "# wall, T tree, ~ water, L lava, C container, W ripe crop, w growing crop, = bare farmland, @ you, P player, ! hostile, space unknown";
 
     private WorldMap() {}
+
+    /** A crop is ripe once its age reaches the block's maximum; the game side feeds the age and max age. */
+    public static Kind crop(int age, int maxAge) {
+        return age >= maxAge ? Kind.CROP_RIPE : Kind.CROP_GROWING;
+    }
 
     /** Markers outside the square are skipped; {@code @} marks the centre and wins over everything. */
     public static View render(Sampler s, int cx, int feetY, int cz, int radius, List<Marker> markers) {
@@ -54,6 +61,8 @@ public final class WorldMap {
 
     /** What standing at feet level in this column would be like. */
     static char cell(Sampler s, int x, int y, int z) {
+        char farm = farm(s, x, y, z);
+        if (farm != 0) return farm;
         Kind feet = s.at(x, y, z);
         Kind head = s.at(x, y + 1, z);
         Kind below = s.at(x, y - 1, z);
@@ -73,7 +82,21 @@ public final class WorldMap {
         return tree ? 'T' : '#';
     }
 
+    /** Vertical window searched for crops and farmland, nearest to feet level first (so a field one step down still shows). */
+    private static final int[] FARM_WINDOW = {0, -1, 1, -2};
+
+    /** W, w or = for the nearest crop or bare farmland within the window, with open air above it; 0 if none. */
+    static char farm(Sampler s, int x, int y, int z) {
+        for (int dy : FARM_WINDOW) {
+            Kind k = s.at(x, y + dy, z);
+            if (k != Kind.CROP_RIPE && k != Kind.CROP_GROWING && k != Kind.FARMLAND) continue;
+            if (s.at(x, y + dy + 1, z) != Kind.OPEN) continue;
+            return k == Kind.CROP_RIPE ? 'W' : k == Kind.CROP_GROWING ? 'w' : '=';
+        }
+        return 0;
+    }
+
     private static boolean solid(Kind k) {
-        return k == Kind.SOLID || k == Kind.TREE || k == Kind.CONTAINER;
+        return k == Kind.SOLID || k == Kind.TREE || k == Kind.CONTAINER || k == Kind.FARMLAND;
     }
 }

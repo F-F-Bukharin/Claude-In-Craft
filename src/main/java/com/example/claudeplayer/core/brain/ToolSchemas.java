@@ -1,5 +1,6 @@
 package com.example.claudeplayer.core.brain;
 
+import com.example.claudeplayer.core.Sight;
 import com.example.claudeplayer.core.act.Action;
 import com.example.claudeplayer.core.act.ActionResult;
 import com.example.claudeplayer.core.work.DigPlan;
@@ -19,10 +20,10 @@ import java.util.Set;
  */
 public final class ToolSchemas {
     /** Tools allowed to ask for priority 3; anywhere else a 3 is lowered to 2. */
-    public static final Set<String> SAFETY_TOOLS = Set.of("flee", "stop", "attack_entity");
+    public static final Set<String> SAFETY_TOOLS = Set.of("flee", "stop", "attack_entity", "fight");
 
     private static final String PRIO = "Priority 1 to 3, default 1. 1: routine, dropped if danger interrupts. "
-            + "2: important, paused and resumed after danger. 3: only flee, stop and attack_entity; runs before everything else.";
+            + "2: important, paused and resumed after danger. 3: only flee, stop, attack_entity and fight; runs before everything else.";
 
     /** Either an action to queue (with its priority), or the result to send back without running anything. */
     public record Parsed(Action action, ActionResult error, int prio, boolean prioLowered) {}
@@ -34,7 +35,11 @@ public final class ToolSchemas {
 
     private record Tool(String name, int phase, String description, JsonObject schema, Parser parser) {}
 
-    private record Prop(String name, JsonObject schema) {}
+    private record Prop(String name, JsonObject schema, boolean required) {
+        Prop(String name, JsonObject schema) {
+            this(name, schema, true);
+        }
+    }
 
     private final int phase;
     private final List<Tool> tools = new ArrayList<>();
@@ -48,6 +53,9 @@ public final class ToolSchemas {
         add("look", 1, "See farther: the same top-down map as world_state.map, with a radius of 4 to 24 blocks instead of 8. A radius of 24 is about 900 tokens, so ask for what you need.",
                 in -> new Action.Look(in.integer("radius", 4, 24)),
                 integer("radius", "Blocks from you to the map's edge, 4 to 24."));
+        add("see", 2, "See what is in your line of sight, as text, for when the map doesn't show it (the map can't see through walls): the blocks in front of you grouped by id with a count and the nearest one's position and distance, ores, containers and ripe crops listed first with exact positions, water and lava, and the living things in view with ids. A fan of rays 70 degrees wide and 40 tall, up to 32 blocks, under 1 KB. With a direction other than forward you turn to look that way first (up and down tilt your head).",
+                in -> new Action.See(seeDirection(in)),
+                optional(text("direction", "forward (default, the way you face), north, south, east, west, up or down.")));
         add("move_to", 1, "Walk to a block position. Holds the queue until you arrive, there is no path (failed:no_path) or the action times out (failed:timeout).",
                 in -> new Action.MoveTo(in.number("x", -3e7, 3e7), in.number("y", -64, 320), in.number("z", -3e7, 3e7)),
                 number("x", "Target x."), number("y", "Target y, at your feet."), number("z", "Target z."));
@@ -89,6 +97,10 @@ public final class ToolSchemas {
         add("attack_entity", 4, "Attack one entity by its id from world_state.hostiles. Your caution level decides whether that's allowed; a denial says why.",
                 in -> new Action.AttackEntity(in.integer("entity_id", 0, Integer.MAX_VALUE)),
                 integer("entity_id", "The entity's id."));
+        // combat
+        add("fight", 4, "Fight one hostile by its id until it's dead, you must stop, or it's out of your caution level's range. Gears up first. Reports once at the end.",
+                in -> new Action.Fight(in.integer("entity_id", 0, Integer.MAX_VALUE)),
+                integer("entity_id", "The hostile's id from world_state.hostiles."));
         add("mine_block", 2, "Dig out the block at a position within 4.5 blocks of your eyes, with the best tool you carry, then pick up what drops. Holds the queue while digging. Natural blocks (logs, leaves, stone, dirt, sand, gravel, ores, plants) can be mined anywhere; anything else only if you placed it. Fails with out_of_reach (walk closer first), no_block, too_slow (needs a better tool) or block_changed; denied:protected_block or denied:unbreakable.",
                 in -> new Action.MineBlock(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000)),
                 integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."));
@@ -112,6 +124,23 @@ public final class ToolSchemas {
         add("dig", 2, "Dig a tunnel 1 wide and 2 high from where you stand, walking into each step. north, south, east or west keep your level and never dig the floor; down digs stairs one block lower per step toward the way you face, so you can walk back up. Use it to get underground to ores instead of many mine_block calls. Ores on the tunnel walls are listed (at most 5) so you can gather or mine_block them. Stops at y=-60. ok: dug N/length steps (stopped: y_floor or timeout after 5 minutes). Fails, saying how far it got, with protected_block, unbreakable, hazard_lava or hazard_water (a fluid next to the block about to open), hazard_drop (a fall of 3 or more ahead), too_slow (needs a better tool), stuck, or blocked (falling sand or gravel keeps refilling it).",
                 in -> new Action.Dig(direction(in), in.integer("length", 1, 32)),
                 text("direction", "north, south, east, west or down."), integer("length", "Steps to dig, 1 to 32."));
+        // farming
+        add("till", 2, "Turn dirt, grass, coarse dirt, rooted dirt or a path block within 4.5 blocks of your eyes into farmland, with a hoe from your inventory (it holds the hoe for you). Fails with no_hoe, not_tillable, too_far or blocked (the block above isn't air).",
+                in -> new Action.Till(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000)),
+                integer("x", "Soil block x."), integer("y", "Soil block y."), integer("z", "Soil block z."));
+        add("plant", 2, "Plant one item from your inventory on the soil block at x, y, z (within 4.5 blocks); it grows in the block above. wheat_seeds, carrot, potato and beetroot_seeds need farmland (till first), saplings dirt or grass, nether_wart soul sand. Fails with no_item, wrong_soil, occupied or too_far.",
+                in -> new Action.Plant(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000), item(in)),
+                integer("x", "Soil block x."), integer("y", "Soil block y."), integer("z", "Soil block z."), text("item", "Item id to plant, for example wheat_seeds or oak_sapling."));
+        add("harvest", 2, "Harvest a field in one call: walks to every ripe wheat, carrot, potato, beetroot or nether wart within radius of the point, breaks it, picks up the drops and replants the spot with a matching seed you carry. Growing crops are left alone. Gives up after 120 s. ok: what was harvested, replanted and picked up, and why it stopped: done, none_ripe, inventory_full or timeout. failed:danger (a hostile within 6 blocks or health under 40%) also says what was done.",
+                in -> new Action.Harvest(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000), in.integer("radius", 1, 8)),
+                integer("x", "Field centre x."), integer("y", "Field y, at the crops."), integer("z", "Field centre z."), integer("radius", "Blocks from the point, 1 to 8."));
+        add("use_bucket", 2, "Use a bucket on a block within 4.5 blocks of your eyes. With a water or lava bucket: pour it there and keep the empty bucket. With an empty bucket: fill it from the water or lava source there. With fluid (water or lava), pour or fill only that kind; without it, water first. Lava pours only within 32 blocks of home (denied:outside_work_area) and never within 4 blocks of another player (denied:lava_near_player). Fails with no_bucket, no_source, too_far, own_block (where you stand) or not_poured.",
+                in -> new Action.UseBucket(in.integer("x", -30_000_000, 30_000_000), in.integer("y", -64, 320), in.integer("z", -30_000_000, 30_000_000), fluid(in)),
+                integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."),
+                optional(text("fluid", "water or lava: which bucket to pour. Leave it out for any full bucket.")));
+        // vision
+        add("glance", 2, "Take a low-res picture of what you see right now. For important moments: a rare or valuable target, or a player asking you to look. It has a cooldown.",
+                in -> new Action.Glance());
     }
 
     /** The enabled tools in a fixed order; a stable list keeps the prompt cache valid. */
@@ -141,7 +170,7 @@ public final class ToolSchemas {
         JsonArray required = new JsonArray();
         for (Prop p : props) {
             properties.add(p.name(), p.schema());
-            required.add(p.name());
+            if (p.required()) required.add(p.name());
         }
         properties.add("prio", integer("prio", PRIO).schema());
         JsonObject schema = new JsonObject();
@@ -158,10 +187,18 @@ public final class ToolSchemas {
         definitions.add(def);
     }
 
-    /** An item id for store and take, lower case and without the minecraft: prefix, or all. */
+    /** An item id for store, take and plant, lower case and without the minecraft: prefix (all only means something to store and take). */
     private static String item(Input in) {
         String id = in.text("item", 64).toLowerCase(Locale.ROOT);
         return id.startsWith("minecraft:") ? id.substring("minecraft:".length()) : id;
+    }
+
+    /** "water" or "lava" for use_bucket, or null when absent. */
+    private static String fluid(Input in) {
+        if (!in.has("fluid")) return null;
+        String f = in.text("fluid", 8).toLowerCase(Locale.ROOT);
+        if (!Set.of("water", "lava").contains(f)) throw new BadInput("fluid");
+        return f;
     }
 
     /** One of DigPlan.DIRECTIONS. */
@@ -171,9 +208,21 @@ public final class ToolSchemas {
         return d;
     }
 
+    /** One of Sight.DIRECTIONS, forward when absent. */
+    private static String seeDirection(Input in) {
+        if (!in.has("direction")) return "forward";
+        String d = in.text("direction", 8).toLowerCase(Locale.ROOT);
+        if (!Sight.DIRECTIONS.contains(d)) throw new BadInput("direction");
+        return d;
+    }
+
     /** 1 to 2304 (a full inventory of 64-stacks); not read for all. */
     private static int count(Input in, String item) {
         return Action.ALL.equals(item) ? 0 : in.integer("count", 1, 2304);
+    }
+
+    private static Prop optional(Prop p) {
+        return new Prop(p.name(), p.schema(), false);
     }
 
     private static Prop number(String name, String description) {

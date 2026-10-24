@@ -11,6 +11,9 @@ public sealed interface Action {
     /** A wider top-down map than world_state.map (executed in the game). */
     record Look(int radius) implements Action {}
 
+    /** What a fan of rays from the eyes hits, as text (Sight); {@code direction} is forward, north, south, east, west, up or down. */
+    record See(String direction) implements Action {}
+
     record MoveTo(double x, double y, double z) implements Action {}
 
     record Say(String text) implements Action {}
@@ -50,6 +53,10 @@ public sealed interface Action {
     // v2: schemas exist, hidden until tool_phase reaches them
     record AttackEntity(int entityId) implements Action {}
 
+    // combat
+    /** Gears up, then walks to one hostile and swings until it dies, the policy stops it, or 30 s pass (FightHandle). */
+    record Fight(int entityId) implements Action {}
+
     record MineBlock(int x, int y, int z) implements Action {}
 
     record PlaceBlock(int x, int y, int z, String item) implements Action {}
@@ -67,4 +74,22 @@ public sealed interface Action {
 
     /** Digs a 1-wide, 2-high tunnel {@code length} steps north, south, east or west, or a staircase down (DigPlan). */
     record Dig(String direction, int length) implements Action {}
+
+    /** Turns dirt, grass or a path block into farmland with a hoe from the inventory. */
+    record Till(int x, int y, int z) implements Action {}
+
+    /** Plants {@code item} (a short id) in the block above the soil block at x, y, z (Farming.fits). */
+    record Plant(int x, int y, int z, String item) implements Action {}
+
+    /** Harvests every ripe crop within {@code radius} of a point, picks up the drops and replants from the inventory. */
+    record Harvest(int x, int y, int z, int radius) implements Action {}
+
+    /**
+     * Pours a water or lava bucket at a position, or fills an empty bucket from the source there (Guardrails.checkPour).
+     * {@code fluid} is "water", "lava", or null for the first full bucket found (water first).
+     */
+    record UseBucket(int x, int y, int z, String fluid) implements Action {}
+
+    /** A low-res picture of what the body sees, gated by VisionGate (once per turn, then a cooldown). */
+    record Glance() implements Action {}
 }

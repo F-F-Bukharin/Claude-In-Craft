@@ -47,6 +47,7 @@ final class ContainerActions {
     ActionResult store(AgentPlayer p, Action.Store s) {
         BlockPos pos = new BlockPos(s.x(), s.y(), s.z());
         if (!inReach(p, pos)) return ActionResult.failed("out_of_reach");
+        if (p.serverLevel().getBlockState(pos).is(Blocks.ENDER_CHEST)) return ActionResult.failed("ender_chest_personal"); // each player sees their own
         Container container = find(p, pos);
         if (container == null) return ActionResult.failed("not_a_container");
         boolean all = Action.ALL.equals(s.item());
@@ -79,6 +80,7 @@ final class ContainerActions {
     ActionResult take(AgentPlayer p, Action.Take t) {
         BlockPos pos = new BlockPos(t.x(), t.y(), t.z());
         if (!inReach(p, pos)) return ActionResult.failed("out_of_reach");
+        if (p.serverLevel().getBlockState(pos).is(Blocks.ENDER_CHEST)) return ActionResult.failed("ender_chest_personal"); // each player sees their own
         Container container = find(p, pos);
         if (container == null) return ActionResult.failed("not_a_container");
         boolean all = Action.ALL.equals(t.item());

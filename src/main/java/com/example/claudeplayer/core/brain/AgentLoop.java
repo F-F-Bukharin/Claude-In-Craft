@@ -5,10 +5,13 @@ import com.example.claudeplayer.core.StateSnapshot;
 import com.example.claudeplayer.core.act.Action;
 import com.example.claudeplayer.core.act.ActionQueue;
 import com.example.claudeplayer.core.act.ActionResult;
+import com.example.claudeplayer.core.act.VisionGate;
 import com.example.claudeplayer.core.chat.Conversation;
 import com.example.claudeplayer.core.memory.Memory;
 import com.example.claudeplayer.core.safety.Guardrails;
+import com.example.claudeplayer.core.safety.WorldText;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -18,7 +21,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
+import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,16 +35,20 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Threading: every method runs on the server thread. Only {@link Brain#send} runs on {@code brainThread}, and
  * its reply comes back through {@code mainThread}. Each order is one append-only transcript, which keeps prompt
- * caching and thinking blocks valid; a new order starts a new transcript.
+ * caching and thinking blocks valid; a new order starts a new transcript. The one exception is autocompact: once a
+ * reply's prompt reaches {@code compact_at_tokens}, the next turn replaces the transcript with a single turn that
+ * summarizes it (built in code, no extra model call).
  *
  * <p>Pipelining: a batch's results go out when the batch is done, or early once only {@code prefetch_at} of its
  * calls are still waiting to start, so the next reply usually lands before the queue runs dry. Calls still pending
  * at that point report {@code queued}, and their real outcome follows as a note in a later turn. If the reply is
- * late the agent waits; it never acts on a guess.
+ * late the agent waits; it never acts on a guess. A reply marked done ends its order without a report turn once its
+ * calls all succeed; any other outcome goes back to the model as usual.
  *
  * <p>Priorities: each call runs at its {@code prio} level. A reflex is code acting first: its actions go in at
  * level 3, which scraps routine work and pauses level 2, and the model then hears what the body did and what was
- * displaced. A dropped order leaves level 3 running, so a flee outlives the order that was interrupted.
+ * displaced. A dropped order leaves the reflexes running, so a flee outlives the order that was interrupted; a
+ * reflex that ends in an error is a note in the next turn.
  *
  * <p>Autonomy: while it is on and nothing else runs, a goal turn starts at most once per
  * {@code autonomy_interval_seconds}. A goal is one model call: its tool calls run and the goal ends without a
@@ -65,6 +76,10 @@ public final class AgentLoop implements ActionQueue.Listener {
     private record Opening(String player, String text, Kind kind) {}
 
     private static final int OUTCOMES_KEPT = 5;
+    private static final int EARLIER_LINES = 40; // turns a compacted summary keeps, newest last
+    private static final int LINE_TEXT_MAX = 200;
+    private static final Pattern NOTE_LINE = Pattern.compile("^- (\\S+) (\\S+): (\\S+)$", Pattern.MULTILINE);
+    private static final String REFLEX = "reflex-"; // call ids of code's own level 3 entries
 
     private static final class Call {
         final String id;
@@ -85,6 +100,10 @@ public final class AgentLoop implements ActionQueue.Listener {
 
         boolean done() {
             return calls.stream().allMatch(c -> c.result != null);
+        }
+
+        boolean allOk() {
+            return calls.stream().allMatch(c -> c.result.status() == ActionResult.Status.OK);
         }
 
         long notStarted() {
@@ -111,15 +130,21 @@ public final class AgentLoop implements ActionQueue.Listener {
     private JsonArray messages = new JsonArray();
     private final Map<String, Call> pending = new HashMap<>();
     private JsonArray pendingResults = new JsonArray();
+    private JsonArray lateImages = new JsonArray(); // pictures of calls reported early; they lead the next turn's text
+    private final VisionGate vision;
     private final List<String> notes = new ArrayList<>();
     private Batch batch;
     private boolean inFlight;
     private boolean deferred;
     private boolean cancelling;
     private boolean mustReport;
-    private String interruptInFlight;
+    private final List<String> interruptsInFlight = new ArrayList<>(); // in arrival order; all go out with the reply
     private String finalText;
+    private String doneText; // a done reply's text while its batch runs; said if the batch succeeds, null otherwise
     private int steps;
+    private long lastPrompt; // the last reply's prompt size in tokens; 0 until the next reply
+    private final List<String> earlier = new ArrayList<>(); // summary lines of turns compacted away, oldest first
+    private int summarized; // turns summarized so far, numbering the lines
     private int reflexCount; // numbers the reflex-<n> call ids
     private boolean goal; // the running order is an autonomous goal turn
     private String goalText; // the goal reply's text, said when the goal ends unless blank
@@ -128,6 +153,13 @@ public final class AgentLoop implements ActionQueue.Listener {
     private int goalCount;
     private final Deque<String> outcomes = new ArrayDeque<>(); // the last goals' result codes, oldest first
     private String lastGoalFailure; // the notice of the last failed goal call, so a repeat stays quiet
+    private BooleanSupplier cavemanOn = () -> false; // usage is high enough for caveman, and the skill exists
+    private Supplier<String> cavemanNote = () -> "";
+    private boolean cavemanFromStart; // the running order began with the rules in its system prompt
+    private boolean cavemanNoted; // the running order already got the one note
+    private boolean thinkHarder; // the running order asks the brain for claude_think_effort
+    private long orderStartedAt; // a step note older than this belongs to an earlier order
+    private boolean capNoticed; // autonomy already said the token cap is holding it back
 
     public AgentLoop(Settings settings, Brain brain, Executor brainThread, Executor mainThread, ActionQueue queue,
                      Guardrails guardrails, PromptBuilder prompts, ToolSchemas tools, Memory memory, Host host,
@@ -143,7 +175,18 @@ public final class AgentLoop implements ActionQueue.Listener {
         this.memory = memory;
         this.host = host;
         this.clockMillis = clockMillis;
+        this.vision = new VisionGate(settings.visionCooldownSeconds(), clockMillis);
         queue.setListener(this);
+    }
+
+    /**
+     * Caveman: {@code on} says whether the rules apply now. An order that begins with it on carries that in every
+     * request (the backend puts the rules in its system prompt). An order already running when it turns on gets
+     * {@code note} once, in its next update turn, so the transcript only grows. Server thread.
+     */
+    public void caveman(BooleanSupplier on, Supplier<String> note) {
+        this.cavemanOn = on;
+        this.cavemanNote = note;
     }
 
     public boolean active() {
@@ -162,8 +205,16 @@ public final class AgentLoop implements ActionQueue.Listener {
 
     /** A new order from an allowlisted player. Replaces whatever was running and lifts a kill-switch halt. */
     public void startOrder(String player, String text) {
+        startOrder(player, text, false);
+    }
+
+    /**
+     * As above; {@code thinkHarder} runs the order at {@code claude_think_effort} until it ends or a reflex fires.
+     * Only the player's yes to the think-harder offer sets it, never the model.
+     */
+    public void startOrder(String player, String text, boolean thinkHarder) {
         guardrails.resume();
-        begin(new Opening(player, text, Kind.ORDER));
+        begin(new Opening(player, text, Kind.ORDER), thinkHarder);
     }
 
     /** Autonomy on, from an allowlisted player. Lifts a kill-switch halt like an order does. */
@@ -201,16 +252,17 @@ public final class AgentLoop implements ActionQueue.Listener {
      */
     public void interrupt(String reason) {
         if (orderFrom == null || goal) {
-            if (settings.idleReactions() && !guardrails.halted()) begin(new Opening("", reason, Kind.EVENT));
+            if (settings.idleReactions() && !guardrails.halted()) begin(new Opening("", reason, Kind.EVENT), false);
             return;
         }
+        thinkHarder = false; // any threat ends max effort, reflex or not
         String note = "INTERRUPT: " + reason;
         if (settings.reflexes()) {
             report(note);
             return;
         }
         if (inFlight) {
-            interruptInFlight = note; // the reply on its way was planned on stale state
+            interruptsInFlight.add(note); // the reply on its way was planned on stale state
         } else {
             notes.add(note);
             mustReport = true;
@@ -226,10 +278,11 @@ public final class AgentLoop implements ActionQueue.Listener {
      */
     public void reflex(String reason, List<Action> actions) {
         List<ActionQueue.Entry> entries = reflexEntries(actions);
+        thinkHarder = false; // a threat ends max effort: the next turn is back at the configured one
         ActionQueue.Preemption displaced = enqueue(entries);
         String did = " Reflex: " + entries.stream().map(ActionQueue.Entry::tool).collect(Collectors.joining(", ")) + ".";
         if (orderFrom == null || goal) {
-            if (settings.idleReactions() && !guardrails.halted()) begin(new Opening("", reason + did, Kind.EVENT));
+            if (settings.idleReactions() && !guardrails.halted()) begin(new Opening("", reason + did, Kind.EVENT), false);
             return;
         }
         report("INTERRUPT: " + reason + did + listed(" Paused: ", displaced.paused()) + listed(" Scrapped: ", displaced.scrapped()));
@@ -241,14 +294,19 @@ public final class AgentLoop implements ActionQueue.Listener {
      */
     public void reflexQuiet(List<Action> actions) {
         if (actions.isEmpty()) return;
+        thinkHarder = false; // still a threat, so max effort ends here too
         enqueue(reflexEntries(actions));
         checkProgress(); // a batch the preempt finished reports as usual
     }
 
     private List<ActionQueue.Entry> reflexEntries(List<Action> actions) {
         List<ActionQueue.Entry> entries = new ArrayList<>();
-        for (Action a : actions) entries.add(new ActionQueue.Entry("reflex-" + ++reflexCount, reflexTool(a), a, 3));
+        for (Action a : actions) entries.add(new ActionQueue.Entry(REFLEX + ++reflexCount, reflexTool(a), a, 3));
         return entries;
+    }
+
+    private static boolean isReflex(ActionQueue.Entry entry) {
+        return entry.callId().startsWith(REFLEX);
     }
 
     /** Kill switch: cancel everything, drop the order, end autonomy, block model calls until the next order. */
@@ -289,12 +347,20 @@ public final class AgentLoop implements ActionQueue.Listener {
     public void onFinished(ActionQueue.Entry entry, ActionResult result) {
         Call call = pending.remove(entry.callId());
         if (call == null) { // a reflex, or a call from an abandoned order
+            if (isReflex(entry) && result.isError() && orderFrom != null) {
+                String note = "reflex " + entry.tool() + ": " + result.code(); // the model otherwise never hears it
+                if (!notes.contains(note)) notes.add(note); // a chase re-firing into a wall says it once per turn
+            }
             checkProgress(); // a final reply may be waiting for the queue to go idle
             return;
         }
         if (call.reportedEarly) {
             notes.add(call.name + " " + call.id + ": " + result.code());
             if (result.isError()) mustReport = true;
+            if (result.png() != null) {
+                lateImages.add(Images.block(result.png()));
+                mustReport = true; // the model asked to look: the picture must reach it
+            }
         } else {
             call.result = result;
         }
@@ -305,10 +371,12 @@ public final class AgentLoop implements ActionQueue.Listener {
     private void startGoal() {
         nextGoalAt = clockMillis.getAsLong() + settings.autonomyIntervalSeconds() * 1000L;
         switch (guardrails.allowCall()) {
-            case OK -> {}
-            case TOKEN_CAP -> {
-                autonomyOff();
-                host.notice("Session token cap reached (" + settings.sessionTokenCap() + "). Autonomy off.");
+            case OK -> capNoticed = false;
+            case TOKEN_CAP -> { // the cap is a rolling hour: wait it out, and say so once
+                if (!capNoticed) {
+                    host.notice("Token cap reached (" + settings.sessionTokenCap() + " per hour). Autonomy waits until it frees.");
+                }
+                capNoticed = true;
                 return;
             }
             default -> {
@@ -316,12 +384,14 @@ public final class AgentLoop implements ActionQueue.Listener {
             }
         }
         LOG.info("autonomy goal #{}", ++goalCount);
-        begin(new Opening(autonomyBy, "", Kind.GOAL));
+        begin(new Opening(autonomyBy, "", Kind.GOAL), false);
     }
 
-    private void begin(Opening first) {
+    private void begin(Opening first, boolean think) {
         if (goal) recordGoal(first.kind() == Kind.ORDER ? "; an order took over" : "; a threat took over");
         abandon();
+        thinkHarder = think;
+        orderStartedAt = clockMillis.getAsLong();
         opening = first;
         goal = first.kind() == Kind.GOAL;
         orderFrom = goal ? "" : first.player();
@@ -340,10 +410,12 @@ public final class AgentLoop implements ActionQueue.Listener {
         JsonArray content = reply.content();
         if (content.isEmpty()) content = single(textBlock("(no reply)")); // the API rejects empty assistant turns
         messages.add(message("assistant", content));
-        if (interruptInFlight != null) {
+        Brain.Usage usage = reply.usage();
+        lastPrompt = (long) usage.input() + usage.cacheRead() + usage.cacheWrite();
+        if (!interruptsInFlight.isEmpty()) {
             for (Brain.ToolCall call : reply.toolCalls()) pendingResults.add(toolResult(call.id(), ActionResult.cancelled()));
-            notes.add(interruptInFlight);
-            interruptInFlight = null;
+            notes.addAll(interruptsInFlight);
+            interruptsInFlight.clear();
             mustReport = true;
             checkProgress();
             return;
@@ -364,12 +436,14 @@ public final class AgentLoop implements ActionQueue.Listener {
             return;
         }
         if (!reply.text().isEmpty()) LOG.debug("model text alongside tool calls: {}", reply.text());
+        if (reply.done()) doneText = reply.text();
         startBatch(reply.toolCalls());
     }
 
     private void startBatch(List<Brain.ToolCall> calls) {
         Batch next = new Batch();
         List<ActionQueue.Entry> entries = new ArrayList<>();
+        vision.newTurn();
         for (int i = 0; i < calls.size(); i++) {
             Brain.ToolCall tc = calls.get(i);
             Call call = new Call(tc.id(), tc.name());
@@ -383,8 +457,15 @@ public final class AgentLoop implements ActionQueue.Listener {
                 call.result = parsed.error();
                 continue;
             }
+            if (parsed.action() instanceof Action.Glance) {
+                String denied = vision.admit();
+                if (denied != null) {
+                    call.result = ActionResult.denied(denied);
+                    continue;
+                }
+            }
             if (parsed.prioLowered()) {
-                notes.add(tc.name() + " " + tc.id() + ": prio_lowered to 2 (prio 3 is only for flee, stop and attack_entity)");
+                notes.add(tc.name() + " " + tc.id() + ": prio_lowered to 2 (prio 3 is only for flee, stop, attack_entity and fight)");
             }
             pending.put(tc.id(), call);
             entries.add(new ActionQueue.Entry(tc.id(), tc.name(), parsed.action(), parsed.prio()));
@@ -397,7 +478,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     /** Tells the model now: unfinished calls of the current batch report {@code queued}. */
     private void report(String note) {
         if (inFlight) {
-            interruptInFlight = note; // the reply on its way was planned on stale state
+            interruptsInFlight.add(note); // the reply on its way was planned on stale state
             return;
         }
         notes.add(note);
@@ -417,9 +498,20 @@ public final class AgentLoop implements ActionQueue.Listener {
             return;
         }
         if (batch != null && !batch.reported) {
-            boolean prefetch = batch.calls.size() > settings.prefetchAt() && batch.notStarted() <= settings.prefetchAt();
-            if (batch.done() || prefetch) reportBatch();
-            return;
+            if (doneText != null) { // a done batch never prefetches: it either ends the order or reports in full
+                if (!batch.done()) return;
+                if (!batch.allOk() || !notes.isEmpty() || mustReport) {
+                    reportBatch();
+                    return;
+                }
+                batch.reported = true;
+                finalText = doneText;
+                doneText = null;
+            } else {
+                boolean prefetch = batch.calls.size() > settings.prefetchAt() && batch.notStarted() <= settings.prefetchAt();
+                if (batch.done() || prefetch) reportBatch();
+                return;
+            }
         }
         if (mustReport || !pendingResults.isEmpty()) {
             flush();
@@ -430,6 +522,7 @@ public final class AgentLoop implements ActionQueue.Listener {
 
     private void reportBatch() {
         batch.reported = true;
+        doneText = null;
         for (Call c : batch.calls) {
             if (c.result == null) c.reportedEarly = true;
             pendingResults.add(toolResult(c.id, c.result != null ? c.result : ActionResult.queued()));
@@ -451,7 +544,9 @@ public final class AgentLoop implements ActionQueue.Listener {
                 return;
             }
             case TOKEN_CAP -> {
-                end("Session token cap reached (" + settings.sessionTokenCap() + "). No more model calls until the server restarts.");
+                long minutes = Math.max(1, (guardrails.capFreesInMillis() + 59_999) / 60_000);
+                end("Token cap reached (" + settings.sessionTokenCap() + " per hour). Calls resume in about " + minutes
+                        + " min, or an op can run /cp resetcap.");
                 return;
             }
             case HALTED -> {
@@ -459,9 +554,19 @@ public final class AgentLoop implements ActionQueue.Listener {
                 return;
             }
         }
-        String state = host.snapshot().toJson();
+        StateSnapshot snapshot = host.snapshot();
+        String state = snapshot.toJson();
+        if (opening != null) {
+            cavemanFromStart = cavemanOn.getAsBoolean();
+        } else if (!cavemanFromStart && !cavemanNoted && cavemanOn.getAsBoolean()) {
+            notes.add(cavemanNote.get());
+            cavemanNoted = true;
+        }
+        boolean compact = opening == null && !goal && !messages.isEmpty() && lastPrompt >= settings.compactAtTokens();
         String text;
-        if (opening == null) {
+        if (compact) {
+            text = compactTurn(state);
+        } else if (opening == null) {
             text = prompts.updateTurn(notes, state);
         } else if (opening.kind() == Kind.GOAL) {
             text = prompts.autonomyTurn(opening.player(), List.copyOf(outcomes), memory.render(), notes, state);
@@ -470,10 +575,19 @@ public final class AgentLoop implements ActionQueue.Listener {
         } else {
             text = prompts.orderTurn(opening.player(), opening.text(), host.recentChat(), memory.render(), notes, state);
         }
-        JsonArray content = pendingResults; // tool_result blocks must come first in the turn
+        String purpose = goal ? "own goal" : orderText.isEmpty() ? "react to the threat" : orderText;
+        text += "\n" + PromptBuilder.status(purpose, orderFrom, step(), snapshot, queue.snapshot());
+        JsonArray content = compact ? new JsonArray() : pendingResults; // tool_result blocks must come first in the turn
+        content.addAll(lateImages); // images are plain blocks, so they survive a compact turn
         content.add(textBlock(text));
+        if (compact) { // the results are text now: a tool_result needs its tool_use, which is gone
+            LOG.info("compacted order transcript: {} messages -> 1 (prompt was {} tokens)", messages.size(), lastPrompt);
+            messages = new JsonArray();
+        }
         messages.add(message("user", content));
         pendingResults = new JsonArray();
+        lastPrompt = 0;
+        lateImages = new JsonArray();
         notes.clear();
         opening = null;
         finalText = null;
@@ -481,12 +595,84 @@ public final class AgentLoop implements ActionQueue.Listener {
         send();
     }
 
+    /**
+     * The text of the single turn that replaces the transcript: the order, a line per model turn so far, this turn's
+     * results as text, then the usual notes and state. Calls still running keep their pending entry; they were
+     * answered {@code queued} when their batch reported, so their outcome comes later as a note.
+     */
+    private String compactTurn(String state) {
+        Map<String, String> names = new HashMap<>(); // call id -> tool name
+        Map<String, String> codes = new HashMap<>(); // call id -> result code; a later note replaces "queued"
+        for (JsonElement m : messages) {
+            for (JsonElement el : m.getAsJsonObject().getAsJsonArray("content")) {
+                JsonObject b = el.getAsJsonObject();
+                switch (b.get("type").getAsString()) {
+                    case "tool_use" -> names.put(b.get("id").getAsString(), b.get("name").getAsString());
+                    case "tool_result" -> codes.put(b.get("tool_use_id").getAsString(), firstLine(b.get("content").getAsString()));
+                    case "text" -> noteCodes(b.get("text").getAsString(), codes);
+                    default -> {}
+                }
+            }
+        }
+        noteCodes(notes.stream().map(n -> "- " + n).collect(Collectors.joining("\n")), codes);
+        List<String> results = new ArrayList<>();
+        for (JsonElement el : pendingResults) {
+            JsonObject b = el.getAsJsonObject();
+            String id = b.get("tool_use_id").getAsString();
+            String content = b.get("content").getAsString();
+            codes.put(id, firstLine(content));
+            results.add("- " + names.getOrDefault(id, "?") + " " + id + ": " + content);
+        }
+        for (JsonElement m : messages) {
+            JsonObject msg = m.getAsJsonObject();
+            if (!msg.get("role").getAsString().equals("assistant")) continue;
+            List<String> said = new ArrayList<>();
+            List<String> calls = new ArrayList<>();
+            for (JsonElement el : msg.getAsJsonArray("content")) {
+                JsonObject b = el.getAsJsonObject();
+                String type = b.get("type").getAsString();
+                if (type.equals("text")) {
+                    said.add(b.get("text").getAsString());
+                } else if (type.equals("tool_use")) {
+                    String name = b.get("name").getAsString();
+                    JsonElement spoken = name.equals("say") ? b.getAsJsonObject("input").get("text") : null;
+                    if (spoken != null && spoken.isJsonPrimitive()) said.add(spoken.getAsString());
+                    calls.add(name + "\u2192" + codes.getOrDefault(b.get("id").getAsString(), "queued"));
+                }
+            }
+            String spoken = said.isEmpty() ? "" : WorldText.quote(String.join(" / ", said), LINE_TEXT_MAX) + " ";
+            earlier.add("- " + ++summarized + ": " + spoken + (calls.isEmpty() ? "(no calls)" : String.join(", ", calls)));
+        }
+        while (earlier.size() > EARLIER_LINES) earlier.remove(0);
+        return prompts.compactTurn(orderFrom, orderText, List.copyOf(earlier), summarized - earlier.size(), results,
+                memory.render(), notes, state);
+    }
+
+    /** Late results from earlier update turns read "- tool id: code"; they replace the {@code queued} the model got. */
+    private static void noteCodes(String text, Map<String, String> codes) {
+        Matcher m = NOTE_LINE.matcher(text);
+        while (m.find()) codes.put(m.group(2), m.group(3));
+    }
+
+    private static String firstLine(String content) {
+        int nl = content.indexOf('\n');
+        return nl < 0 ? content : content.substring(0, nl);
+    }
+
+    /** The model's own progress line for the status block: its note with subject step from this order, or null. */
+    private String step() {
+        return memory.shortTerm().stream()
+                .filter(e -> e.subject().equalsIgnoreCase("step") && e.updatedMillis() >= orderStartedAt)
+                .map(Memory.Entry::text).findFirst().orElse(null);
+    }
+
     private void send() {
         steps++;
         inFlight = true;
         guardrails.recordCall();
         int forEpoch = epoch;
-        Brain.Request request = new Brain.Request(prompts.system(), tools.definitions(), messages.deepCopy());
+        Brain.Request request = new Brain.Request(prompts.system(), tools.definitions(), messages.deepCopy(), cavemanFromStart,
+                thinkHarder ? settings.claudeThinkEffort() : null);
         try {
             brainThread.execute(() -> {
                 Brain.Reply reply = null;
@@ -559,29 +745,38 @@ public final class AgentLoop implements ActionQueue.Listener {
     }
 
     /**
-     * Drops the order quietly: cancels the queue below level 3, forgets the transcript and lets the brain release
+     * Drops the order quietly: cancels every queued call but the reflexes (the order's own prio 3 calls go too, so a
+     * leftover stop can't cancel the next order's batch), forgets the transcript and lets the brain release
      * the order's session. A reply still in flight is ignored.
      */
     private void abandon() {
         epoch++;
         brain.reset();
+        earlier.clear();
+        summarized = 0;
+        lastPrompt = 0;
         orderFrom = null;
         orderText = null;
         opening = null;
         goal = false;
         goalText = null;
-        quietly(() -> queue.cancelBelow(3));
+        quietly(() -> queue.cancelExcept(AgentLoop::isReflex)); // the order's own calls go, prio 3 included
         messages = new JsonArray();
         pending.clear();
         pendingResults = new JsonArray();
+        lateImages = new JsonArray();
         notes.clear();
         batch = null;
         inFlight = false;
         deferred = false;
         mustReport = false;
-        interruptInFlight = null;
+        interruptsInFlight.clear();
         finalText = null;
+        doneText = null;
         steps = 0;
+        cavemanFromStart = false;
+        cavemanNoted = false;
+        thinkHarder = false;
     }
 
     /**
@@ -617,6 +812,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     private static String reflexTool(Action action) {
         if (action instanceof Action.Flee) return "flee";
         if (action instanceof Action.AttackEntity) return "attack_entity";
+        if (action instanceof Action.Fight) return "fight";
         if (action instanceof Action.Say) return "say";
         if (action instanceof Action.Stop) return "stop";
         if (action instanceof Action.MoveTo) return "move_to";
@@ -647,7 +843,15 @@ public final class AgentLoop implements ActionQueue.Listener {
         JsonObject b = new JsonObject();
         b.addProperty("type", "tool_result");
         b.addProperty("tool_use_id", id);
-        b.addProperty("content", r.data() == null ? r.code() : r.code() + "\n" + r.data());
+        String text = r.data() == null ? r.code() : r.code() + "\n" + r.data();
+        if (r.png() == null) {
+            b.addProperty("content", text);
+        } else { // a picture first, then its code
+            JsonArray content = new JsonArray();
+            content.add(Images.block(r.png()));
+            content.add(textBlock(text));
+            b.add("content", content);
+        }
         if (r.isError()) b.addProperty("is_error", true);
         return b;
     }

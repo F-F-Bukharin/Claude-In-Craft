@@ -59,7 +59,7 @@ final class MoveHandle implements ActionRunner.Handle {
         }
         while (node < path.getNodeCount() && reached(body, path.getNode(node))) node++;
         Vec3 point = node < path.getNodeCount() ? center(path.getNode(node)) : target;
-        String hazard = hazardAhead(point);
+        String hazard = hazardAhead(body, point);
         if (hazard != null) {
             Navigator.halt(body);
             return ActionResult.failed("hazard_" + hazard);
@@ -83,14 +83,22 @@ final class MoveHandle implements ActionRunner.Handle {
         Navigator.halt(body);
     }
 
-    /** Looks at the block the body is about to step into: "lava", "fire", "drop", or null when it is safe. */
-    private @Nullable String hazardAhead(Vec3 point) {
+    /**
+     * Looks at the block the body is about to step into: "lava", "fire", "drop", or null when it is safe. Shared by
+     * move_to and follow_player. Standing on a slab, stair or carpet puts the feet inside that block, so a feet block
+     * with a collision shape is the floor itself: no drop, and the ground under it doesn't count.
+     */
+    static @Nullable String hazardAhead(ServerPlayer body, Vec3 point) {
         double dx = point.x - body.getX();
         double dz = point.z - body.getZ();
         double length = Reflexes.horizontal(dx, dz);
         if (length < 0.01) return null;
         ServerLevel level = body.serverLevel();
         BlockPos feet = BlockPos.containing(body.position().add(dx / length * PROBE_AHEAD, 0, dz / length * PROBE_AHEAD));
+        BlockState feetState = level.getBlockState(feet);
+        if (!feetState.getCollisionShape(level, feet).isEmpty()) { // a partial block walked on, or a step up
+            return Reflexes.hazard(id(feetState), id(feetState), 0, false, body.getHealth());
+        }
         BlockPos below = feet.below();
         int depth = 0;
         while (depth < MAX_DROP && level.getBlockState(below).getCollisionShape(level, below).isEmpty()
@@ -99,7 +107,7 @@ final class MoveHandle implements ActionRunner.Handle {
             below = below.below();
         }
         boolean water = level.getFluidState(below).is(FluidTags.WATER);
-        return Reflexes.hazard(id(level.getBlockState(feet)), id(level.getBlockState(feet.below())), depth, water, body.getHealth());
+        return Reflexes.hazard(id(feetState), id(level.getBlockState(feet.below())), depth, water, body.getHealth());
     }
 
     /** The full registry id ("minecraft:lava"), which is what {@link Reflexes#hazard} matches. */

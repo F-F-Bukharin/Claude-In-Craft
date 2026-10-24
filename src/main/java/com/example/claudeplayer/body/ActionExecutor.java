@@ -41,10 +41,12 @@ public final class ActionExecutor implements ActionRunner {
 
     private final AgentRuntime rt;
     private final ContainerActions containers;
+    private final FarmActions farm;
 
     public ActionExecutor(AgentRuntime rt) {
         this.rt = rt;
         this.containers = new ContainerActions(rt);
+        this.farm = new FarmActions(rt);
     }
 
     @Override
@@ -55,6 +57,7 @@ public final class ActionExecutor implements ActionRunner {
         if (action instanceof Action.Look look) {
             return Handle.done(ActionResult.ok(SnapshotBuilder.map(p, look.radius(), rt.settings().hostileRange()).text()));
         }
+        if (action instanceof Action.See see) return Handle.done(SeeActions.see(p, see.direction()));
         if (action instanceof Action.Say say) {
             rt.say(say.text());
             return Handle.done(ActionResult.ok());
@@ -72,6 +75,7 @@ public final class ActionExecutor implements ActionRunner {
         if (action instanceof Action.Eat e) return EatHandle.start(p, e.auto());
         if (action instanceof Action.FollowPlayer f) return follow(p, f);
         if (action instanceof Action.AttackEntity a) return Handle.done(attack(p, a.entityId()));
+        if (action instanceof Action.Fight f) return FightHandle.start(rt, p, f);
         if (action instanceof Action.MineBlock b) return MineHandle.start(rt, p, new BlockPos(b.x(), b.y(), b.z()), true);
         if (action instanceof Action.PlaceBlock b) return Handle.done(place(p, new BlockPos(b.x(), b.y(), b.z()), b.item()));
         if (action instanceof Action.Equip e) return Handle.done(equip(p, e.item()));
@@ -79,6 +83,11 @@ public final class ActionExecutor implements ActionRunner {
         if (action instanceof Action.Smelt s) return Handle.done(Smelting.load(rt, p, s));
         if (action instanceof Action.Gather g) return GatherHandle.start(rt, p, g);
         if (action instanceof Action.Dig d) return new DigHandle(rt, p, d);
+        if (action instanceof Action.Till t) return Handle.done(FarmActions.till(p, new BlockPos(t.x(), t.y(), t.z())));
+        if (action instanceof Action.Plant pl) return Handle.done(FarmActions.plant(p, pl));
+        if (action instanceof Action.Harvest h) return new HarvestHandle(rt, p, h);
+        if (action instanceof Action.UseBucket b) return Handle.done(farm.useBucket(p, new BlockPos(b.x(), b.y(), b.z()), b.fluid()));
+        if (action instanceof Action.Glance) return Handle.done(ActionResult.failed("no_client")); // the renderer comes in part 2
         return Handle.done(ActionResult.failed("not_implemented"));
     }
 

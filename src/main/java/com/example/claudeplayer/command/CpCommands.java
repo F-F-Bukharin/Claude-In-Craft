@@ -50,6 +50,11 @@ public final class CpCommands {
                         })))
                 .then(Commands.literal("status").requires(CpCommands::canControl)
                         .executes(c -> reply(c.getSource(), AgentRuntime::status)))
+                .then(Commands.literal("resetcap").requires(CpCommands::isAdmin)
+                        .executes(c -> reply(c.getSource(), rt -> {
+                            rt.resetTokenCap();
+                            return "Token cap cleared.";
+                        })))
                 .then(Commands.literal("memory").requires(CpCommands::canControl)
                         .executes(c -> reply(c.getSource(), CpCommands::memory)))
                 .then(Commands.literal("keycheck").requires(CpCommands::canControl)
@@ -146,7 +151,8 @@ public final class CpCommands {
         entry(help, "/cp despawn", "/cp despawn", "remove " + name + " from the world");
         entry(help, "/cp respawn", "/cp respawn", "back at home after a death");
         entry(help, "/cp stop", "/cp stop", "kill switch: cancel and block model calls");
-        entry(help, "/cp status", "/cp status", "body, caution level, queue, calls, tokens");
+        entry(help, "/cp status", "/cp status", "body, caution level, queue, calls, weighted tokens");
+        entry(help, "/cp resetcap", "/cp resetcap", "clear the hourly token cap now (ops)");
         entry(help, "/cp memory", "/cp memory", "what " + name + " remembers");
         entry(help, "/cp keycheck", "/cp keycheck", s.usesApi() ? "test the API key (free)" : "test the Claude Code connection");
         entry(help, "/cp level <0-5>", "/cp level ", "set the caution level (ops)");

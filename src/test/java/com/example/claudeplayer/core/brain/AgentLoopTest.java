@@ -2,6 +2,7 @@ package com.example.claudeplayer.core.brain;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.example.claudeplayer.core.Settings;
@@ -49,9 +50,24 @@ class AgentLoopTest {
         return (Brain.Reply) next;
     };
 
-    /** move_to runs until cancelled; everything else finishes at once. */
-    private final ActionRunner runner = action ->
-            action instanceof Action.MoveTo ? () -> null : ActionRunner.Handle.done(ActionResult.ok());
+    private static final byte[] PNG = {(byte) 0x89, 'P', 'N', 'G', 1, 2, 3};
+    private static final String PNG_B64 = java.util.Base64.getEncoder().encodeToString(PNG);
+
+    private final List<String> ran = new ArrayList<>(); // the action classes the runner started, in order
+    private ActionResult fleeResult = ActionResult.ok();
+    private boolean movesFinish; // move_to finishes ok at once instead of running until cancelled
+
+    /**
+     * move_to runs until cancelled (or finishes if {@code movesFinish}), and so does fight; glance returns a picture;
+     * flee returns fleeResult; the rest is ok at once.
+     */
+    private final ActionRunner runner = action -> {
+        ran.add(action.getClass().getSimpleName());
+        if (action instanceof Action.MoveTo) return movesFinish ? ActionRunner.Handle.done(ActionResult.ok()) : () -> null;
+        if (action instanceof Action.Fight) return () -> null;
+        return ActionRunner.Handle.done(action instanceof Action.Glance ? ActionResult.picture(PNG)
+                : action instanceof Action.Flee ? fleeResult : ActionResult.ok());
+    };
 
     private final AgentLoop.Host host = new AgentLoop.Host() {
         @Override
@@ -132,6 +148,12 @@ class AgentLoopTest {
         return new Brain.Reply("msg", content, List.of(calls), "", "tool_use", new Brain.Usage(100, 20, 0, 0));
     }
 
+    /** A reply whose calls finish the order: the model sets done, so no results need to go back. */
+    private static Brain.Reply doneTools(String text, Brain.ToolCall... calls) {
+        Brain.Reply r = tools(calls);
+        return new Brain.Reply(r.id(), r.content(), r.toolCalls(), text, r.stopReason(), r.usage(), true);
+    }
+
     private static Brain.Reply text(String text) {
         JsonObject block = new JsonObject();
         block.addProperty("type", "text");
@@ -161,6 +183,248 @@ class AgentLoopTest {
         return turn.get(turn.size() - 1).getAsJsonObject().get("text").getAsString();
     }
 
+    /** The same reply, but its call's prompt was {@code prompt} tokens long. */
+    private static Brain.Reply promptOf(int prompt, Brain.Reply r) {
+        return new Brain.Reply(r.id(), r.content(), r.toolCalls(), r.text(), r.stopReason(),
+                new Brain.Usage(prompt - 500, 20, 300, 200), r.done());
+    }
+
+    /** Every tool_result in the request answers a tool_use that an earlier assistant turn of the same request made. */
+    private void assertNoOrphans(int request) {
+        java.util.Set<String> uses = new java.util.HashSet<>();
+        for (JsonElement m : requests.get(request).messages()) {
+            JsonObject msg = m.getAsJsonObject();
+            for (JsonElement el : msg.getAsJsonArray("content")) {
+                JsonObject b = el.getAsJsonObject();
+                if (b.get("type").getAsString().equals("tool_use")) uses.add(b.get("id").getAsString());
+                if (b.get("type").getAsString().equals("tool_result")) {
+                    assertTrue(uses.contains(b.get("tool_use_id").getAsString()), "orphan tool_result in request " + request);
+                }
+            }
+        }
+    }
+
+    private String firstText(int request) {
+        JsonObject first = requests.get(request).messages().get(0).getAsJsonObject();
+        assertEquals("user", first.get("role").getAsString());
+        JsonArray content = first.getAsJsonArray("content");
+        return content.get(content.size() - 1).getAsJsonObject().get("text").getAsString();
+    }
+
+    @Test
+    void aLongPromptCollapsesTheNextTurnIntoOneSummaryTurn() {
+        build(b -> b.compactAtTokens = 2000);
+        movesFinish = true;
+        script.add(promptOf(2000, tools(say("s1"), move("m1"))));
+        script.add(text("All done."));
+        loop.startOrder("F", "go to the tree");
+        pump();
+        ticks(40);
+        assertEquals(2, requests.size());
+        assertEquals(1, requests.get(1).messages().size(), "one fresh user turn");
+        assertEquals(0, results(1).size(), "results are text now, not tool_result blocks");
+        String turn = lastText(1);
+        assertTrue(turn.startsWith("<order from=\"F\">\ngo to the tree\n</order>"), turn);
+        assertTrue(turn.contains("<earlier>\n"), turn);
+        assertTrue(turn.contains("say\u2192ok, move_to\u2192ok"), turn);
+        assertTrue(turn.contains("<results>\n- say s1: ok\n- move_to m1: ok\n</results>"), turn);
+        assertTrue(turn.contains("<world_state>"), turn);
+        assertTrue(turn.contains("<status>"), turn);
+        assertNoOrphans(1);
+        assertEquals(List.of("All done."), said);
+    }
+
+    @Test
+    void byDefaultAnOrderGrowsPastTwentyThousandTokensBeforeItCompacts() {
+        build(b -> b.maxCallsPerMinute = 100); // compact_at_tokens left at its default
+        script.add(promptOf(20_000, tools(say("s1"))));
+        script.add(text("Done."));
+        loop.startOrder("F", "greet");
+        pump();
+        ticks(40);
+        assertEquals(2, requests.size());
+        assertEquals(3, requests.get(1).messages().size(), "a 20k prompt is under the default: the transcript keeps growing");
+    }
+
+    @Test
+    void belowTheThresholdTheTranscriptStaysAppendOnly() {
+        build(b -> b.compactAtTokens = 2000);
+        script.add(promptOf(1999, tools(say("s1"))));
+        script.add(tools(say("s2")));
+        script.add(text("Done."));
+        loop.startOrder("F", "say hi twice");
+        pump();
+        ticks(40);
+        assertEquals(3, requests.size());
+        assertEquals(3, requests.get(1).messages().size(), "user, assistant, user");
+        assertEquals(5, requests.get(2).messages().size());
+        assertEquals(List.of("ok"), results(2));
+        assertFalse(firstText(2).contains("<earlier>"));
+    }
+
+    @Test
+    void aCallStillRunningWhenTheOrderCompactsReportsItsResultAsANote() {
+        build(b -> b.compactAtTokens = 2000);
+        script.add(promptOf(5000, tools(say("a"), say("b"), say("c"), say("d"), say("e"), say("f"), say("g"), say("h"))));
+        script.add(tools(say("x")));
+        script.add(text("All done."));
+        loop.startOrder("F", "chatter");
+        pump();
+        for (int i = 0; i < 100 && requests.size() < 2; i++) ticks(1);
+        assertEquals(1, requests.get(1).messages().size());
+        assertTrue(lastText(1).contains("say\u2192ok, say\u2192ok, say\u2192ok, say\u2192ok, say\u2192queued"), lastText(1));
+        assertTrue(lastText(1).contains("- say e: queued"), lastText(1));
+        ticks(100);
+        assertEquals(3, requests.size());
+        assertEquals(3, requests.get(2).messages().size(), "the order went on from the fresh turn");
+        for (String late : List.of("say e: ok", "say f: ok", "say g: ok", "say h: ok")) {
+            assertTrue(lastText(2).contains(late), lastText(2));
+        }
+        for (int i = 0; i < requests.size(); i++) assertNoOrphans(i);
+        assertEquals(List.of("All done."), said);
+    }
+
+    @Test
+    void anOrderCanCompactTwiceAndKeepsTheEarlierLines() {
+        build(b -> b.compactAtTokens = 2000);
+        movesFinish = true;
+        script.add(promptOf(3000, tools(move("m1"))));
+        script.add(promptOf(3000, tools(call("f", "flee", "{}"))));
+        script.add(text("Safe."));
+        fleeResult = ActionResult.failed("no_escape");
+        loop.startOrder("F", "wander");
+        pump();
+        ticks(10);
+        assertEquals(3, requests.size());
+        assertEquals(1, requests.get(2).messages().size());
+        String turn = lastText(2);
+        assertTrue(turn.contains("move_to\u2192ok"), turn);
+        assertTrue(turn.contains("flee\u2192failed:no_escape"), turn);
+        assertTrue(turn.indexOf("move_to\u2192ok") < turn.indexOf("flee\u2192failed"), "oldest first");
+        assertEquals(List.of("Safe."), said);
+        assertFalse(loop.active());
+    }
+
+    @Test
+    void theSummaryKeepsTheNewestFortyLines() {
+        build(b -> {
+            b.compactAtTokens = 2000;
+            b.maxSteps = 100;
+            b.maxCallsPerMinute = 120;
+        });
+        for (int i = 0; i < 44; i++) script.add(tools(say("t" + i)));
+        script.add(promptOf(9000, tools(say("last"))));
+        script.add(text("Done."));
+        loop.startOrder("F", "talk a lot");
+        pump();
+        ticks(600);
+        assertEquals(46, requests.size());
+        String turn = lastText(45);
+        assertEquals(1, requests.get(45).messages().size());
+        long lines = turn.lines().filter(l -> l.matches("- \\d+: .*")).count();
+        assertEquals(40, lines, turn);
+        assertTrue(turn.contains("(5 earlier turns left out)"), turn);
+        assertTrue(turn.contains("- 45: \"hi\" say\u2192ok"), turn);
+    }
+
+    @Test
+    void aCavemanNoteJoinsARunningOrderOnceAtTheNextTurn() {
+        build(b -> b.maxCallsPerMinute = 100);
+        boolean[] on = {false};
+        loop.caveman(() -> on[0], () -> "CAVEMAN RULES");
+        script.add(tools(say("t1")));
+        script.add(tools(say("t2")));
+        script.add(text("Done!"));
+        loop.startOrder("F", "say hi");
+        pump();
+        assertFalse(lastText(0).contains("CAVEMAN RULES"));
+        assertFalse(requests.get(0).caveman(), "the order started with usage low");
+        on[0] = true; // usage crosses the line while the order runs
+        ticks(1);
+        assertTrue(lastText(1).contains("CAVEMAN RULES"), lastText(1));
+        ticks(10);
+        assertEquals(3, requests.size());
+        assertFalse(lastText(2).contains("CAVEMAN RULES"), "once per order, so the transcript only grows");
+        assertFalse(requests.get(1).caveman() || requests.get(2).caveman(),
+                "the system prompt doesn't change mid-order; the note carries the rules");
+    }
+
+    @Test
+    void anOrderThatStartsWithCavemanGetsNoNoteAndEveryRequestSaysSo() {
+        build(b -> {});
+        loop.caveman(() -> true, () -> "CAVEMAN RULES");
+        script.add(tools(say("t1")));
+        script.add(text("Done!"));
+        loop.startOrder("F", "say hi");
+        pump();
+        ticks(1);
+        assertEquals(2, requests.size());
+        assertTrue(requests.get(0).caveman() && requests.get(1).caveman());
+        assertFalse(lastText(0).contains("CAVEMAN RULES") || lastText(1).contains("CAVEMAN RULES"));
+    }
+
+    @Test
+    void cavemanIsDecidedAgainForEachOrder() {
+        build(b -> {});
+        boolean[] on = {true};
+        loop.caveman(() -> on[0], () -> "CAVEMAN RULES");
+        script.add(text("One."));
+        script.add(text("Two."));
+        loop.startOrder("F", "first");
+        pump();
+        on[0] = false; // usage fell back below the line
+        loop.startOrder("F", "second");
+        pump();
+        assertTrue(requests.get(0).caveman());
+        assertFalse(requests.get(1).caveman());
+    }
+
+    @Test
+    void aThinkHarderOrdersRequestsCarryTheThinkEffortUntilAReflex() {
+        build(b -> b.maxCallsPerMinute = 100);
+        script.add(tools(move("m")));
+        script.add(tools(say("s")));
+        script.add(text("Safe now."));
+        loop.startOrder("F", "think harder and walk", true);
+        pump();
+        ticks(3); // m is running
+        assertEquals("max", requests.get(0).effort(), "claude_think_effort");
+        loop.reflex("zombie #7 is 4.0 blocks away.", List.of(new Action.Flee()));
+        pump();
+        assertEquals(2, requests.size());
+        assertNull(requests.get(1).effort(), "the next turn drops back to the configured effort");
+        ticks(10);
+        assertEquals(3, requests.size());
+        assertNull(requests.get(2).effort(), "and stays there for the rest of the order");
+    }
+
+    @Test
+    void anInterruptWithoutAReflexAlsoEndsThinkHarder() {
+        build(b -> b.maxCallsPerMinute = 100);
+        script.add(tools(move("m")));
+        script.add(text("Done."));
+        loop.startOrder("F", "think harder and walk", true);
+        pump();
+        ticks(3); // m is running
+        loop.interrupt("zombie #7 is 10.0 blocks away. Caution level 4 (ready) says: fight."); // out of reach: no reflex
+        pump();
+        assertEquals(2, requests.size());
+        assertNull(requests.get(1).effort(), "any threat drops the next turn back to the configured effort");
+    }
+
+    @Test
+    void thinkHarderEndsWithItsOrder() {
+        build(b -> b.claudeThinkEffort = "max");
+        script.add(text("One."));
+        script.add(text("Two."));
+        loop.startOrder("F", "think harder", true);
+        pump();
+        loop.startOrder("F", "plain order");
+        pump();
+        assertEquals("max", requests.get(0).effort());
+        assertNull(requests.get(1).effort());
+    }
+
     @Test
     void anOrderRunsItsToolsThenPostsTheFinalText() {
         build(b -> {});
@@ -178,6 +442,66 @@ class AgentLoopTest {
     }
 
     @Test
+    void aDoneReplyWhoseCallsFinishOkEndsTheOrderWithoutAReportTurn() {
+        build(b -> {});
+        movesFinish = true;
+        script.add(doneTools("On my way.", move("m")));
+        loop.startOrder("F", "come here");
+        pump();
+        ticks(3);
+        assertEquals(1, requests.size(), "the call finished ok, so no results go back");
+        assertEquals(List.of("On my way."), said);
+        assertFalse(loop.active());
+    }
+
+    @Test
+    void aDoneReplyWhoseCallFailsGoesBackToTheModel() {
+        build(b -> {});
+        fleeResult = ActionResult.failed("no_escape");
+        script.add(doneTools("Running!", call("f", "flee", "{}")));
+        script.add(text("Could not get away."));
+        loop.startOrder("F", "run");
+        pump();
+        ticks(3);
+        assertEquals(2, requests.size());
+        assertEquals(List.of("failed:no_escape"), results(1));
+        assertEquals(List.of("Could not get away."), said);
+    }
+
+    @Test
+    void aReflexBeforeADoneReplysCallsFinishSendsResultsBackAndForgetsDone() {
+        build(b -> {});
+        script.add(doneTools("On my way.", move("m")));
+        script.add(tools(say("s"))); // not done: its results must go back, not end the order
+        script.add(text("Noted."));
+        loop.startOrder("F", "come here");
+        pump();
+        ticks(3); // m is running
+        loop.reflex("creeper #9 is 4.0 blocks away, fuse lit.", List.of(new Action.Flee()));
+        pump();
+        assertEquals(2, requests.size());
+        assertEquals(List.of("scrapped"), results(1));
+        assertTrue(said.isEmpty(), "the done text is not said after an interrupt");
+        ticks(40);
+        assertEquals(3, requests.size(), "the next batch reports to the model");
+        assertEquals(List.of("ok"), results(2));
+        assertEquals(List.of("Noted."), said);
+    }
+
+    @Test
+    void aReplyWithoutDoneKeepsTheReportTurn() {
+        build(b -> {});
+        script.add(tools(say("s")));
+        script.add(text("On my way."));
+        loop.startOrder("F", "come here");
+        pump();
+        ticks(3);
+        assertEquals(2, requests.size());
+        assertEquals(List.of("ok"), results(1));
+        assertEquals(List.of("On my way."), said);
+    }
+
+    @Test
     void longBatchesReportEarlyAndTheFinalTextWaitsForTheQueue() {
         build(b -> {}); // batch_size 12, prefetch_at 4
         script.add(tools(say("a"), say("b"), say("c"), say("d"), say("e"), say("f"), say("g"), say("h")));
@@ -190,6 +514,85 @@ class AgentLoopTest {
         ticks(100);
         assertEquals(List.of("All done."), said);
         assertEquals(2, requests.size(), "late ok results don't cost another round");
+    }
+
+    private static Brain.ToolCall glance(String id) {
+        return call(id, "glance", "{}");
+    }
+
+    private static JsonObject image(JsonElement block) {
+        JsonObject b = block.getAsJsonObject();
+        assertEquals("image", b.get("type").getAsString(), b.toString());
+        JsonObject source = b.getAsJsonObject("source");
+        assertEquals("base64", source.get("type").getAsString());
+        assertEquals("image/png", source.get("media_type").getAsString());
+        assertEquals(PNG_B64, source.get("data").getAsString());
+        return b;
+    }
+
+    @Test
+    void aGlanceResultIsAPictureThenItsCode() {
+        build(b -> {});
+        script.add(tools(glance("g1")));
+        script.add(text("I see it."));
+        loop.startOrder("F", "look at this");
+        pump();
+        ticks(1);
+        JsonObject result = lastTurn(1).get(0).getAsJsonObject();
+        assertEquals("tool_result", result.get("type").getAsString());
+        JsonArray content = result.getAsJsonArray("content");
+        assertEquals(2, content.size());
+        image(content.get(0));
+        assertEquals("ok", content.get(1).getAsJsonObject().get("text").getAsString());
+        assertEquals(List.of("I see it."), said);
+    }
+
+    @Test
+    void oneGlancePerTurnAndThenACooldown() {
+        build(b -> {}); // vision_cooldown_seconds 15
+        script.add(tools(glance("g1"), glance("g2")));
+        script.add(tools(glance("g3")));
+        script.add(text("Done."));
+        loop.startOrder("F", "look twice");
+        pump();
+        ticks(1);
+        assertEquals("denied:one_per_turn", lastTurn(1).get(1).getAsJsonObject().get("content").getAsString(), "the second glance of the reply");
+        assertTrue(lastTurn(1).get(0).getAsJsonObject().get("content").isJsonArray(), "the first one ran");
+        ticks(1);
+        assertEquals(List.of("denied:cooldown"), results(2));
+        now += 15_000;
+        script.add(tools(glance("g4")));
+        script.add(text("Seen."));
+        loop.startOrder("F", "look again");
+        pump();
+        ticks(20); // the queue's action rate
+        assertTrue(lastTurn(4).get(0).getAsJsonObject().get("content").isJsonArray(), "the cooldown ran out");
+    }
+
+    @Test
+    void aGlanceReportedEarlyBringsItsPictureToTheNextTurn() {
+        build(b -> {}); // prefetch_at 4: six calls report once two have finished
+        script.add(tools(say("a"), say("b"), say("c"), say("d"), say("e"), glance("g")));
+        script.add(text("Looking."));
+        script.add(text("Diamonds!"));
+        loop.startOrder("F", "chatter, then look");
+        pump();
+        for (int i = 0; i < 100 && requests.size() < 2; i++) ticks(1);
+        assertEquals("queued", results(1).get(5));
+        ticks(100);
+        assertEquals(3, requests.size(), "the late picture costs a round: the model asked to look");
+        JsonArray turn = lastTurn(2);
+        image(turn.get(0));
+        assertTrue(lastText(2).contains("glance g: ok"), lastText(2));
+        assertEquals(List.of("Diamonds!"), said);
+        assertEquals(requests.get(1).messages(), copyOfFirst(requests.get(2).messages(), requests.get(1).messages().size()),
+                "the transcript only grows");
+    }
+
+    private static JsonArray copyOfFirst(JsonArray a, int n) {
+        JsonArray out = new JsonArray();
+        for (int i = 0; i < n; i++) out.add(a.get(i));
+        return out;
     }
 
     @Test
@@ -366,6 +769,82 @@ class AgentLoopTest {
     }
 
     @Test
+    void twoReflexesDuringOneCallBothReachTheModel() {
+        build(b -> {});
+        script.add(tools(say("a"), say("b"), say("c"), say("d"), say("e"), say("f")));
+        script.add(tools(say("g"))); // planned before the hits
+        script.add(text("ok"));
+        loop.startOrder("F", "chatter");
+        pump();
+        for (int i = 0; i < 100 && brainThread.isEmpty(); i++) {
+            queue.tick(); // run the queue without delivering the early-report call
+            loop.tick();
+        }
+        loop.reflex("hit by zombie #7.", List.of(new Action.Flee()));
+        loop.reflex("creeper #9 is 3.0 blocks away, fuse lit.", List.of(new Action.Flee()));
+        pump();
+        assertEquals(3, requests.size());
+        assertTrue(lastText(2).contains("INTERRUPT: hit by zombie #7. Reflex: flee."), lastText(2));
+        assertTrue(lastText(2).contains("INTERRUPT: creeper #9 is 3.0 blocks away, fuse lit. Reflex: flee."), lastText(2));
+    }
+
+    @Test
+    void aReflexThatFailsIsANoteInTheNextTurn() {
+        build(b -> {});
+        fleeResult = ActionResult.failed("no_escape");
+        script.add(tools(move("m")));
+        script.add(tools(say("s")));
+        script.add(text("Cornered."));
+        loop.startOrder("F", "walk");
+        pump();
+        ticks(3); // m is running
+        loop.reflex("zombie #7 is 2.0 blocks away.", List.of(new Action.Flee()));
+        pump(); // the interrupt went out and its reply queued s
+        assertEquals(2, requests.size());
+        ticks(20); // the flee fails, then s runs and its batch reports
+        assertEquals(3, requests.size());
+        assertTrue(lastText(2).contains("reflex flee: failed:no_escape"), lastText(2));
+        assertEquals(List.of("Cornered."), said);
+    }
+
+    @Test
+    void aReflexThatWorksAddsNoNote() {
+        build(b -> {});
+        script.add(tools(move("m")));
+        script.add(tools(say("s")));
+        script.add(text("Safe."));
+        loop.startOrder("F", "walk");
+        pump();
+        ticks(3);
+        loop.reflex("zombie #7 is 2.0 blocks away.", List.of(new Action.Flee()));
+        pump();
+        ticks(20);
+        assertEquals(3, requests.size());
+        assertFalse(lastText(2).contains("reflex flee"), lastText(2));
+    }
+
+    @Test
+    void aDroppedOrderCancelsItsOwnPrioThreeCallsButSparesReflexes() {
+        build(b -> b.toolPhase = 4);
+        script.add(tools(call("f", "fight", "{\"entity_id\":7,\"prio\":3}"), call("x", "stop", "{\"prio\":3}")));
+        loop.startOrder("F", "kill the zombie");
+        pump();
+        ticks(3); // f runs, x waits behind it at level 3
+        assertEquals("fight", queue.runningTool());
+        script.add(text("Fighting."));
+        loop.reflex("zombie #8 is 2.0 blocks away.", List.of(new Action.Fight(8))); // queued behind f
+        pump();
+        script.add(tools(move("m")));
+        loop.startOrder("F", "walk instead");
+        pump();
+        assertEquals(List.of("reflex-1", "m"), queue.snapshot().stream().map(i -> i.entry().callId()).toList(),
+                "f and the leftover stop are gone; the reflex and the new order's m remain");
+        ticks(3);
+        assertEquals("fight", queue.runningTool(), "the reflex runs first, and no leftover stop is left to cancel m");
+        assertEquals(List.of("reflex-1", "m"), queue.snapshot().stream().map(i -> i.entry().callId()).toList());
+    }
+
+    @Test
     void aReflexWhileIdleStartsAReactionThatSaysWhatTheBodyDid() {
         build(b -> {});
         script.add(text("Ran."));
@@ -389,6 +868,22 @@ class AgentLoopTest {
         ticks(10);
         assertEquals("move_to", queue.runningTool(), "m restarted after the flee");
         assertEquals(1, requests.size(), "the batch waits for m");
+    }
+
+    @Test
+    void aQuietReflexThatScrapsTheWholeBatchReportsItAtOnceWithNoInterrupt() {
+        build(b -> {});
+        script.add(tools(move("m"), say("s")));
+        script.add(text("Carrying on."));
+        loop.startOrder("F", "walk");
+        pump();
+        ticks(3); // m is running, s waits
+        loop.reflexQuiet(List.of(new Action.Flee()));
+        pump(); // no tick: the flee hasn't started, so only reflexQuiet's own progress check can report
+        assertEquals(2, requests.size(), "the scrapped batch went out without waiting for the flee");
+        assertEquals(List.of("scrapped", "scrapped"), results(1));
+        assertFalse(lastText(1).contains("INTERRUPT"), lastText(1));
+        assertFalse(lastText(1).contains("Reflex"), lastText(1));
     }
 
     @Test
@@ -641,7 +1136,7 @@ class AgentLoopTest {
     }
 
     @Test
-    void theTokenCapEndsAutonomyAndSaysSoOnce() {
+    void theTokenCapPausesAutonomyUntilTheHourFrees() {
         build(b -> b.sessionTokenCap = 1_000);
         guardrails.recordTokens(1_000);
         loop.startAutonomy("F");
@@ -649,8 +1144,80 @@ class AgentLoopTest {
         now += 120_000;
         ticks(3);
         assertEquals(0, requests.size());
-        assertFalse(loop.autonomous());
-        assertEquals(List.of("Session token cap reached (1000). Autonomy off."), notices);
+        assertTrue(loop.autonomous(), "a rolling cap frees itself, so autonomy waits instead of ending");
+        assertEquals(List.of("Token cap reached (1000 per hour). Autonomy waits until it frees."), notices);
+        script.add(text("Resting."));
+        now += 60 * 60_000; // the capped tokens age out
+        ticks(3);
+        assertEquals(1, requests.size(), "the next goal runs once the hour frees");
+    }
+
+    @Test
+    void aReflexFailingWhileACallIsOutDoesNotCancelTheReplysCalls() {
+        build(b -> b.maxCallsPerMinute = 100);
+        script.add(tools(move("m")));
+        script.add(tools(say("s")));
+        script.add(text("Noted."));
+        loop.startOrder("F", "walk");
+        pump();
+        ticks(3); // m is running
+        fleeResult = ActionResult.failed("no_escape");
+        loop.reflex("creeper #9 is 2.0 blocks away, fuse lit.", List.of(new Action.Flee())); // request 1 goes out
+        queue.tick(); // the flee runs and fails while request 1 is still out
+        pump();
+        ticks(10);
+        assertEquals(3, requests.size());
+        assertFalse(results(2).contains("cancelled"), "a reflex's outcome is news, not a reason to drop the reply's calls");
+        assertTrue(lastText(2).contains("reflex flee: failed:no_escape"), lastText(2));
+    }
+
+    @Test
+    void everyTurnEndsWithTheStatusBlock() {
+        build(b -> {});
+        memory.note("step", "1/2 say hello");
+        script.add(tools(say("s1")));
+        script.add(text("Done."));
+        loop.startOrder("F", "greet");
+        pump();
+        ticks(40);
+        assertEquals(2, requests.size());
+        for (int r = 0; r < 2; r++) {
+            String text = lastText(r);
+            assertTrue(text.endsWith("</status>"), text);
+            assertTrue(text.contains("ORDER: \"greet\" (from F) | STEP: 1/2 say hello\n"), text);
+        }
+    }
+
+    @Test
+    void aStepNoteFromAnEarlierOrderIsNotThisOrdersStep() {
+        build(b -> {});
+        memory.note("step", "2/4 replant row 3");
+        now += 1_000;
+        script.add(text("Here."));
+        loop.startOrder("F", "come here");
+        pump();
+        assertTrue(lastText(0).contains("ORDER: \"come here\" (from F) | STEP: -\n"), lastText(0));
+    }
+
+    @Test
+    void theStepNoteMatchesInAnyCase() {
+        build(b -> b.maxCallsPerMinute = 100);
+        script.add(tools(say("s1")));
+        script.add(text("Done."));
+        loop.startOrder("F", "greet");
+        memory.note("Step", "1/2 say hello"); // Memory keys subjects without case
+        pump();
+        ticks(40);
+        assertTrue(lastText(1).contains("| STEP: 1/2 say hello\n"), lastText(1));
+    }
+
+    @Test
+    void aReactionsStatusNamesWhatItIsFor() {
+        build(b -> {});
+        script.add(text("Fled."));
+        loop.interrupt("zombie #7 is 4.0 blocks away.");
+        pump();
+        assertTrue(lastText(0).contains("ORDER: \"react to the threat\" | STEP: -"), lastText(0));
     }
 
     @Test

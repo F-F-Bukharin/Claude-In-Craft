@@ -1,7 +1,9 @@
 package com.example.claudeplayer.core.brain;
 
 import com.example.claudeplayer.core.Settings;
+import com.example.claudeplayer.core.StateSnapshot;
 import com.example.claudeplayer.core.WorldMap;
+import com.example.claudeplayer.core.act.ActionQueue;
 import com.example.claudeplayer.core.chat.Conversation;
 import com.example.claudeplayer.core.safety.CautionLevel;
 import com.example.claudeplayer.core.safety.WorldText;
@@ -11,6 +13,8 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -20,6 +24,11 @@ import java.util.List;
  */
 public final class PromptBuilder {
     public static final String DEFAULT_RESOURCE = "/claudeplayer/system_prompt.md";
+
+    private static final int STATUS_MAX = 60;
+    private static final int THREATS_SHOWN = 3;
+    private static final int QUEUE_GROUPS = 6;
+    private static final String NAMESPACE = "minecraft:";
 
     private final String system;
 
@@ -108,9 +117,108 @@ public final class PromptBuilder {
         return finish(b, notes, state);
     }
 
+    /**
+     * The one turn that replaces a long order's transcript (autocompact), built in code: the order again, one line per
+     * earlier model turn ({@code omitted} older ones were dropped), the results the model was about to get as text,
+     * then what an update turn carries. A blank {@code order} is a reaction nobody ordered.
+     */
+    public String compactTurn(String player, String order, List<String> earlier, int omitted, List<String> results,
+                              String memory, List<String> notes, String state) {
+        StringBuilder b = new StringBuilder();
+        if (order.isEmpty()) {
+            b.append("<event>\nNo one gave an order. You are reacting to a threat or a hit.\n</event>\n");
+        } else {
+            b.append("<order from=\"").append(WorldText.clean(player, WorldText.NAME_MAX)).append("\">\n")
+                    .append(order).append("\n</order>\n");
+        }
+        b.append("<earlier>\nYour turns in this order so far, oldest first, each call as name\u2192result:\n");
+        if (omitted > 0) b.append("- (").append(omitted).append(" earlier turns left out)\n");
+        for (String line : earlier) b.append(line).append('\n');
+        b.append("</earlier>\n");
+        if (!results.isEmpty()) {
+            b.append("<results>\n");
+            for (String line : results) b.append(line).append('\n');
+            b.append("</results>\n");
+        }
+        if (!memory.isEmpty()) b.append(memory).append('\n');
+        return finish(b, notes, state);
+    }
+
     /** Later turns: late results and interrupts, then fresh state. Follows the tool_result blocks. */
     public String updateTurn(List<String> notes, String state) {
         return finish(new StringBuilder(), notes, state);
+    }
+
+    /**
+     * The Blockman status block, pinned to the end of every user turn (spec section 7), never in the system prompt.
+     * A null or blank order reads "none"; a null {@code from} or {@code step} is left out or shows as "-".
+     */
+    public static String status(String order, String from, String step, StateSnapshot s, List<ActionQueue.Item> queue) {
+        StringBuilder orderLine = new StringBuilder("ORDER: ");
+        if (order == null || order.isBlank()) {
+            orderLine.append("none");
+        } else {
+            orderLine.append(WorldText.quote(order, STATUS_MAX));
+            String fromText = WorldText.clean(from, WorldText.NAME_MAX);
+            if (!fromText.isEmpty()) orderLine.append(" (from ").append(fromText).append(')');
+        }
+        String stepText = WorldText.clean(step, STATUS_MAX);
+        orderLine.append(" | STEP: ").append(stepText.isEmpty() ? "-" : stepText);
+
+        String posLine;
+        if (s.dead()) {
+            posLine = "POS: dead";
+        } else if (!s.present()) {
+            posLine = "POS: no body";
+        } else {
+            posLine = "POS: " + (int) Math.floor(s.pos().x()) + " " + (int) Math.floor(s.pos().y()) + " "
+                    + (int) Math.floor(s.pos().z()) + " " + bare(s.dimension())
+                    + " | HP " + Math.round(s.health()) + "/" + Math.round(s.maxHealth())
+                    + " | FOOD " + s.food() + "/20";
+        }
+
+        return "<status>\n" + orderLine + "\n" + posLine + "\nTHREATS: " + threats(s.hostiles())
+                + " | QUEUE: " + queueText(queue) + "\n</status>";
+    }
+
+    private static String threats(List<StateSnapshot.Mob> hostiles) {
+        if (hostiles.isEmpty()) return "none";
+        List<StateSnapshot.Mob> near = hostiles.stream().sorted(Comparator.comparingDouble(StateSnapshot.Mob::distance)).toList();
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < Math.min(THREATS_SHOWN, near.size()); i++) {
+            StateSnapshot.Mob m = near.get(i);
+            if (i > 0) b.append(", ");
+            b.append(bare(m.type())).append(' ').append(Math.round(m.distance())).append('m');
+        }
+        if (near.size() > THREATS_SHOWN) b.append(" +").append(near.size() - THREATS_SHOWN).append(" more");
+        return b.toString();
+    }
+
+    /** Runs of the same prio and tool collapse to "p1 harvest x3"; past {@link #QUEUE_GROUPS} groups it ends in an ellipsis. */
+    private static String queueText(List<ActionQueue.Item> queue) {
+        if (queue.isEmpty()) return "empty";
+        List<String> groups = new ArrayList<>();
+        int i = 0;
+        while (i < queue.size() && groups.size() < QUEUE_GROUPS) {
+            ActionQueue.Entry first = queue.get(i).entry();
+            int j = i + 1;
+            while (j < queue.size() && queue.get(j).entry().prio() == first.prio()
+                    && queue.get(j).entry().tool().equals(first.tool())) {
+                j++;
+            }
+            int run = j - i;
+            groups.add("p" + first.prio() + " " + first.tool() + (run > 1 ? " x" + run : ""));
+            i = j;
+        }
+        String text = String.join(", ", groups);
+        return i < queue.size() ? text + " …" : text;
+    }
+
+    /** A registry id without its "minecraft:" namespace, cleaned; a missing id reads as empty. */
+    private static String bare(String id) {
+        String text = id == null ? "" : id;
+        if (text.startsWith(NAMESPACE)) text = text.substring(NAMESPACE.length());
+        return WorldText.clean(text, WorldText.NAME_MAX);
     }
 
     private static String finish(StringBuilder b, List<String> notes, String state) {

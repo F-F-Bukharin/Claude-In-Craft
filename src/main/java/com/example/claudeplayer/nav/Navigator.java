@@ -8,6 +8,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.monster.Zombie;
+import net.minecraft.world.level.pathfinder.Node;
 import net.minecraft.world.level.pathfinder.Path;
 import net.minecraft.world.phys.Vec3;
 
@@ -64,9 +65,24 @@ public final class Navigator {
         body.setYRot(yaw);
         body.setYHeadRot(yaw);
         body.yBodyRot = yaw;
+        body.setXRot(0f); // eyes level while walking, whatever the last lookAt left behind
         body.zza = 1f;
         boolean climb = point.y > body.getY() + 0.5 || body.horizontalCollision;
         body.setJumping(climb && (body.onGround() || body.isInWater()));
+    }
+
+    /** Whether the body stands on this path node, as move_to counts it. */
+    public static boolean reached(ServerPlayer body, Node n) {
+        return MoveHandle.reached(body, n);
+    }
+
+    public static Vec3 center(Node n) {
+        return MoveHandle.center(n);
+    }
+
+    /** "lava", "fire" or "drop" when the next step toward {@code point} would be deadly, null when it is safe. */
+    public static @Nullable String hazardAhead(ServerPlayer body, Vec3 point) {
+        return MoveHandle.hazardAhead(body, point);
     }
 
     public static void halt(ServerPlayer body) {

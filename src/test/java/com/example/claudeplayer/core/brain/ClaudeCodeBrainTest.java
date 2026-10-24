@@ -29,9 +29,19 @@ class ClaudeCodeBrainTest {
         assertTrue(cmd.contains("--strict-mcp-config"), "no MCP servers");
         assertTrue(cmd.contains("--no-session-persistence"));
         assertEquals("claude-haiku-5-5", cmd.get(cmd.indexOf("--model") + 1));
-        assertEquals("low", cmd.get(cmd.indexOf("--effort") + 1));
+        assertEquals("high", cmd.get(cmd.indexOf("--effort") + 1), "claude_effort, not the API brain's effort");
         assertEquals(ClaudeCodeBrain.SCHEMA, cmd.get(cmd.indexOf("--json-schema") + 1));
         assertFalse(cmd.contains("--bare"), "bare mode ignores the subscription login");
+    }
+
+    @Test
+    void claudeCodesEffortIsItsOwnKey() {
+        Settings s = Settings.of(b -> {
+            b.effort = "low";
+            b.claudeEffort = "medium";
+        });
+        List<String> cmd = ClaudeCodeBrain.command("claude.exe", s, Path.of("system.md"), false);
+        assertEquals("medium", cmd.get(cmd.indexOf("--effort") + 1));
     }
 
     @Test
@@ -68,6 +78,15 @@ class ClaudeCodeBrainTest {
     }
 
     @Test
+    void doneMarksTheReplyAndOnlyATrueBooleanCounts() throws BrainException {
+        String done = SUCCESS.replace("\"calls\":[", "\"done\":true,\"calls\":[");
+        assertTrue(ClaudeCodeBrain.parseResult(done, "cc2_").done());
+        assertFalse(ClaudeCodeBrain.parseResult(SUCCESS, "cc2_").done(), "absent means not done");
+        String notBoolean = SUCCESS.replace("\"calls\":[", "\"done\":\"true\",\"calls\":[");
+        assertFalse(ClaudeCodeBrain.parseResult(notBoolean, "cc2_").done(), "only a JSON boolean counts");
+    }
+
+    @Test
     void failuresAreClassified() {
         BrainException limit = assertThrows(BrainException.class, () -> ClaudeCodeBrain.parseResult(
                 "{\"subtype\":\"success\",\"is_error\":true,\"api_error_status\":429,\"result\":\"usage limit reached\"}", "x"));
@@ -101,6 +120,39 @@ class ClaudeCodeBrainTest {
         assertTrue(text.contains("result of move_to (error): failed\nno_path"));
         assertFalse(text.contains("secret"));
         assertTrue(text.endsWith("Answer with your next step as JSON."));
+    }
+
+    private static final String PNG = "iVBORw0KGgo=";
+    private static final String IMAGE = "{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"" + PNG + "\"}}";
+
+    @Test
+    void aTailWithoutPicturesIsTheSameLineAsBefore() {
+        JsonArray messages = JsonParser.parseString("["
+                + "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"<order>come</order>\"}]},"
+                + "{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"cc1_0\",\"name\":\"say\",\"input\":{\"text\":\"hi\"}}]},"
+                + "{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"cc1_0\",\"content\":\"ok\"},"
+                + "{\"type\":\"text\",\"text\":\"update\"}]}]").getAsJsonArray();
+        assertEquals("{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":"
+                + "\"[game]\\nresult of say: ok\\nupdate\\n\\nAnswer with your next step as JSON.\"}]}}",
+                ClaudeCodeBrain.userLine(ClaudeCodeBrain.renderContent(messages, 2)));
+    }
+
+    @Test
+    void aTailWithAPictureCarriesARealImageBlock() {
+        JsonArray messages = JsonParser.parseString("["
+                + "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"<order>look</order>\"}]},"
+                + "{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"cc1_0\",\"name\":\"glance\",\"input\":{}}]},"
+                + "{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"cc1_0\",\"content\":[" + IMAGE + ","
+                + "{\"type\":\"text\",\"text\":\"ok\"}]},{\"type\":\"text\",\"text\":\"update\"}]}]").getAsJsonArray();
+        JsonArray content = JsonParser.parseString(ClaudeCodeBrain.userLine(ClaudeCodeBrain.renderContent(messages, 2)))
+                .getAsJsonObject().getAsJsonObject("message").getAsJsonArray("content");
+        assertEquals(3, content.size(), content.toString());
+        assertEquals("[game]\nresult of glance: ok\n", content.get(0).getAsJsonObject().get("text").getAsString());
+        assertEquals(JsonParser.parseString(IMAGE), content.get(1));
+        assertEquals("update\n\nAnswer with your next step as JSON.", content.get(2).getAsJsonObject().get("text").getAsString());
+        assertEquals("[game]\nresult of glance: ok\nupdate\n\nAnswer with your next step as JSON.",
+                ClaudeCodeBrain.renderTranscript(messages, 2), "the text is what it always was");
+        assertEquals(1, ClaudeCodeBrain.renderContent(messages, 3).size(), "a picture the session already read isn't sent again");
     }
 
     @Test
