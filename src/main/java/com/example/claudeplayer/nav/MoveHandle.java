@@ -402,7 +402,7 @@ final class MoveHandle implements ActionRunner.Handle {
 
     /** Closes what this move opened, once the body is clear of it (or, at the end, not standing right at it). */
     private void closeBehind(boolean last) {
-        if (opened.isEmpty()) return;
+        if (opened.isEmpty() || !body.isAlive() || body.isRemoved()) return; // a body being removed or dead uses no doors
         ServerLevel level = body.serverLevel();
         Iterator<BlockPos> it = opened.iterator();
         while (it.hasNext()) {

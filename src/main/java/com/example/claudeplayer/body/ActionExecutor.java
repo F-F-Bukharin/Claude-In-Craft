@@ -43,6 +43,11 @@ public final class ActionExecutor implements ActionRunner {
     public Handle start(Action action) {
         AgentPlayer p = rt.body().player();
         if (p == null) return Handle.done(ActionResult.failed("no_body"));
+        // A sleeping body can't act: anything that does something wakes it first (AgentPlayer only catches timed actions).
+        if (p.isSleeping() && !(action instanceof Action.Sleep || action instanceof Action.Wait || action instanceof Action.GetState
+                || action instanceof Action.Look || action instanceof Action.See || action instanceof Action.Say)) {
+            p.stopSleepInBed(true, true);
+        }
         if (action instanceof Action.GetState) return Handle.done(ActionResult.ok(SnapshotBuilder.build(rt).toJson()));
         if (action instanceof Action.Look look) {
             return Handle.done(ActionResult.ok(SnapshotBuilder.map(p, look.radius(), rt.settings().hostileRange()).text()));

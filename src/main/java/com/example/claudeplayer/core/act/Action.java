@@ -80,7 +80,7 @@ public sealed interface Action {
     /** Turns dirt, grass or a path block into farmland with a hoe from the inventory. */
     record Till(int x, int y, int z) implements Action {}
 
-    /** Plants {@code item} (a short id) in the block above the soil block at x, y, z (Farming.fits). */
+    /** Plants {@code item} (a short id) in the block above the soil block at x, y, z (Planting.plantFailure). */
     record Plant(int x, int y, int z, String item) implements Action {}
 
     /** Harvests every ripe crop within {@code radius} of a point, picks up the drops and replants from the inventory. */
