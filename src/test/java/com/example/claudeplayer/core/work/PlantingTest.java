@@ -118,4 +118,17 @@ class PlantingTest {
         assertEquals(Planting.PourAt.CLICKED, Planting.pourAt(true));
         assertEquals(Planting.PourAt.BESIDE_FACE, Planting.pourAt(false), "a solid block: the space next to the face used");
     }
+
+    @Test
+    void aPourOnlyReplacesNaturalOrSelfPlacedBlocks() {
+        assertEquals(Planting.PourInto.TAKES, Planting.pourInto(true, false, false, false, false), "air or fluid");
+        assertEquals(Planting.PourInto.TAKES, Planting.pourInto(false, true, false, false, false), "a block it waterlogs");
+        assertEquals(Planting.PourInto.TAKES, Planting.pourInto(false, false, true, true, false), "tall grass: natural");
+        assertEquals(Planting.PourInto.TAKES, Planting.pourInto(false, false, true, false, true), "a torch Claude placed");
+        assertEquals(Planting.PourInto.PROTECTED, Planting.pourInto(false, false, true, false, false), "a player's torch, rail or dust");
+        assertEquals(Planting.PourInto.NO, Planting.pourInto(false, false, false, true, true), "stone takes no fluid");
+        assertTrue(Planting.pourInto(false, false, true, false, false).clicksInto(), "a protected clicked block is still the target, then denied");
+        assertFalse(Planting.PourInto.NO.clicksInto());
+    }
+
 }

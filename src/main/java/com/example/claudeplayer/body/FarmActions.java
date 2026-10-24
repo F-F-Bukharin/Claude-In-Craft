@@ -32,6 +32,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.BucketPickup;
 import net.minecraft.world.level.block.CocoaBlock;
 import net.minecraft.world.level.block.CropBlock;
+import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.LiquidBlockContainer;
 import net.minecraft.world.level.block.NetherWartBlock;
 import net.minecraft.world.level.block.SweetBerryBushBlock;
@@ -203,7 +204,8 @@ final class FarmActions {
 
     /**
      * Uses the bucket on the face of pos that faces the eyes. Like BucketItem#use, the fluid goes into pos if it can
-     * take it (air, a replaceable block, or a block water can waterlog), else into the space beside that face.
+     * take it (air, a replaceable block, or a block water can waterlog), else into the space beside that face. A
+     * replaceable block the fluid would destroy must be natural or Claude's own, else denied:protected_block.
      */
     private ActionResult pour(AgentPlayer p, BlockPos pos, int slot, boolean lava) {
         ServerLevel level = p.serverLevel();
@@ -211,8 +213,11 @@ final class FarmActions {
         BucketItem bucket = (BucketItem) inv.items.get(slot).getItem();
         Fluid content = bucket.getFluid();
         Direction face = faceToward(p, pos);
-        BlockPos target = Planting.pourAt(takesFluid(level, pos, content)) == Planting.PourAt.CLICKED ? pos : pos.relative(face);
-        if (!target.equals(pos) && !takesFluid(level, target, content)) return ActionResult.failed("not_poured");
+        Planting.PourInto atPos = pourInto(level, pos, content);
+        BlockPos target = Planting.pourAt(atPos.clicksInto()) == Planting.PourAt.CLICKED ? pos : pos.relative(face);
+        Planting.PourInto into = target.equals(pos) ? atPos : pourInto(level, target, content);
+        if (into == Planting.PourInto.NO) return ActionResult.failed("not_poured");
+        if (into == Planting.PourInto.PROTECTED) return ActionResult.denied("protected_block");
         Vec3 center = Vec3.atCenterOf(target);
         BlockPos home = rt.data().home();
         double fromHome = home == null || !level.dimension().equals(rt.data().homeDimension())
@@ -222,7 +227,9 @@ final class FarmActions {
             if (other != p) nearestPlayer = Math.min(nearestPlayer, Math.sqrt(other.distanceToSqr(center)));
         }
         boolean ownBlock = p.getBoundingBox().intersects(new AABB(target)); // feet or head
-        ActionResult rule = Guardrails.checkPour(lava, ownBlock, fromHome, nearestPlayer);
+        BlockPos feet = p.blockPosition();
+        ActionResult rule = Guardrails.checkPour(lava, ownBlock, target.getX() - feet.getX(), target.getY() - feet.getY(),
+                target.getZ() - feet.getZ(), fromHome, nearestPlayer, level.dimensionType().ultraWarm());
         if (rule.isError()) return rule;
         Hands.hold(inv, slot);
         ItemStack stack = inv.getSelected();
@@ -235,11 +242,18 @@ final class FarmActions {
                 + (target.equals(pos) ? "" : " (beside the " + face.getName() + " face of " + at(pos) + ")") + "; kept the empty bucket");
     }
 
-    /** Whether the block here takes this fluid from a bucket: air, replaceable by it, or a LiquidBlockContainer that can hold it (waterlogging). */
-    private static boolean takesFluid(Level level, BlockPos pos, Fluid fluid) {
+    /**
+     * What the block here does with this fluid from a bucket (Planting.pourInto): air and fluid blocks take it, so does
+     * a LiquidBlockContainer that can hold it (waterlogging); a block the fluid would replace, and so destroy, only
+     * when it is natural or Claude placed it (the mining rule).
+     */
+    private Planting.PourInto pourInto(Level level, BlockPos pos, Fluid fluid) {
         BlockState state = level.getBlockState(pos);
-        return state.isAir() || state.canBeReplaced(fluid)
-                || state.getBlock() instanceof LiquidBlockContainer c && c.canPlaceLiquid(level, pos, state, fluid);
+        boolean waterlogs = state.getBlock() instanceof LiquidBlockContainer c && c.canPlaceLiquid(level, pos, state, fluid);
+        boolean replaceable = state.canBeReplaced(fluid);
+        boolean natural = replaceable && NaturalBlocks.is(state);
+        boolean selfPlaced = replaceable && SnapshotBuilder.blockId(state).equals(rt.data().placedBlock(level.dimension(), pos));
+        return Planting.pourInto(state.isAir() || state.getBlock() instanceof LiquidBlock, waterlogs, replaceable, natural, selfPlaced);
     }
 
     /** The face a player sees: the face the eye-line hits, or the face pointing most toward the eyes when something is in the way. */

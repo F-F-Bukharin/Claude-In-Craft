@@ -69,6 +69,27 @@ public final class Planting {
         return clickedTakesFluid ? PourAt.CLICKED : PourAt.BESIDE_FACE;
     }
 
+    /** What a block does with a bucket's fluid: takes it, would be destroyed by it but isn't Claude's to break, or can't take it. */
+    public enum PourInto {
+        TAKES, PROTECTED, NO;
+
+        /** Whether the fluid aims at this block (TAKES or PROTECTED) rather than the space beside its face. */
+        public boolean clicksInto() {
+            return this != NO;
+        }
+    }
+
+    /**
+     * The pour-target rule. Air, existing fluid and a block the fluid waterlogs take it as they are. A block the fluid
+     * would replace (emptyContents destroys it: torches, rails, redstone dust, crops) follows the mining rule: only a
+     * natural block or one Claude placed, else PROTECTED. Anything else can't take it.
+     */
+    public static PourInto pourInto(boolean airOrFluid, boolean waterlogs, boolean replaceable, boolean natural, boolean selfPlaced) {
+        if (airOrFluid || waterlogs) return PourInto.TAKES;
+        if (!replaceable) return PourInto.NO;
+        return natural || selfPlaced ? PourInto.TAKES : PourInto.PROTECTED;
+    }
+
     private static Plant kind(String item) {
         if (FARMLAND_CROPS.contains(item)) return Plant.CROP;
         if (item.endsWith("_sapling")) return Plant.SAPLING;
