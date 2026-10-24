@@ -49,6 +49,15 @@ public final class FakeClaude implements Launcher {
         return p;
     }
 
+    /** Waits up to 10 s for {@code done}, else fails the test. */
+    public static void await(java.util.function.BooleanSupplier done) {
+        long end = System.nanoTime() + 10_000_000_000L;
+        while (!done.getAsBoolean()) {
+            if (System.nanoTime() > end) throw new AssertionError("timed out waiting");
+            Thread.onSpinWait();
+        }
+    }
+
     public Proc proc(int i) {
         return procs.get(i);
     }

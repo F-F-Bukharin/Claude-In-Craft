@@ -21,9 +21,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 /** Warm sessions, the spare, continuation, the cap and the bridge-bug fixes, all on a scripted fake claude. */
+@Timeout(30)
 class ClaudeCodeTest {
     @TempDir
     Path dir;
@@ -206,7 +208,7 @@ class ClaudeCodeTest {
                 throw new RuntimeException(e);
             }
         });
-        while (cc.liveSessions() == 0) Thread.onSpinWait(); // the start is under way
+        FakeClaude.await(() -> cc.liveSessions() > 0); // the start is under way
         cc.close();
         fake.startGate.countDown();
         Exception e = assertThrows(Exception.class, () -> opening.get(5, TimeUnit.SECONDS));
@@ -238,7 +240,7 @@ class ClaudeCodeTest {
                 throw new RuntimeException(e);
             }
         });
-        while (fake.proc(0).written.isEmpty()) Thread.onSpinWait();
+        FakeClaude.await(() -> !fake.proc(0).written.isEmpty());
         s.cancel();
         Exception e = assertThrows(Exception.class, () -> turn.get(5, TimeUnit.SECONDS));
         assertTrue(e.getCause().getCause() instanceof ClaudeCodeException c && c.kind() == ClaudeCodeException.Kind.CANCELLED);
