@@ -239,4 +239,21 @@ class RoamPlanTest {
         p.visit(101, -51);
         assertEquals(0, p.next().sector(), "nothing was learned about any direction yet");
     }
+
+    @Test
+    void noPathOnlyWhenItGaveUpWithNothingReached() {
+        RoamPlan p = plan(32, 2);
+        assertFalse(p.noPath(), "time ran out before the first waypoint: walk back and report the finds");
+        p.unreachable(p.next());
+        assertFalse(p.noPath(), "one failure is not giving up");
+        Waypoint w;
+        while ((w = p.next()) != null) p.unreachable(w);
+        assertTrue(p.noPath());
+
+        RoamPlan q = plan(32, 2);
+        q.reached(q.next());
+        while ((w = q.next()) != null) q.unreachable(w);
+        assertTrue(q.gaveUp(), "every direction is closed now");
+        assertFalse(q.noPath(), "but one waypoint was reached: that is a roam, not no_path");
+    }
 }

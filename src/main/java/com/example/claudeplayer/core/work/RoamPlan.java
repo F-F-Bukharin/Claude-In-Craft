@@ -154,6 +154,14 @@ public final class RoamPlan {
     }
 
     /**
+     * The roam ends failed:no_path: it {@link #gaveUp} and nothing was ever reached. Running out of time before the
+     * first waypoint is not this; the body walks back and reports what it saw.
+     */
+    public boolean noPath() {
+        return reached == 0 && gaveUp();
+    }
+
+    /**
      * Records something seen ({@code count} of it, e.g. a herd). Returns the note to write when it is a new find
      * (kind plus 16-block cell) and the note limits allow, else null. Nearest-to-start and the biggest count are
      * kept for the summary either way.
