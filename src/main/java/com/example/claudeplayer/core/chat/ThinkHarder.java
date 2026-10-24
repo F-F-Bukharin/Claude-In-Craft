@@ -54,7 +54,7 @@ public final class ThinkHarder {
         return phrases != null && order != null && phrases.matcher(order).find();
     }
 
-    /** The reason the offer is refused: the nearest hostile within 16 blocks, by XZ distance. */
+    /** The reason the offer is refused: the nearest hostile within hostile_range, in a straight line. */
     public static String gate(String nearestHostileType, double xzDistance) {
         String name = nearestHostileType == null || nearestHostileType.isBlank()
                 ? "hostile"

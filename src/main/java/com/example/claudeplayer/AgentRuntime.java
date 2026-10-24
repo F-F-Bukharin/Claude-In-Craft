@@ -29,7 +29,6 @@ import com.example.claudeplayer.core.memory.Memory;
 import com.example.claudeplayer.core.memory.MemoryActions;
 import com.example.claudeplayer.core.safety.CautionLevel;
 import com.example.claudeplayer.core.safety.Guardrails;
-import com.example.claudeplayer.core.safety.Reflexes;
 import com.example.claudeplayer.core.safety.WorldText;
 import com.example.claudeplayer.event.DamageWatcher;
 import com.example.claudeplayer.event.HungerWatcher;
@@ -437,11 +436,10 @@ public final class AgentRuntime {
         }
         if (bodyMissing()) return;
         AgentPlayer p = body.player();
-        List<Mob> hostiles = SnapshotBuilder.hostilesXZ(p, settings.hostileRange());
+        List<Mob> hostiles = SnapshotBuilder.hostiles(p, settings.hostileRange()); // straight-line, as the reflexes
         if (!hostiles.isEmpty()) {
             Mob nearest = hostiles.get(0);
-            say(ThinkHarder.gate(SnapshotBuilder.typeId(nearest),
-                    Reflexes.horizontal(nearest.getX() - p.getX(), nearest.getZ() - p.getZ())));
+            say(ThinkHarder.gate(SnapshotBuilder.typeId(nearest), p.distanceTo(nearest)));
             order(player, text, false);
             return;
         }
