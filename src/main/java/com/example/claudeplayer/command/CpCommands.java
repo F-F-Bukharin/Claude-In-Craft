@@ -1,7 +1,10 @@
 package com.example.claudeplayer.command;
 
 import com.example.claudeplayer.AgentRuntime;
+import com.example.claudeplayer.ClaudePlayerMod;
 import com.example.claudeplayer.Config;
+import com.example.claudeplayer.body.AgentPlayer;
+import com.example.claudeplayer.body.Glance;
 import com.example.claudeplayer.core.Settings;
 import com.example.claudeplayer.core.chat.ChatIntake;
 import com.example.claudeplayer.core.memory.Memory;
@@ -10,8 +13,15 @@ import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
@@ -21,6 +31,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraftforge.fml.loading.FMLPaths;
 
 /**
  * /cp. Anyone can read /cp help. Admins (op level 2, or the single-player owner) can do everything. Allowlisted
@@ -59,6 +70,8 @@ public final class CpCommands {
                         .executes(c -> reply(c.getSource(), CpCommands::memory)))
                 .then(Commands.literal("keycheck").requires(CpCommands::canControl)
                         .executes(c -> keycheck(c.getSource())))
+                .then(Commands.literal("glance").requires(CpCommands::isAdmin)
+                        .executes(c -> glance(c.getSource())))
                 .then(Commands.literal("level").requires(CpCommands::isAdmin)
                         .then(Commands.argument("level", IntegerArgumentType.integer(0, 5))
                                 .executes(c -> reply(c.getSource(), rt -> rt.setLevel(
@@ -104,6 +117,67 @@ public final class CpCommands {
             rt.keycheck(result -> source.sendSuccess(() -> Component.literal(result), false));
             return rt.settings().usesApi() ? "Checking the API key..." : "Checking Claude Code...";
         });
+    }
+
+    /**
+     * /cp glance: saves the picture a glance would send, from the body's eyes, as claudeplayer/glance-&lt;time&gt;.png in
+     * the game folder. It skips glance's cooldown: it is for checking the picture, and the model never sees it.
+     */
+    private static int glance(CommandSourceStack source) {
+        AgentRuntime rt = AgentRuntime.get();
+        if (rt == null) {
+            source.sendFailure(Component.literal("Claude Player isn't running."));
+            return 0;
+        }
+        String name = rt.settings().bodyName();
+        AgentPlayer body = rt.body().player();
+        if (body == null) {
+            source.sendFailure(Component.literal(name + " isn't in the world. Use /cp spawn."));
+            return 0;
+        }
+        Glance.Camera camera = Glance.camera();
+        if (camera == null) {
+            source.sendFailure(Component.literal("Glance needs the game window: single-player or the LAN host, not a dedicated server."));
+            return 0;
+        }
+        int w = rt.settings().visionWidth();
+        int h = rt.settings().visionHeight();
+        camera.capture(body.getId(), w, h).orTimeout(2, TimeUnit.SECONDS).whenComplete((png, error) -> rt.onMainThread(() -> {
+            if (error != null) {
+                source.sendFailure(Component.literal("No picture: " + why(Glance.code(error), name) + "."));
+                return;
+            }
+            try {
+                Path file = saveGlance(png);
+                String path = file.toAbsolutePath().toString();
+                MutableComponent link = Component.literal(file.getFileName().toString()).withStyle(style -> style.withUnderlined(true)
+                        .withClickEvent(new ClickEvent(ClickEvent.Action.OPEN_FILE, path))
+                        .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal(path))));
+                String size = String.format(Locale.ROOT, " (%dx%d, %d KB): what %s sees.", w, h, (png.length + 1023) / 1024, name);
+                source.sendSuccess(() -> Component.literal("Saved ").append(link).append(size), false);
+            } catch (IOException e) {
+                source.sendFailure(Component.literal("Couldn't save the picture: " + e.getMessage()));
+            }
+        }));
+        return 1;
+    }
+
+    private static String why(String code, String name) {
+        return switch (code) {
+            case "not_loaded" -> "your game hasn't loaded where " + name + " is (too far away, or another dimension)";
+            case "render_timeout" -> "the game window didn't answer within 2 s";
+            case "no_client" -> "no game window";
+            default -> "the render failed; the log says why";
+        };
+    }
+
+    private static Path saveGlance(byte[] png) throws IOException {
+        Path dir = FMLPaths.GAMEDIR.get().resolve(ClaudePlayerMod.MODID);
+        Files.createDirectories(dir);
+        String stamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH.mm.ss"));
+        Path file = dir.resolve("glance-" + stamp + ".png");
+        for (int i = 1; Files.exists(file); i++) file = dir.resolve("glance-" + stamp + "_" + i + ".png");
+        return Files.write(file, png);
     }
 
     private static String memory(AgentRuntime rt) {
@@ -155,6 +229,7 @@ public final class CpCommands {
         entry(help, "/cp resetcap", "/cp resetcap", "clear the hourly token cap now (ops)");
         entry(help, "/cp memory", "/cp memory", "what " + name + " remembers");
         entry(help, "/cp keycheck", "/cp keycheck", s.usesApi() ? "test the API key (free)" : "test the Claude Code connection");
+        entry(help, "/cp glance", "/cp glance", "save what " + name + " sees as a picture (ops)");
         entry(help, "/cp level <0-5>", "/cp level ", "set the caution level (ops)");
         entry(help, "/cp allow <player>", "/cp allow ", "let a player give orders; /cp deny takes it back (ops)");
         help.append(Component.literal(s.usesApi()

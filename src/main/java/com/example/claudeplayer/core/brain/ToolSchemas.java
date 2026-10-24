@@ -140,7 +140,7 @@ public final class ToolSchemas {
                 integer("x", "Block x."), integer("y", "Block y."), integer("z", "Block z."),
                 optional(text("fluid", "water or lava: which bucket to pour. Leave it out for any full bucket.")));
         // vision
-        add("glance", 2, "Take a low-res picture of what you see right now. For important moments: a rare or valuable target, or a player asking you to look. It has a cooldown.",
+        add("glance", 2, "Take a low-res picture of what you see right now. For important moments: a rare or valuable target, or a player asking you to look. It has a cooldown. Fails with no_client (a server without a game window), not_loaded (the host's game hasn't loaded where you are) or render_timeout.",
                 in -> new Action.Glance());
         // skills (24 Oct)
         add("build", 2, "Place up to 64 blocks in the order given: walks within reach of each block, places it, and skips blocks that are already there. List a block's support before the blocks that lean on it. ok reports how many were placed and skipped. Fails with missing_item:<id> (you don't carry it), not_a_block:<id>, no_support, blocked, no_path, or stopped_at:<index>:<reason>, which also says how many were placed. A block more than 64 blocks away on the ground, or in an unloaded chunk, gives no_path: walk closer first.",
