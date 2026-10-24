@@ -15,8 +15,9 @@ import java.util.List;
  *       there makes it {@code t}; solid ground whose top surface is 3 or more blocks above the feet makes it
  *       {@code ^}. Walkable cells never change, so routes still read right.</li>
  *   <li>Scale: up to radius {@link #FINE_RADIUS} one cell is one block. Past that the view stays at most
- *       {@link #MAX_CELLS} cells across and each cell covers {@code scale x scale} blocks, showing the most
- *       important thing in it (see {@link #coarse}).</li>
+ *       {@link #MAX_CELLS} cells across and each cell covers {@code scale x scale} blocks: its centre column is
+ *       read (heights from the heightmap), and the other columns only for containers, lava and water, so one tick's
+ *       look stays cheap; the most important of those shows (see {@link #coarse}).</li>
  * </ul>
  */
 public final class WorldMap {
@@ -144,6 +145,11 @@ public final class WorldMap {
 
     /** What standing at feet level in this column would be like. */
     static char cell(Sampler s, Heights h, int x, int y, int z) {
+        return cell(s, h, x, y, z, false);
+    }
+
+    /** {@link #cell}; a coarse column reads a wall's height from the heightmap ({@link #heightOnly}) instead of scanning up. */
+    private static char cell(Sampler s, Heights h, int x, int y, int z, boolean coarse) {
         char farm = farm(s, x, y, z);
         if (farm != 0) return farm;
         Kind feet = s.at(x, y, z);
@@ -162,7 +168,21 @@ public final class WorldMap {
         }
         boolean tree = feet == Kind.TREE || head == Kind.TREE;
         if (solid(feet) && head == Kind.OPEN && s.at(x, y + 2, z) == Kind.OPEN) return tree ? 'T' : '+';
-        return tree ? 'T' : wallOrHeight(s, h, x, y, z);
+        if (tree) return 'T';
+        return coarse ? heightOnly(s, h, x, y, z) : wallOrHeight(s, h, x, y, z);
+    }
+
+    /**
+     * A coarse cell's wall, from the heightmap alone plus one read at the column's top: {@code ^} when the top block is
+     * 2 to {@value #UP_WINDOW} above the feet ({@code t} when that block is a tree), else {@code #}. No heightmap, or a
+     * top past the window (a cave wall, a cliff face), stays {@code #}.
+     */
+    static char heightOnly(Sampler s, Heights h, int x, int y, int z) {
+        int free = h.topY(x, z);
+        if (free == Integer.MAX_VALUE || free <= y + 2) return '#';
+        int top = free - 1;
+        if (top > y + UP_WINDOW) return '#';
+        return s.at(x, top, z) == Kind.TREE ? 't' : '^';
     }
 
     /**
@@ -202,24 +222,46 @@ public final class WorldMap {
     /** Symbols a column can read as, in the order of {@link #coarse}'s bitmask. */
     private static final String SYMBOLS = " .+-v#^tT~LCWw=";
 
+    /**
+     * A coarse cell samples one column, the centre one, read as {@link #cell} but with the heightmap in place of the
+     * upward scan; every other column gets one or two cheap reads (feet, then ground) for what must not be missed:
+     * a container, lava or fire, water. At radius 64 (43 x 43 cells of 3 x 3) that is 23 reads a cell on flat ground
+     * and at most about 25, some 46 thousand in all, where reading every column fully took about 300 thousand.
+     */
     private static char coarseCell(Sampler s, Heights h, int x0, int y, int z0, int scale) {
-        int seen = 0;
+        int cx = x0 + scale / 2;
+        int cz = z0 + scale / 2;
+        int seen = bit(cell(s, h, cx, y, cz, true));
         for (int dz = 0; dz < scale; dz++) {
             for (int dx = 0; dx < scale; dx++) {
-                seen |= 1 << SYMBOLS.indexOf(cell(s, h, x0 + dx, y, z0 + dz));
+                if (x0 + dx != cx || z0 + dz != cz) seen |= marks(s, x0 + dx, y, z0 + dz);
             }
         }
         return coarse(seen);
     }
 
+    /** The cheap look at a coarse cell's other columns: C, L or ~ from the feet and ground blocks, nothing else. */
+    private static int marks(Sampler s, int x, int y, int z) {
+        Kind feet = s.at(x, y, z);
+        if (feet == Kind.CONTAINER) return bit('C');
+        if (feet == Kind.LAVA) return bit('L');
+        Kind ground = s.at(x, y - 1, z);
+        if (ground == Kind.LAVA) return bit('L');
+        return feet == Kind.WATER || ground == Kind.WATER ? bit('~') : 0;
+    }
+
+    private static int bit(char c) {
+        return 1 << SYMBOLS.indexOf(c);
+    }
+
     private static boolean has(int seen, char c) {
-        return (seen & (1 << SYMBOLS.indexOf(c))) != 0;
+        return (seen & bit(c)) != 0;
     }
 
     /**
      * The one symbol for a coarse cell, from the set of symbols its columns read as. Priority: container C, lava
      * or fire L, water ~, tree (T before t), wall or high ground (^ before #), drop v, then floor (ripe crop W,
-     * growing crop w, bare farmland =, floor ., step up +, step down -). Space only when every column is unknown.
+     * growing crop w, bare farmland =, floor ., step up +, step down -). Space only when nothing in it is known.
      * Hostile and player markers are laid over this by {@link #render}.
      */
     static char coarse(int seen) {

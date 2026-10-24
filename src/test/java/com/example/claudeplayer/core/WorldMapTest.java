@@ -255,27 +255,47 @@ class WorldMapTest {
     }
 
     @Test
-    void aCoarseCellShowsItsMostImportantContent() {
+    void aCoarseCellReadsItsCentreColumn() {
         assertEquals('.', coarse(17, 16));
         put(2, 63, -1, Kind.OPEN);
         put(2, 62, -1, Kind.OPEN);
-        assertEquals('v', coarse(17, 16), "a drop in the cell reads over plain floor");
-        put(3, 64, -1, Kind.SOLID);
-        put(3, 65, -1, Kind.SOLID);
-        assertEquals('#', coarse(17, 16), "a wall beats a drop and floor");
-        column(4, 0, 64, 66, Kind.SOLID);
-        assertEquals('^', coarse(17, 16), "high ground reads as ^ when any column is");
-        put(4, 70, 1, Kind.TREE);
-        column(4, 1, 64, 66, Kind.SOLID);
-        assertEquals('t', coarse(17, 16), "a tree on higher ground beats a wall");
-        put(2, 64, 0, Kind.TREE);
-        put(2, 65, 0, Kind.TREE);
-        assertEquals('T', coarse(17, 16), "a tree at feet beats the high one");
-        put(3, 63, 0, Kind.WATER);
-        assertEquals('~', coarse(17, 16), "water beats a tree");
-        put(3, 63, 1, Kind.LAVA);
+        assertEquals('.', coarse(17, 16), "a drop off the centre column isn't sampled");
+        put(3, 63, 0, Kind.OPEN);
+        put(3, 62, 0, Kind.OPEN);
+        assertEquals('v', coarse(17, 16), "a drop in the centre column");
+        put(3, 64, 0, Kind.SOLID);
+        put(3, 65, 0, Kind.SOLID);
+        assertEquals('#', coarse(17, 16), "a wall, and no heightmap to call it high ground");
+        put(3, 64, 0, Kind.TREE);
+        assertEquals('T', coarse(17, 16), "a tree at feet");
+    }
+
+    /** Cell (17, 16) at radius 49 with a heightmap that is flat (64) but for the centre column (3, 0). */
+    private char coarseWithTop(int centreTop) {
+        WorldMap.Heights heights = (x, z) -> x == 3 && z == 0 ? centreTop : 64;
+        return WorldMap.render(world, heights, 0, 64, 0, 49, List.of()).rows().get(16).charAt(17);
+    }
+
+    @Test
+    void aCoarseWallUsesTheHeightmapNotAnUpwardScan() {
+        column(3, 0, 64, 70, Kind.SOLID);
+        assertEquals('#', coarseWithTop(66), "top block at feet + 1: a 2-high wall");
+        assertEquals('^', coarseWithTop(67), "top block at feet + 2: you stand 3 above the feet up there");
+        assertEquals('^', coarseWithTop(77), "top at the edge of the window");
+        assertEquals('#', coarseWithTop(78), "past the window: a cliff face or cave wall");
+        put(3, 70, 0, Kind.TREE);
+        assertEquals('t', coarseWithTop(71), "the one read at the top finds the tree");
+        put(3, 72, 0, Kind.TREE); // above the heightmap's top: never read
+        assertEquals('^', coarseWithTop(67));
+    }
+
+    @Test
+    void aCoarseCellStillShowsFluidsAndContainersAnywhereInIt() {
+        put(2, 63, -1, Kind.WATER);
+        assertEquals('~', coarse(17, 16), "water in a corner of the cell");
+        put(4, 63, 1, Kind.LAVA);
         assertEquals('L', coarse(17, 16), "lava beats water");
-        put(4, 64, -1, Kind.CONTAINER);
+        put(2, 64, 1, Kind.CONTAINER);
         assertEquals('C', coarse(17, 16), "a container beats lava");
         assertEquals('P', coarse(17, 16, new WorldMap.Marker(3, 0, 'P')), "a player beats a container");
         assertEquals('!', coarse(17, 16, new WorldMap.Marker(3, 0, 'P'), new WorldMap.Marker(4, 1, '!')), "a hostile beats a player");
@@ -283,19 +303,32 @@ class WorldMapTest {
     }
 
     @Test
-    void coarseFloorShowsCropsAndUnknownOnlyWhenWholeCellIsUnknown() {
-        put(2, 63, 0, Kind.FARMLAND);
-        assertEquals('=', coarse(17, 16), "bare farmland in a floor cell");
+    void coarseFloorShowsCropsAndUnknownWhenTheCentreIsUnknown() {
         put(3, 63, 0, Kind.FARMLAND);
+        assertEquals('=', coarse(17, 16), "bare farmland in the centre column");
         put(3, 64, 0, Kind.CROP_GROWING);
         assertEquals('w', coarse(17, 16));
-        put(4, 63, 0, Kind.FARMLAND);
-        put(4, 64, 0, Kind.CROP_RIPE);
-        assertEquals('W', coarse(17, 16), "ripe crops win among the floor symbols");
+        put(3, 64, 0, Kind.CROP_RIPE);
+        assertEquals('W', coarse(17, 16));
         for (int x = 2; x <= 4; x++) for (int z = -1; z <= 1; z++) put(x, 64, z, Kind.UNKNOWN);
-        assertEquals(' ', coarse(17, 16), "unknown only when the whole cell is unknown");
-        put(4, 64, 1, Kind.OPEN);
-        assertNotEquals(' ', coarse(17, 16), "one known column is enough");
+        assertEquals(' ', coarse(17, 16), "an unknown centre column");
+        put(2, 64, -1, Kind.LAVA);
+        assertEquals('L', coarse(17, 16), "a cheap marker still shows");
+    }
+
+    @Test
+    void radiusSixtyFourReadsAboutTwentyThreeBlocksPerCell() {
+        int[] reads = {0};
+        WorldMap.Sampler counting = (x, y, z) -> {
+            reads[0]++;
+            return FLAT.at(x, y, z);
+        };
+        WorldMap.render(counting, (x, z) -> 64, 0, 64, 0, 64, List.of());
+        // 43 x 43 cells: the centre column's 7 reads (the crop window, feet, head, ground), 2 for each of the 8 others
+        assertEquals(43 * 43 * (7 + 8 * 2), reads[0]);
+        reads[0] = 0;
+        WorldMap.render(counting, (x, z) -> 64, 0, 64, 0, 24, List.of());
+        assertEquals(49 * 49 * 7, reads[0], "the one-block view reads as before");
     }
 
     @Test
