@@ -6,6 +6,7 @@ import com.example.claudeplayer.core.act.ActionResult;
 import com.example.claudeplayer.core.act.ActionRunner;
 import com.example.claudeplayer.core.work.Farming;
 import com.example.claudeplayer.core.work.GatherRule;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -237,13 +238,14 @@ final class HarvestHandle implements ActionRunner.Handle {
     }
 
     /**
-     * Where to stand to pick this drop up: on it, unless it floats in water or lies in a berry bush or against a
-     * cactus; then a dry standable block beside it (a player's pickup reach is a block around the body).
+     * Where to stand to pick this drop up: on it, unless it floats in water or lies in or beside a berry bush or a
+     * cactus (Farming.awkwardDrop); then a dry standable block beside it, itself clear of cacti (a player's pickup reach is a block around the body).
      */
     private Vec3 approach(ItemEntity drop) {
         ServerLevel level = body.serverLevel();
         BlockPos cell = drop.blockPosition();
-        boolean awkward = drop.isInWater() || !level.getFluidState(cell).isEmpty() || Farming.hurtsToStand(SnapshotBuilder.blockId(level.getBlockState(cell)));
+        boolean awkward = drop.isInWater() || !level.getFluidState(cell).isEmpty()
+                || Farming.awkwardDrop(SnapshotBuilder.blockId(level.getBlockState(cell)), sideIds(level, cell));
         if (!awkward) return drop.position();
         BlockPos best = null;
         double bestDist = Double.MAX_VALUE;
@@ -261,13 +263,21 @@ final class HarvestHandle implements ActionRunner.Handle {
         return best == null ? drop.position() : Vec3.atBottomCenterOf(best);
     }
 
-    /** Feet and head free of collision, fluid and harm, on a block with a solid top. */
+    /** Feet and head free of collision, fluid and harm, with no cactus beside either, on a block with a solid top. */
     private static boolean standable(Level level, BlockPos feet) {
         for (BlockPos at : new BlockPos[] {feet, feet.above()}) {
             BlockState s = level.getBlockState(at);
             if (!s.getCollisionShape(level, at).isEmpty() || !s.getFluidState().isEmpty() || Farming.hurtsToStand(SnapshotBuilder.blockId(s))) return false;
+            if (Farming.hurtsBeside(sideIds(level, at))) return false;
         }
         return level.getBlockState(feet.below()).isFaceSturdy(level, feet.below(), Direction.UP);
+    }
+
+    /** The ids of the four horizontal neighbours of this block. */
+    private static List<String> sideIds(Level level, BlockPos pos) {
+        List<String> ids = new ArrayList<>(4);
+        for (Direction d : Direction.Plane.HORIZONTAL) ids.add(SnapshotBuilder.blockId(level.getBlockState(pos.relative(d))));
+        return ids;
     }
 
     /**

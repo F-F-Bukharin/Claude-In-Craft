@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -124,4 +125,15 @@ class FarmingTest {
         assertEquals("harvested 9 wheat, replanted 9, got 9 wheat, 14 wheat_seeds; stopped: done", Farming.summary(cut, 9, got, "done"));
         assertEquals("harvested nothing, replanted 0, got nothing; stopped: none_ripe", Farming.summary(Map.of(), 0, Map.of(), "none_ripe"));
     }
+
+    @Test
+    void dropsBesideACactusOrBushArePickedUpFromAClearSpot() {
+        assertTrue(Farming.awkwardDrop("air", List.of("air", "cactus", "air", "air")), "a cactus beside the drop");
+        assertTrue(Farming.awkwardDrop("air", List.of("sweet_berry_bush", "air", "air", "air")));
+        assertTrue(Farming.awkwardDrop("cactus", List.of("air", "air", "air", "air")));
+        assertFalse(Farming.awkwardDrop("air", List.of("sand", "air", "wheat", "air")));
+        assertTrue(Farming.hurtsBeside(List.of("air", "air", "cactus", "air")), "touching a cactus hurts");
+        assertFalse(Farming.hurtsBeside(List.of("sweet_berry_bush", "air", "stone", "air")), "a bush only hurts from inside");
+    }
+
 }
