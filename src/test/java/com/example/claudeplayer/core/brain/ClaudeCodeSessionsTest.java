@@ -2,6 +2,7 @@ package com.example.claudeplayer.core.brain;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
@@ -28,7 +29,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -46,6 +52,10 @@ class ClaudeCodeSessionsTest {
     private volatile boolean stallStdin; // the children never read their stdin
     private final CountDownLatch writing = new CountDownLatch(1); // a write to a stalled child has begun
     private final CountDownLatch lineRead = new CountDownLatch(1); // a child has read a whole line
+    private final AtomicInteger launches = new AtomicInteger();
+    private volatile int holdLaunch = -1; // this start (0 = the first) waits for startGate
+    private final CountDownLatch starting = new CountDownLatch(1); // the held start has begun
+    private final CountDownLatch startGate = new CountDownLatch(1);
 
     private ClaudeCodeBrain brain(int timeoutSeconds) {
         Settings s = Settings.of(b -> {
@@ -53,10 +63,34 @@ class ClaudeCodeSessionsTest {
             b.claudeCodeTimeoutSeconds = timeoutSeconds;
         });
         return new ClaudeCodeBrain(s, dir, command -> {
+            if (launches.getAndIncrement() == holdLaunch) {
+                starting.countDown();
+                try {
+                    startGate.await();
+                } catch (InterruptedException e) {
+                    throw new InterruptedIOException();
+                }
+            }
             FakeProc p = new FakeProc();
             procs.add(p);
             return p;
         }, now::get);
+    }
+
+    /** Runs a model call on its own thread, as the brain thread would. */
+    private static Future<Brain.Reply> async(ClaudeCodeBrain brain, JsonArray messages) {
+        FutureTask<Brain.Reply> call = new FutureTask<>(() -> brain.send(request(messages)));
+        Thread t = new Thread(call, "test-brain");
+        t.setDaemon(true);
+        t.start();
+        return call;
+    }
+
+    private static void assertCancelled(Future<Brain.Reply> call) {
+        ExecutionException e = assertThrows(ExecutionException.class, () -> call.get(5, TimeUnit.SECONDS),
+                "the call ends with an error, not a reply");
+        BrainException b = assertInstanceOf(BrainException.class, e.getCause());
+        assertEquals(BrainException.Kind.INTERRUPTED, b.kind(), b.getMessage());
     }
 
     @Test
@@ -132,6 +166,68 @@ class ClaudeCodeSessionsTest {
         new DemoBrain(brain).reset();
         assertFalse(procs.get(0).alive);
         assertTrue(procs.get(1).alive);
+    }
+
+    @Test
+    void aResetBetweenCallsDoesntCancelTheNext() throws BrainException {
+        ClaudeCodeBrain brain = brain(5);
+        script.add(List.of(result(1, "[" + MOVE + "]")));
+        brain.send(request(opening()));
+        brain.reset();
+        script.add(List.of(result(1, "[" + MOVE + "]")));
+        assertEquals("tool_use", brain.send(request(opening())).stopReason());
+        assertEquals(1, procs.get(1).written.size(), "the new order took the spare");
+    }
+
+    @Test
+    void aResetWhileTheChildStartsCancelsTheCall() throws InterruptedException {
+        ClaudeCodeBrain brain = brain(5);
+        script.add(List.of(result(1, "[" + MOVE + "]")));
+        holdLaunch = 0;
+        Future<Brain.Reply> call = async(brain, opening());
+        assertTrue(starting.await(5, TimeUnit.SECONDS));
+        brain.reset();
+        startGate.countDown();
+        assertCancelled(call);
+        assertTrue(procs.get(0).written.isEmpty(), "the prompt never went out");
+        assertFalse(procs.get(0).alive, "the child is stopped");
+    }
+
+    @Test
+    void aResetMidWriteCancelsTheCall() throws InterruptedException {
+        ClaudeCodeBrain brain = brain(5);
+        stallStdin = true;
+        Future<Brain.Reply> call = async(brain, opening());
+        assertTrue(writing.await(5, TimeUnit.SECONDS));
+        brain.reset();
+        assertCancelled(call);
+        assertFalse(procs.get(0).alive);
+    }
+
+    @Test
+    void aResetWhileTheModelThinksCancelsTheCall() throws InterruptedException {
+        ClaudeCodeBrain brain = brain(5);
+        script.add(List.of("{\"type\":\"system\",\"subtype\":\"init\"}")); // read, but no answer yet
+        Future<Brain.Reply> call = async(brain, opening());
+        assertTrue(lineRead.await(5, TimeUnit.SECONDS));
+        brain.reset();
+        assertCancelled(call);
+        assertFalse(procs.get(0).alive);
+    }
+
+    @Test
+    void aResetAfterTheAnswerArrivedStillCancelsTheCall() throws InterruptedException {
+        ClaudeCodeBrain brain = brain(5);
+        script.add(List.of(result(1, "[" + MOVE + "]")));
+        holdLaunch = 1; // the next spare's start, after the prompt went out
+        Future<Brain.Reply> call = async(brain, opening());
+        assertTrue(starting.await(5, TimeUnit.SECONDS));
+        assertTrue(lineRead.await(5, TimeUnit.SECONDS));
+        brain.reset();
+        startGate.countDown();
+        assertCancelled(call);
+        assertFalse(procs.get(0).alive);
+        assertTrue(procs.get(1).alive, "the spare stays");
     }
 
     @Test
@@ -309,8 +405,14 @@ class ClaudeCodeSessionsTest {
                     }
                     written.add(line.toString(StandardCharsets.UTF_8));
                     line.reset();
-                    lineRead.countDown();
-                    List<String> events = script.poll();
+                    try {
+                        answer(script.poll());
+                    } finally {
+                        lineRead.countDown(); // after the answer is on stdout
+                    }
+                }
+
+                private void answer(List<String> events) {
                     if (events == null) return;
                     for (String e : events) {
                         if (e.equals(EXIT_WITH_ERROR)) {

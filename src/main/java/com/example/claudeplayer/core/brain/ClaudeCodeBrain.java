@@ -89,23 +89,40 @@ public final class ClaudeCodeBrain implements Brain {
         JsonArray messages = request.messages();
         long started = System.nanoTime();
         long deadline = started + settings.claudeCodeTimeoutSeconds() * 1_000_000_000L; // the whole turn, write included
-        ClaudeCodeSessions.Session session = sessions.current();
+        ClaudeCodeSessions.Turn turn = sessions.begin(); // a reset from here on cancels this call
+        Reply reply;
+        try {
+            reply = turn(command, messages, deadline, turn);
+            sessions.finish(turn);
+        } finally {
+            sessions.release(turn);
+        }
+        Usage u = reply.usage();
+        LOG.info("claude code reply {}: stop={} calls={} ms={} tokens in={} out={} cache_write={} cache_read={}", reply.id(),
+                reply.stopReason(), reply.toolCalls().size(), (System.nanoTime() - started) / 1_000_000, u.input(),
+                u.output(), u.cacheWrite(), u.cacheRead());
+        return reply;
+    }
+
+    private Reply turn(List<String> command, JsonArray messages, long deadline, ClaudeCodeSessions.Turn turn)
+            throws BrainException {
+        ClaudeCodeSessions.Session session = sessions.claimCurrent(turn);
         int from = session == null ? -1 : continues(session.seen, messages);
         if (from < 0) {
             if (messages.size() > 1) {
                 LOG.info("claude code session restarts from the whole transcript ({} messages)", messages.size());
             }
-            session = sessions.take(command);
+            session = sessions.take(command, turn);
             from = 0;
         }
         session.write(userLine(renderContent(messages, from)));
         sessions.refill(command); // the next spare starts while the model thinks
         Reply reply;
         try {
-            reply = parseResult(session.await(deadline), "cc" + replies.incrementAndGet() + "_");
+            reply = parseResult(session.await(deadline, turn), "cc" + replies.incrementAndGet() + "_");
         } catch (BrainException e) {
             sessions.end(session);
-            throw e;
+            throw turn.or(e);
         }
         if (reply.toolCalls().isEmpty()) {
             sessions.end(session); // end_turn: the order is over
@@ -117,14 +134,13 @@ public final class ClaudeCodeBrain implements Brain {
             seen.add(answer);
             session.seen = seen;
         }
-        Usage u = reply.usage();
-        LOG.info("claude code reply {}: stop={} calls={} ms={} tokens in={} out={} cache_write={} cache_read={}", reply.id(),
-                reply.stopReason(), reply.toolCalls().size(), (System.nanoTime() - started) / 1_000_000, u.input(),
-                u.output(), u.cacheWrite(), u.cacheRead());
         return reply;
     }
 
-    /** Kills the current order's session (the spare stays). Only destroys processes, so any thread may call it. */
+    /**
+     * Cancels the model call in flight (it ends as cancelled, wherever it was) and kills the current order's
+     * session; the spare stays. Any thread may call it.
+     */
     @Override
     public void reset() {
         sessions.endCurrent();

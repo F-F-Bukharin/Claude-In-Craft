@@ -37,6 +37,8 @@ final class ClaudeCodeSessions {
     private static final String EOF = new String("eof"); // compared by identity: no stdout line is this object
     @SuppressWarnings("StringOperationCanBeSimplified")
     private static final String WRITE_FAILED = new String("write failed");
+    @SuppressWarnings("StringOperationCanBeSimplified")
+    private static final String CANCELLED = new String("cancelled"); // a reset: wakes the turn's await at once
 
     /** Starts one process. The real one is {@link ClaudeCodeEnv}; tests script a fake. */
     interface Launcher {
@@ -54,6 +56,25 @@ final class ClaudeCodeSessions {
 
         /** Kills the process and its descendants. Never blocks on I/O. */
         void kill();
+    }
+
+    /**
+     * One model call, from {@link #begin} to {@link #finish}. A reset at any point of it (while a child starts,
+     * mid-write, mid-read, even after the answer arrived) cancels it: the call then ends as cancelled, not a reply.
+     */
+    final class Turn {
+        private volatile boolean cancelled;
+        private Session session; // guarded by ClaudeCodeSessions.this
+
+        /** Throws the cancellation if a reset came. */
+        void check() throws BrainException {
+            if (cancelled) throw cancelled();
+        }
+
+        /** {@code e}, or the cancellation if a reset caused it. */
+        BrainException or(BrainException e) {
+            return cancelled ? cancelled() : e;
+        }
     }
 
     /** One warm process. {@code seen} is the transcript prefix it has already read; brain thread only. */
@@ -97,12 +118,16 @@ final class ClaudeCodeSessions {
 
         /**
          * Reads events until the turn's {@code result} event and returns it; any failure kills the session.
-         * {@code deadline} is a {@link System#nanoTime} instant, set when the turn began.
+         * {@code deadline} is a {@link System#nanoTime} instant, set when the turn began. A reset ends it as cancelled.
          */
-        String await(long deadline) throws BrainException {
+        String await(long deadline, Turn turn) throws BrainException {
             try {
                 while (true) {
                     String line = lines.poll(deadline - System.nanoTime(), TimeUnit.NANOSECONDS);
+                    if (line == CANCELLED || turn.cancelled) {
+                        end(this);
+                        throw cancelled();
+                    }
                     if (line == null) {
                         end(this);
                         throw new BrainException(BrainException.Kind.TIMEOUT, "timed out");
@@ -145,6 +170,7 @@ final class ClaudeCodeSessions {
     private final boolean sweepInBackground;
     private Session current;
     private Session spare;
+    private Turn turn; // the model call in flight
     private boolean closed;
     private ScheduledExecutorService sweeper;
     private volatile String rateLimitEvent;
@@ -157,11 +183,32 @@ final class ClaudeCodeSessions {
         this.sweepInBackground = sweepInBackground;
     }
 
-    /** Ends the current session, then takes the spare if it matches {@code command} (else starts a process). */
-    Session take(List<String> command) throws BrainException {
+    /** Starts a model call; from here until {@link #finish}, a {@link #endCurrent} cancels it. Brain thread. */
+    synchronized Turn begin() {
+        turn = new Turn();
+        return turn;
+    }
+
+    /** Ends the call: throws the cancellation if a reset came during it. A later reset only ends the session. */
+    void finish(Turn t) throws BrainException {
+        release(t);
+        t.check();
+    }
+
+    /** Ends the call, whatever happened to it. */
+    synchronized void release(Turn t) {
+        if (turn == t) turn = null;
+    }
+
+    /**
+     * Ends the current session, then takes the spare if it matches {@code command} (else starts a process), for
+     * {@code t}. A reset before or during the start cancels {@code t} and stops the new process.
+     */
+    Session take(List<String> command, Turn t) throws BrainException {
         Session old;
         Session s;
         synchronized (this) {
+            t.check(); // a reset already came: leave the spare for the next order
             old = current;
             current = null;
             s = spare;
@@ -176,17 +223,30 @@ final class ClaudeCodeSessions {
             try {
                 s = launch(command);
             } catch (IOException e) {
-                throw new BrainException(BrainException.Kind.NO_CLI, command.get(0) + ": " + e.getMessage());
+                throw t.or(new BrainException(BrainException.Kind.NO_CLI, command.get(0) + ": " + e.getMessage()));
             }
         }
+        BrainException refused;
         synchronized (this) {
-            if (!closed) {
+            if (closed) {
+                refused = new BrainException(BrainException.Kind.INTERRUPTED, "shutting down");
+            } else if (t.cancelled) {
+                refused = cancelled();
+            } else {
                 current = s;
+                t.session = s;
                 return s;
             }
         }
         s.proc.kill();
-        throw new BrainException(BrainException.Kind.INTERRUPTED, "shutting down");
+        throw refused;
+    }
+
+    /** The current session for {@code t}, or null if there is none or {@code t} was cancelled. */
+    synchronized Session claimCurrent(Turn t) {
+        if (current == null || t.cancelled) return null;
+        t.session = current;
+        return current;
     }
 
     /** Makes sure an idle spare for {@code command} is running. A start failure only costs the next order its head start. */
@@ -213,10 +273,6 @@ final class ClaudeCodeSessions {
         if (!keep) s.proc.kill();
     }
 
-    synchronized Session current() {
-        return current;
-    }
-
     /** Kills {@code s}, and forgets it if it is the current session. */
     void end(Session s) {
         synchronized (this) {
@@ -225,14 +281,31 @@ final class ClaudeCodeSessions {
         s.proc.kill();
     }
 
-    /** Kills the current session, not the spare. Safe from any thread. */
+    /** Cancels the call in flight, if any, and kills the current session, not the spare. Safe from any thread. */
     void endCurrent() {
         Session s;
+        Session waiting;
         synchronized (this) {
             s = current;
             current = null;
+            waiting = cancelTurn();
         }
+        if (waiting != null) waiting.lines.add(CANCELLED);
         if (s != null) s.proc.kill();
+        if (waiting != null && waiting != s) waiting.proc.kill();
+    }
+
+    /** Marks the call in flight cancelled; returns the session it waits on, if it has one yet. */
+    private Session cancelTurn() {
+        if (turn == null) return null;
+        turn.cancelled = true;
+        Session s = turn.session;
+        turn = null;
+        return s;
+    }
+
+    private static BrainException cancelled() {
+        return new BrainException(BrainException.Kind.INTERRUPTED, "cancelled");
     }
 
     /** Stops the spare and the current session if unused for the idle time; a session mid-turn is never idle. */
@@ -256,16 +329,20 @@ final class ClaudeCodeSessions {
     void close() {
         Session a;
         Session b;
+        Session waiting;
         synchronized (this) {
             closed = true;
             a = current;
             b = spare;
             current = null;
             spare = null;
+            waiting = cancelTurn();
             if (sweeper != null) sweeper.shutdownNow();
         }
+        if (waiting != null) waiting.lines.add(CANCELLED);
         if (a != null) a.proc.kill();
         if (b != null) b.proc.kill();
+        if (waiting != null && waiting != a) waiting.proc.kill();
     }
 
     synchronized Session spare() {
