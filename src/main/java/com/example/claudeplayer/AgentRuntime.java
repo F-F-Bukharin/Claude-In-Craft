@@ -13,13 +13,17 @@ import com.example.claudeplayer.core.brain.AgentLoop;
 import com.example.claudeplayer.core.brain.ApiBrain;
 import com.example.claudeplayer.core.brain.Brain;
 import com.example.claudeplayer.core.brain.BrainException;
+import com.example.claudeplayer.core.brain.CavemanSkill;
 import com.example.claudeplayer.core.brain.ClaudeCodeBrain;
 import com.example.claudeplayer.core.brain.DemoBrain;
+import com.example.claudeplayer.core.brain.JsonUsageFile;
 import com.example.claudeplayer.core.brain.PromptBuilder;
 import com.example.claudeplayer.core.brain.ToolSchemas;
+import com.example.claudeplayer.core.brain.UsageLedger;
 import com.example.claudeplayer.core.chat.ChatIntake;
 import com.example.claudeplayer.core.chat.ChatLines;
 import com.example.claudeplayer.core.chat.Conversation;
+import com.example.claudeplayer.core.chat.ThinkHarder;
 import com.example.claudeplayer.core.memory.JsonMemoryFile;
 import com.example.claudeplayer.core.memory.Memory;
 import com.example.claudeplayer.core.memory.MemoryActions;
@@ -36,6 +40,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
@@ -45,6 +50,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.TickTask;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraftforge.fml.loading.FMLPaths;
 import org.slf4j.Logger;
@@ -76,6 +82,10 @@ public final class AgentRuntime {
     private final ExecutorService brainThread;
     private final ApiBrain brain;
     private final ClaudeCodeBrain claudeCode;
+    private final UsageLedger usage;
+    private final Optional<CavemanSkill> caveman;
+    private final ThinkHarder thinkHarder;
+    private String offeredTo; // who the open think-harder offer went to; its order is held in thinkHarder
     private final AgentLoop loop;
     private final Path keyFile;
     private volatile boolean closed;
@@ -88,6 +98,8 @@ public final class AgentRuntime {
         this.server = server;
         this.settings = Config.settings();
         this.guardrails = new Guardrails(settings, System::currentTimeMillis);
+        this.thinkHarder = new ThinkHarder(settings.thinkHarderPhrases(), settings.thinkHarderTimeoutSeconds(),
+                System::currentTimeMillis);
         this.memory = new Memory(settings,
                 new JsonMemoryFile(server.getWorldPath(LevelResource.ROOT).resolve(ClaudePlayerMod.MODID).resolve("memory.json")),
                 System::currentTimeMillis);
@@ -106,14 +118,21 @@ public final class AgentRuntime {
         Path configDir = FMLPaths.CONFIGDIR.get();
         this.keyFile = configDir.resolve("claudeplayer.key");
         this.brain = new ApiBrain(settings, () -> ApiBrain.resolveKey(settings.apiKeyEnv(), keyFile));
+        this.usage = new UsageLedger(settings.usageWarnAt(), new JsonUsageFile(configDir.resolve("claudeplayer_usage.json")),
+                System::currentTimeMillis);
         // Under the system temp dir, outside any project, so Claude Code loads no CLAUDE.md.
-        this.claudeCode = new ClaudeCodeBrain(settings, Path.of(System.getProperty("java.io.tmpdir"), "claudeplayer-claude-code"));
+        this.claudeCode = new ClaudeCodeBrain(settings, Path.of(System.getProperty("java.io.tmpdir"), "claudeplayer-claude-code"), usage);
+        String home = System.getProperty("user.home");
+        this.caveman = CavemanSkill.load(expandHome(settings.cavemanSkillPath(), home), Path.of(home, ".claude", "skills"));
+        if (caveman.isEmpty()) LOG.info("no caveman skill found; caveman stays off");
+        caveman.ifPresent(claudeCode::caveman);
         PromptBuilder prompts = new PromptBuilder(settings,
                 PromptBuilder.loadTemplate(configDir.resolve("claudeplayer_system_prompt.md")));
         Brain backend = settings.usesApi() ? brain : claudeCode;
         ToolSchemas tools = new ToolSchemas(settings.toolPhase());
         this.loop = new AgentLoop(settings, new DemoBrain(backend), brainThread, this::onMainThread, queue, guardrails, prompts,
                 tools, memory, new LoopHost(), System::currentTimeMillis);
+        if (!settings.usesApi()) loop.caveman(this::cavemanOn, () -> caveman.map(CavemanSkill::note).orElse(""));
         if (!settings.usesApi()) brainThread.execute(() -> claudeCode.prewarm(prompts.system(), tools.definitions()));
         LOG.info("Claude Player ready: brain {}, model {}, caution level {}, attacks {} (tool_phase {}), {} allowlisted, {} long-term memories",
                 settings.brain(), settings.model(), level().number(), settings.attacksEnabled() ? "on" : "off",
@@ -145,6 +164,9 @@ public final class AgentRuntime {
         hunger.tick();
         queue.tick();
         loop.tick();
+        for (String warning : usage.drainWarnings()) noticeAllowlisted(warning);
+        String unanswered = thinkHarder.expired(); // no answer in time counts as no
+        if (unanswered != null) order(offeredTo, unanswered, false);
         if (quickstartFor != null && ticks >= quickstartAt) {
             ServerPlayer player = quickstartFor;
             quickstartFor = null;
@@ -162,7 +184,7 @@ public final class AgentRuntime {
         if (ChatIntake.allowed(name, allowlist)) conversation.add(name, raw);
         ChatIntake.Intake intake = ChatIntake.classify(name, raw, settings.triggers(), allowlist);
         if (intake instanceof ChatIntake.Order order) {
-            order(order.player(), order.text());
+            chatOrder(order.player(), order.text());
         } else if (intake instanceof ChatIntake.Stop) {
             halt();
         } else if (intake instanceof ChatIntake.Respawn) {
@@ -176,6 +198,7 @@ public final class AgentRuntime {
 
     /** Kill switch, from {@code C stop} or {@code /cp stop}. Ends autonomy too. */
     public void halt() {
+        thinkHarder.takeOrder(); // a held think-harder order must not start after a stop
         boolean wasAutonomous = loop.autonomous();
         loop.stop();
         navigator.stop(body.player());
@@ -209,6 +232,20 @@ public final class AgentRuntime {
         if (text == null || text.isEmpty()) return;
         server.getPlayerList().broadcastSystemMessage(
                 Component.literal("[Claude Player] " + text).withStyle(ChatFormatting.GRAY), false);
+    }
+
+    /** A gray system line for the online players who can give orders; nobody else needs to hear about usage. */
+    private void noticeAllowlisted(String text) {
+        List<String> allowlist = Config.allowlist();
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            if (player instanceof AgentPlayer || !ChatIntake.allowed(player.getGameProfile().getName(), allowlist)) continue;
+            noticePlayer(player, text);
+        }
+    }
+
+    /** A gray system line for one player. */
+    private static void noticePlayer(ServerPlayer player, String text) {
+        player.sendSystemMessage(Component.literal("[Claude Player] " + text).withStyle(ChatFormatting.GRAY));
     }
 
     /** The body died: the loop stops and waits for a respawn order (death is accepted, D3). */
@@ -303,12 +340,19 @@ public final class AgentRuntime {
     public String status() {
         String state = body.alive() ? "in the world" : body.dead() ? "dead" : "not spawned";
         CautionLevel l = level();
-        return String.format(Locale.ROOT, "%s is %s | caution %d (%s)%s | %s | %s | queue: %s, %d waiting | memory: %d short, %d long | %d calls, %d weighted tokens this session",
+        String line = String.format(Locale.ROOT, "%s is %s | caution %d (%s)%s | %s | %s | queue: %s, %d waiting | memory: %d short, %d long | %d calls, %d weighted tokens this hour",
                 settings.bodyName(), state, l.number(), l.title,
                 settings.attacksEnabled() ? "" : ", attacks off (tool_phase " + settings.toolPhase() + ")",
                 loop.status(), loop.autonomyStatus(),
                 Objects.requireNonNullElse(queue.runningTool(), "idle"), queue.waitingCount(),
                 memory.shortTerm().size(), memory.longTerm().size(), guardrails.callsMade(), guardrails.tokensUsed());
+        StringBuilder b = new StringBuilder(line);
+        if (!settings.usesApi()) {
+            for (String usageLine : usage.statusLines()) b.append("\nClaude Code ").append(usageLine);
+            b.append("\nCaveman: ").append(cavemanOn() ? "on" : "off")
+                    .append(caveman.map(c -> ", sha256 " + c.sha256().substring(0, 12)).orElse(" (no skill found)"));
+        }
+        return b.toString();
     }
 
     public MinecraftServer server() {
@@ -317,6 +361,11 @@ public final class AgentRuntime {
 
     public Settings settings() {
         return settings;
+    }
+
+    /** /cp resetcap: clears the hour's token count so model calls go on. */
+    public void resetTokenCap() {
+        guardrails.resetTokens();
     }
 
     public Guardrails guardrails() {
@@ -359,9 +408,54 @@ public final class AgentRuntime {
         return ticks;
     }
 
-    private void order(String player, String text) {
+    /** Caveman applies to an order when the skill exists and either usage window has reached caveman_at. */
+    private boolean cavemanOn() {
+        return caveman.isPresent() && usage.utilization() >= settings.cavemanAt();
+    }
+
+    /** A leading {@code ~} in a configured path means the user's home folder. */
+    private static String expandHome(String path, String home) {
+        if (path == null) return "";
+        String p = path.strip();
+        if (p.equals("~")) return home;
+        return p.startsWith("~/") || p.startsWith("~\\") ? Path.of(home, p.substring(2)).toString() : p;
+    }
+
+    /**
+     * An order from chat. A y or n from the player who was offered think-harder answers the offer. An order with a
+     * think-harder phrase runs at normal effort if a hostile is near, else is held while the player is asked. Any
+     * other order replaces a held one.
+     */
+    private void chatOrder(String player, String text) {
+        ThinkHarder.Answer answer = thinkHarder.answer(player, text);
+        if (answer != ThinkHarder.Answer.NONE) {
+            String held = thinkHarder.takeOrder();
+            if (held != null) order(player, held, answer == ThinkHarder.Answer.YES);
+            return;
+        }
+        thinkHarder.takeOrder();
+        if (settings.usesApi() || !thinkHarder.wants(text)) { // the API brain has no max effort to offer
+            order(player, text, false);
+            return;
+        }
         if (bodyMissing()) return;
-        loop.startOrder(player, text);
+        AgentPlayer p = body.player();
+        List<Mob> hostiles = SnapshotBuilder.hostiles(p, settings.hostileRange()); // straight-line, as the reflexes
+        if (!hostiles.isEmpty()) {
+            Mob nearest = hostiles.get(0);
+            say(ThinkHarder.gate(SnapshotBuilder.typeId(nearest), p.distanceTo(nearest)));
+            order(player, text, false);
+            return;
+        }
+        offeredTo = player;
+        String offer = thinkHarder.offer(player, text, settings.trigger());
+        ServerPlayer target = server.getPlayerList().getPlayerByName(player);
+        if (target != null) noticePlayer(target, offer);
+    }
+
+    private void order(String player, String text, boolean think) {
+        if (bodyMissing()) return;
+        loop.startOrder(player, text, think);
     }
 
     /** {@code C go do your thing} / {@code C auto off}. Off leaves the kill switch alone and a running order too. */

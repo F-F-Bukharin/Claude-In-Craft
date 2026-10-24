@@ -1,9 +1,9 @@
 # Claude Player: handoff
 
-The one handoff. Updated 24 Oct 2026 (Opus 5.5), after the fix round and the standalone helper. Read this first, then `CLAUDE.md`, then the modmap RULES.
+The one handoff. Updated 24 Oct 2026 (Opus 5.5), after the fix round, the standalone helper, and the cloud branch's port (section "Ported from the cloud branch" below). Read this first, then `CLAUDE.md`, then the modmap RULES.
 
 ## Where things stand
-- **GitHub:** `dev` holds two local commits on top of `origin/dev` (24 Oct): the attack fix (`4b9d9e2`) and these docs. Not pushed. `main` is still at `1669171` until F says to fast-forward it.
+- **GitHub:** `origin/dev` holds the cloud branch's port (to `6ffb12f`). Local `dev` now merges it with the 24 Oct agent-army round (nine teams) and the attack fix; not pushed yet. `main` is still at `1669171` until F says to fast-forward it.
 - **The 24 Oct round, merged into `dev`:**
   - `fix/small-fixes`: ender chest refusal in `store` and `take`; `lava_near_player` is `denied:`; `use_bucket` takes an optional `fluid`; auto-eat counts hostiles within 16 blocks straight-line; a test pins a busy snapshot's JSON size.
   - `fix/reflex-followups`: the chase-heard remainder (F1 to F4) and every piece 1 follow-up (section below).
@@ -16,7 +16,7 @@ The one handoff. Updated 24 Oct 2026 (Opus 5.5), after the fix round and the sta
   - text vision, the `see` tool (`feat/text-vision`);
   - the combat routine, `fight` with auto-gear (`feat/combat-routine`);
   - glance part 1, the model side (`feat/glance-model-side`). The executor still answers `failed:no_client` until part 2.
-- `./gradlew build` is green with 282 tests; `./gradlew -p helper build` is green with 57 (24 Oct).
+- `./gradlew build` is green with 371 tests after the port (282 before it); `./gradlew -p helper build` is green with 57 (24 Oct).
 - F's flow: pull `dev`, push `dev`, fast-forward `main` on F's word.
 - **Account:** F is on the Max plan (23 Oct).
 - **Gradle needs Java 17:** `export JAVA_HOME="/c/Program Files/Eclipse Adoptium/jdk-17.0.20.101-hotspot"`. The PATH Java is a 32-bit Java 8 that breaks Gradle.
@@ -59,9 +59,9 @@ The four 24 Oct builders' worktrees under `.claude/worktrees/` can be removed (`
 - **A `roam` skill, next to exploring.** `roam(radius, minutes)`: wander around the start point, picking waypoints toward directions not seen yet. Note what it finds (trees, ores, water, villages, animals) as short-term notes with positions, then walk back to where it started and report once. It's a routine like gather and dig, at level 1, so danger scraps it.
 
 **Should do:**
-- **Usage warnings** (spec piece 4): read `rate_limit_event` (`five_hour` and `seven_day` utilization) from the warm session's stream-json; warn in chat at 80% and 90%; from 80% on, put caveman (the installed `caveman/SKILL.md` text) in the prompt; show it in `/cp status`. Less urgent for F on Max; it matters most for the friends package, where each friend plays on their own account.
-- **Think-harder:** an offer of `(y)/(n)` to switch to `claude_think_effort = max`, never while a hostile is within 16 blocks horizontally (spec section 8).
-- **Blockman** (spec piece 2, partly done by F's short chat): the pinned ORDER/STEP/POS/THREATS/QUEUE block at the end of each turn, so Claude doesn't lose track of the order.
+- DONE (ported from the cloud branch, 24 Oct). **Usage warnings** (spec piece 4): read `rate_limit_event` (`five_hour` and `seven_day` utilization) from the warm session's stream-json; warn in chat at 80% and 90%; from 80% on, put caveman (the installed `caveman/SKILL.md` text) in the prompt; show it in `/cp status`. Less urgent for F on Max; it matters most for the friends package, where each friend plays on their own account.
+- DONE (ported, 24 Oct; the gate uses the 16-block straight-line radius). **Think-harder:** an offer of `(y)/(n)` to switch to `claude_think_effort = max`, never while a hostile is within 16 blocks horizontally (spec section 8).
+- DONE (ported, 24 Oct). **Blockman** (spec piece 2, partly done by F's short chat): the pinned ORDER/STEP/POS/THREATS/QUEUE block at the end of each turn, so Claude doesn't lose track of the order.
 - **The snapshot is over its target:** a busy scene measures 3108 bytes, against the 2 KB goal (`StateSnapshotTest` pins it at 3500). Decide whether to trim it (fewer inventory slots, shorter keys, players and hostiles capped lower) or raise the target.
 - **Bridge leftovers** (from `bridge-bugs-report.md`):
   - a reset that lands before `send()` registers the call still lets that call run; AgentLoop drops its reply, so the cost is one wasted model call. Closing it needs a small AgentLoop change;
@@ -149,6 +149,66 @@ Early gates, done in F's CurseForge playtests (22 and 23 Oct): quickstart, the d
 
 ## Piece 1 follow-ups
 Done on `fix/reflex-followups` and merged 24 Oct, with the chase-heard remainder (F1 to F4): a failed reflex is a note in the next turn; a dropped order spares only `reflex-` entries; several reflexes during one call all go out; `follow_player` uses move_to's hazard probe; the prompt says to give an approach and its attack the same prio; a slab, stair or carpet under the feet is floor for the probe; a hit from beyond `hostile_range` gets no reflex. In-game checks C1 to C8 above.
+
+## Ported from the cloud branch (24 Oct): a short review for the next session
+The cloud session's branch `claude/gifted-newton-nrhrer` grew from `d5b0bde` beside `dev`. On 24 Oct it was merged onto `dev` (`65be355`) and pushed as `dev`. Read this before touching `AgentLoop`, `ClaudeCodeBrain` or the usage code.
+
+**How the merge was resolved.** Where both lines fixed the same thing, `dev`'s version won and the branch's duplicate tests were dropped:
+- the piece 1 follow-ups (failed-reflex notes, `cancelExcept`, `interruptsInFlight`, the nav probes);
+- warm-session bugs 1, 2, 4 and 5 (`dev`'s `Turn` design);
+- cache reads at a tenth (`dev` rounds down).
+
+**What the branch added on top of `dev`:**
+- **Blockman:** every user turn ends with `<status>` (ORDER, STEP, POS, HP, FOOD, THREATS, QUEUE), from `PromptBuilder.status`. STEP comes from this order's `step` note. A reaction shows `ORDER: "react to the threat"`.
+- **Done replies:** the Claude Code reply schema has `done`. A done reply whose calls all succeed ends the order on its `say` text, with no report turn. Any failure or interrupt still reports. The API brain never sets it.
+- **Effort:** `claude_effort` (default `high`, F's choice) and `claude_think_effort` (`max`). The API brain keeps `effort`.
+- **Usage ledger:** `UsageLedger` and `JsonUsageFile`, in `config/claudeplayer_usage.json`. It reads `rate_limit_event`, warns online allowlisted players at 80% and 90% once per window, counts tokens per order and per day, and ends an order at the limit with "Claude Code limit reached, resets <time>". `/cp status` shows the windows and caveman.
+- **Caveman:** `CavemanSkill` loads the newest caveman `SKILL.md` under `~/.claude/skills` (or `caveman_skill_path`). An order that starts at or above `caveman_at` gets the rules in its system prompt; a running order gets them once as a note.
+- **Think-harder:** `ThinkHarder` plus AgentRuntime. An order with a `think_harder_phrases` phrase offers max effort to that player only (`C y` / `C n`, 30 s, no answer means no), unless a hostile is within `hostile_range` in a straight line. A yes restarts the Claude Code session at max effort from the whole transcript. Any threat (reflex, quiet re-flee or interrupt) ends it.
+- **Token cap:** weighted tokens per rolling hour (`session_token_cap`), `/cp resetcap` (ops), and autonomy waits out the cap instead of turning off.
+- **Autocompact:** when one call's prompt reaches `compact_at_tokens` (32000; 16000 at first, raised on F's call because it compacted after about 4 turns), the order's earlier turns collapse into a single code-built summary turn (`<earlier>`, `<results>`), with no extra model call. CLAUDE.md's append-only rule names it as the one exception. `dev`'s late images ride along as plain blocks.
+
+**Open findings from the Opus code review** (46 found; the fixed ones are in the history). Each needs a test first:
+1. **Think-harder runtime.**
+   - A bare `C y` or `C n` with no open offer becomes an order "y".
+   - The hostile gate isn't re-checked on yes.
+   - A held order survives death, despawn and `/cp quickstart`.
+   - AgentRuntime's `offeredTo` duplicates ThinkHarder's state.
+   - Planned fix: `ThinkHarder.isAnswer()` and `offeredTo()`, a `threatNear()` helper used on offer and on yes, and dropping the held order in `onBodyDied` and quickstart.
+2. **Autocompact.**
+   - The one-time caveman note is lost on compaction.
+   - Summary codes freeze at `queued`, and notes are parsed by regex. Track codes per call id instead, with each call's input.
+   - A reaction's compact turn loses its event text and instruction, and `<recent_chat>` is dropped.
+   - `<earlier>` and `<results>` are missing from the prompt's list of data tags.
+   - The 2000 minimum for `compact_at_tokens` is below the fixed prompt, and there's no hysteresis.
+   - `ledger.startOrder()` fires on a compacted single-message transcript.
+3. **Usage ledger.**
+   - A 5-hour rejection lives on while the 7-day window is live.
+   - Thresholds re-arm on any later `resetsAt`.
+   - `/cp status` shows stale windows.
+   - Reset times are UTC with no marker.
+   - The file is written under the lock.
+   - Warnings are lost when no allowlisted player is online.
+   - `usage_warn_at` rejects whole numbers.
+4. **Nav:** any collision shape at the feet counts as ground, so an open trapdoor, ladder or chain over a shaft skips the drop check. Require a footprint at least half a block wide on both axes.
+5. **Caveman:** the skill search stops at depth 4 and doesn't follow symlinks, and INFO logs carry a home-folder path.
+6. **Clean-ups:**
+   - `ClaudeCodeBrain` builds the command twice per turn.
+   - A non-matching spare is killed, then relaunched.
+   - Caveman and the ledger load with the API brain too.
+   - `JsonUsageFile` copies `JsonMemoryFile`'s atomic write.
+   - There are two sha256 helpers.
+   - `ClaudeCodeBrain`'s test constructor builds a ledger store in production code.
+   - Then a `/simplify` pass.
+
+**In-game checks this adds:**
+- `/cp status` shows usage lines after the first Claude Code turn.
+- `C come here` logs one `claude code reply` line.
+- `C think harder and build a hut`, then `C y`, logs one restart at `--effort max`. With a zombie near, it says "Not now" instead.
+- With a caveman skill installed and `caveman_at = 0`, orders get the rules.
+- A long order logs `compacted order transcript`.
+- `/cp resetcap` works.
+- The real `rate_limit_event` nesting and what the CLI sends at 100% are unconfirmed. Check `config/claudeplayer_usage.json` after a few orders.
 
 ## The standalone Claude Code helper (`helper/`, 24 Oct)
 For F's friend, who wants Claude without an API key and without the mod.

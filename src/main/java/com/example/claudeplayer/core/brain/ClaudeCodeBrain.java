@@ -43,7 +43,8 @@ public final class ClaudeCodeBrain implements Brain {
     /** The longest plan kept; the schema does not cap it, so longer ones are clipped here. */
     static final int PLAN_MAX = 120;
     static final String SCHEMA = "{\"type\":\"object\",\"properties\":{"
-            + "\"say\":{\"type\":\"string\",\"description\":\"Your chat report. Shown to players only when calls is empty.\"},"
+            + "\"say\":{\"type\":\"string\",\"description\":\"Your chat report. Shown to players when calls is empty, or when done is true and every call succeeds.\"},"
+            + "\"done\":{\"type\":\"boolean\",\"description\":\"True when these calls finish the order and no results need to come back.\"},"
             + "\"plan\":{\"type\":\"string\",\"description\":\"Optional. One short line of at most 120 characters on what "
             + "you are doing and why. Shown in the Brain panel, never in chat.\"},"
             + "\"calls\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{"
@@ -60,7 +61,9 @@ public final class ClaudeCodeBrain implements Brain {
             # How you act
             Answer with {"say": ..., "calls": [...]}. Each entry in calls is {"name": <action>, "input": {...}}, with \
             input as shown below; add "prio": 1, 2 or 3 to input when it matters. The results come back in the next \
-            turn. When the order is finished, or you can't go on, leave calls empty and put your report in say. \
+            turn. Set done to true when these calls finish the order and you need no results back (a short move, a say); \
+            then say is your final chat line, and if any call fails you still get the results. When the order is finished, \
+            or you can't go on, leave calls empty and put your report in say. \
             Add "plan": one short line (at most 120 characters) on what you are doing and why, for example \
             "Mining the oak to the north: F wants planks". Players see it in the Brain panel, never in chat.
 
@@ -72,38 +75,59 @@ public final class ClaudeCodeBrain implements Brain {
     private final ClaudeCodeEnv env;
     private final ClaudeCodeSessions sessions;
     private final AtomicLong replies = new AtomicLong();
+    private final UsageLedger ledger;
+    private volatile CavemanSkill caveman; // null: no skill, so caveman stays off
     /** Tests: runs after a call picks its session and before its prompt goes out (where the idle sweep could race it). */
     volatile Runnable picked = () -> { };
 
     /** {@code workDir} must sit outside any project, so Claude Code finds no CLAUDE.md to load. */
-    public ClaudeCodeBrain(Settings settings, Path workDir) {
+    public ClaudeCodeBrain(Settings settings, Path workDir, UsageLedger ledger) {
         this.settings = settings;
         this.workDir = workDir;
+        this.ledger = ledger;
         this.env = new ClaudeCodeEnv(workDir);
         env.killLeftovers();
         this.sessions = new ClaudeCodeSessions(env, settings.claudeCodeIdleMinutes() * 60_000L, System::currentTimeMillis,
                 true, ClaudeCodeSessions.reaper());
     }
 
-    /** Tests: scripted processes, a fake clock, the test's reaper, and idle stops only when the test sweeps. */
+    /** Tests: scripted processes, a fake clock, the test's reaper, idle stops only when the test sweeps, no usage file. */
     ClaudeCodeBrain(Settings settings, Path workDir, ClaudeCodeSessions.Launcher launcher, LongSupplier clock,
             Executor reaper) {
+        this(settings, workDir, launcher, clock, reaper, new UsageLedger(settings.usageWarnAt(), new UsageLedger.Store() {
+            @Override
+            public JsonObject load() {
+                return new JsonObject();
+            }
+
+            @Override
+            public void save(JsonObject state) {}
+        }, clock));
+    }
+
+    /** As above, with the ledger the test reads back. */
+    ClaudeCodeBrain(Settings settings, Path workDir, ClaudeCodeSessions.Launcher launcher, LongSupplier clock,
+            Executor reaper, UsageLedger ledger) {
         this.settings = settings;
         this.workDir = workDir;
+        this.ledger = ledger;
         this.env = new ClaudeCodeEnv(workDir);
         this.sessions = new ClaudeCodeSessions(launcher, settings.claudeCodeIdleMinutes() * 60_000L, clock, false, reaper);
     }
 
     @Override
     public Reply send(Request request) throws BrainException {
-        List<String> command = streamCommand(request.system(), request.tools());
+        // This turn's command carries the order's effort; the spare always starts at the configured one.
+        List<String> command = streamCommand(request.system(), request.tools(), request.caveman(), request.effort());
+        List<String> spareCommand = streamCommand(request.system(), request.tools(), request.caveman(), null);
         JsonArray messages = request.messages();
+        if (messages.size() == 1) ledger.startOrder(); // a transcript's first turn is a new order
         long started = System.nanoTime();
         long deadline = started + settings.claudeCodeTimeoutSeconds() * 1_000_000_000L; // the whole turn, write included
         ClaudeCodeSessions.Turn turn = sessions.begin(); // a reset from here on cancels this call
         Reply reply;
         try {
-            reply = turn(command, messages, deadline, turn);
+            reply = turn(command, spareCommand, messages, deadline, turn);
             sessions.finish(turn);
         } finally {
             sessions.release(turn);
@@ -115,10 +139,12 @@ public final class ClaudeCodeBrain implements Brain {
         return reply;
     }
 
-    private Reply turn(List<String> command, JsonArray messages, long deadline, ClaudeCodeSessions.Turn turn)
-            throws BrainException {
+    private Reply turn(List<String> command, List<String> spareCommand, JsonArray messages, long deadline,
+            ClaudeCodeSessions.Turn turn) throws BrainException {
         ClaudeCodeSessions.Session session = sessions.claimCurrent(turn);
         int from = session == null ? -1 : continues(session.seen, messages);
+        // A session started with other flags (the effort changed) can't carry on: a new one reads the whole transcript.
+        if (session != null && !session.command.equals(command)) from = -1;
         if (from < 0) {
             if (messages.size() > 1) {
                 LOG.info("claude code session restarts from the whole transcript ({} messages)", messages.size());
@@ -128,14 +154,21 @@ public final class ClaudeCodeBrain implements Brain {
         }
         picked.run();
         session.write(userLine(renderContent(messages, from)));
-        sessions.refill(command); // the next spare starts while the model thinks
+        sessions.refill(spareCommand); // the next spare starts while the model thinks, at the configured effort
         Reply reply;
         try {
-            reply = parseResult(session.await(deadline, turn), "cc" + replies.incrementAndGet() + "_");
+            String result;
+            try {
+                result = session.await(deadline, turn);
+            } finally {
+                feedLedger(); // the event comes before the result, and matters most when the turn fails
+            }
+            reply = parseResult(result, "cc" + replies.incrementAndGet() + "_");
         } catch (BrainException e) {
             sessions.end(session);
-            throw turn.or(e);
+            throw atLimit(turn.or(e));
         }
+        ledger.onTokens(reply.usage().total());
         if (reply.toolCalls().isEmpty()) {
             sessions.end(session); // end_turn: the order is over
         } else {
@@ -149,6 +182,28 @@ public final class ClaudeCodeBrain implements Brain {
         return reply;
     }
 
+    /** Hands the ledger the rate limit event that arrived this turn, if one did. */
+    private void feedLedger() {
+        String event = sessions.takeRateLimitEvent();
+        if (event != null) ledger.onRateLimitEvent(event);
+    }
+
+    /**
+     * A failed turn while the subscription is used up says so, with the reset time. There is no fallback to an API
+     * key. Failures that aren't the model's (no CLI, a reset, a crash) keep their own message.
+     */
+    private BrainException atLimit(BrainException e) {
+        switch (e.kind()) {
+            case INTERRUPTED, NO_CLI, INTERNAL, LIMIT -> { return e; }
+            default -> { }
+        }
+        if (!ledger.limitReached()) return e;
+        String resets = ledger.resetsText();
+        LOG.info("claude code limit reached (turn failed with {})", e.kind());
+        return new BrainException(BrainException.Kind.LIMIT, e.status(),
+                "Claude Code limit reached" + (resets.isEmpty() ? "" : ", resets " + resets), e.requestId());
+    }
+
     /**
      * Cancels the model call in flight (it ends as cancelled, wherever it was) and kills the current order's
      * session; the spare stays. Any thread may call it.
@@ -158,10 +213,15 @@ public final class ClaudeCodeBrain implements Brain {
         sessions.endCurrent();
     }
 
+    /** The caveman rules to add to the system prompt of orders that start with caveman on. Call once at startup. */
+    public void caveman(CavemanSkill skill) {
+        this.caveman = skill;
+    }
+
     /** Starts the spare ahead of the first order, so even that one skips startup. Brain thread. */
     public void prewarm(String system, JsonArray tools) {
         try {
-            sessions.refill(streamCommand(system, tools));
+            sessions.refill(streamCommand(system, tools, false, null));
         } catch (BrainException e) {
             LOG.debug("no Claude Code spare: {}", e.getMessage());
         }
@@ -212,6 +272,11 @@ public final class ClaudeCodeBrain implements Brain {
 
     /** {@code stream}: a warm session that reads stream-json user lines and writes stream-json events. */
     static List<String> command(String exe, Settings s, Path systemFile, boolean windows, boolean stream) {
+        return command(exe, s, systemFile, windows, stream, null);
+    }
+
+    /** {@code effort}: this command's {@code --effort}, from validated config; null or blank means {@code claude_effort}. */
+    static List<String> command(String exe, Settings s, Path systemFile, boolean windows, boolean stream, String effort) {
         List<String> cmd = new ArrayList<>(stream
                 ? List.of(exe, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose")
                 : List.of(exe, "-p", "--output-format", "json"));
@@ -220,7 +285,8 @@ public final class ClaudeCodeBrain implements Brain {
                 // Windows rebuilds one command line from these; without \" the JSON loses its quotes.
                 "--json-schema", windows ? SCHEMA.replace("\"", "\\\"") : SCHEMA));
         if (s.model() != null && !s.model().isBlank()) cmd.addAll(List.of("--model", s.model()));
-        if (s.effort() != null && !s.effort().isBlank()) cmd.addAll(List.of("--effort", s.effort()));
+        String level = effort == null || effort.isBlank() ? s.claudeEffort() : effort;
+        if (level != null && !level.isBlank()) cmd.addAll(List.of("--effort", level));
         return cmd;
     }
 
@@ -386,6 +452,9 @@ public final class ClaudeCodeBrain implements Brain {
         List<ToolCall> calls = new ArrayList<>();
         String say = string(answer, "say").strip();
         if (!say.isEmpty()) content.add(textBlock(say));
+        JsonElement doneFlag = answer.get("done");
+        boolean done = doneFlag != null && doneFlag.isJsonPrimitive() && doneFlag.getAsJsonPrimitive().isBoolean()
+                && doneFlag.getAsBoolean();
         JsonElement rawCalls = answer.get("calls");
         if (rawCalls != null && rawCalls.isJsonArray()) {
             for (JsonElement e : rawCalls.getAsJsonArray()) {
@@ -414,7 +483,7 @@ public final class ClaudeCodeBrain implements Brain {
         return new Reply(string(json, "session_id"), content, List.copyOf(calls), say,
                 calls.isEmpty() ? "end_turn" : "tool_use", new Usage(integer(usage, "input_tokens"),
                 integer(usage, "output_tokens"), integer(usage, "cache_creation_input_tokens"),
-                integer(usage, "cache_read_input_tokens")), plan.isEmpty() ? null : plan);
+                integer(usage, "cache_read_input_tokens")), done, plan.isEmpty() ? null : plan);
     }
 
     private String run(Path systemFile, String prompt) throws BrainException {
@@ -464,17 +533,22 @@ public final class ClaudeCodeBrain implements Brain {
 
     /**
      * The warm-session command. The system prompt file is named by its content's hash, so a changed prompt is a
-     * changed command (the spare gets replaced) and a file a running process reads is never rewritten.
+     * changed command (the spare gets replaced) and a file a running process reads is never rewritten. With
+     * {@code withCaveman} the rules end the file, so a spare built without them never takes such an order.
+     * {@code effort} null means {@code claude_effort}.
      */
-    private List<String> streamCommand(String system, JsonArray tools) throws BrainException {
+    private List<String> streamCommand(String system, JsonArray tools, boolean withCaveman, String effort)
+            throws BrainException {
         String exe = executable();
         if (exe == null) {
             throw new BrainException(BrainException.Kind.NO_CLI, "claude not found");
         }
         String text = renderSystem(system, tools);
+        CavemanSkill skill = caveman;
+        if (withCaveman && skill != null) text += skill.promptSection();
         String name = "system-" + sha256(text).substring(0, 16) + ".md";
         Path file = Files.isRegularFile(workDir.resolve(name)) ? workDir.resolve(name) : writeWork(name, text);
-        return command(exe, settings, file, WINDOWS, true);
+        return command(exe, settings, file, WINDOWS, true, effort);
     }
 
     private static String sha256(String text) {

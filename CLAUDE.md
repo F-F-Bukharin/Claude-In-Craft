@@ -14,7 +14,7 @@ Read `docs/claude-player-modmap.md` (RULES first) before changing anything; `doc
 - Policy lives in code, not the prompt: CautionPolicy and Guardrails decide; a denial goes back to the model with its reason.
 - World text (names, signs, chat, memory) passes through `WorldText` before reaching a prompt.
 - Never log the API key. INFO logs carry ids, stop reasons, tokens and results only.
-- Transcripts are append-only per order (thinking blocks and prompt caching depend on it).
+- Transcripts are append-only per order (thinking blocks and prompt caching depend on it). Autocompact is the one exception: it replaces an order's transcript with a single fresh turn.
 - Claude gets no tool that changes its caution level, the allowlist, the config, or runs commands.
 
 ## Adding a tool

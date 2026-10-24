@@ -21,6 +21,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -150,7 +151,10 @@ final class ClaudeCodeSessions {
                     }
                     String type = type(line);
                     if (type.equals("result")) return line;
-                    if (type.equals("rate_limit_event")) rateLimitEvent = line;
+                    if (type.equals("rate_limit_event")) {
+                        rateLimitEvent = line;
+                        freshRateLimitEvent.set(line);
+                    }
                 }
             } catch (InterruptedException e) {
                 end(this);
@@ -180,6 +184,7 @@ final class ClaudeCodeSessions {
     private boolean closed;
     private ScheduledExecutorService sweeper;
     private volatile String rateLimitEvent;
+    private final AtomicReference<String> freshRateLimitEvent = new AtomicReference<>(); // for the usage ledger
 
     /**
      * {@code sweepInBackground} false leaves idle stops to whoever calls {@link #sweep} (tests). {@code reaper} runs
@@ -412,6 +417,11 @@ final class ClaudeCodeSessions {
     /** The last {@code rate_limit_event} line seen (Claude Code sends one on a session's first turn), or null. */
     String rateLimitEvent() {
         return rateLimitEvent;
+    }
+
+    /** The {@code rate_limit_event} line that arrived since the last call, or null. Taking it clears it. */
+    String takeRateLimitEvent() {
+        return freshRateLimitEvent.getAndSet(null);
     }
 
     private Session launch(List<String> command) throws IOException {

@@ -38,6 +38,8 @@ Paths are under `src/main/java/com/example/claudeplayer/` unless noted. Everythi
 | `core/act/ActionQueue.java` | Tick pacing, levels 1 to 3 (a level 3 entry preempts: it scraps level 1 and pauses a running level 2), quick vs timed actions, timeout, cancel, stop, `snapshot()` for the Brain screen |
 | `core/brain/Brain.java` | Backend interface: `ApiBrain` or `ClaudeCodeBrain`, picked by `brain` |
 | `core/brain/ClaudeCodeBrain.java` | Option B: runs the player's `claude -p` (subscription login) with no tools, a replaced system prompt and a JSON schema for tool calls |
+| `core/brain/UsageLedger.java`, `core/brain/JsonUsageFile.java` | Claude Code usage windows, a warning once per threshold per window, tokens per order and day, kept in `config/claudeplayer_usage.json` |
+| `core/brain/CavemanSkill.java` | Loads the installed caveman skill's rules (8 KB cap, SHA-256) |
 | `core/brain/ClaudeCodeSessions.java` | Warm sessions and the spare: each call claims its session under one lock (the idle sweep skips it), a reset cancels the call wherever it is, the prompt goes out from a writer thread inside the turn's deadline, and kills run on a reaper thread |
 | `core/brain/ApiBrain.java` | Messages API over java.net.http: retries, prompt caching, key lookup, keycheck |
 | `core/brain/BrainException.java` | Classified API failures and their chat messages |
@@ -46,6 +48,7 @@ Paths are under `src/main/java/com/example/claudeplayer/` unless noted. Everythi
 | `core/brain/ToolSchemas.java` | Tool schemas and parsers side by side, gated by `tool_phase` |
 | `core/brain/AgentLoop.java` | Order → model → tool calls → queue → results → repeat: pipelining, interrupts, caps, errors |
 | `core/chat/ChatIntake.java` | Allowlist and trigger: order, stop, respawn, level, or ignore |
+| `core/chat/ThinkHarder.java` | The think-harder offer: phrase match, y/n from the ordering player, timeout, hostile gate |
 | `core/chat/Conversation.java` | Last 10 relevant chat lines (allowlisted players and the agent's replies) |
 | `core/memory/Memory.java` | Short-term notes and long-term memories; rendered into each order's first turn |
 | `core/memory/MemoryActions.java` | Runs note, remember and forget in the core; other actions go to the world |
@@ -138,7 +141,9 @@ public record Verdict(boolean allowed, String reason) {}
 ### 7. Guardrails
 - Kill switch: `/cp stop` or `C stop` cancels the queue, halts the loop, and blocks model calls until the next allowlisted order.
 - Call rate: at most `max_calls_per_minute`.
-- Token cap: when `session_token_cap` is reached, calls stop and chat says so. Resets on server restart. Cache reads count at a tenth (`Brain.Usage.weighted()`); `total()` is unchanged for logs.
+- Token cap: weighted tokens (`Brain.Usage.weighted()`: cache reads at a tenth) per rolling hour. At `session_token_cap`, the order ends with how long until it frees, autonomy waits, and `/cp resetcap` (ops) clears it. `total()` is unchanged for logs.
+- Autocompact: when one call's prompt reaches `compact_at_tokens`, the order's earlier turns collapse into one code-built summary turn; the one exception to append-only transcripts.
+- Blockman: every user turn ends with a `<status>` block (ORDER, STEP, POS, HP, FOOD, THREATS, QUEUE) from `PromptBuilder.status`.
 - Step cap: `max_steps` tool rounds per order.
 - Break natural blocks anywhere; other blocks only if Claude placed them (`Guardrails.checkBreak`, `body/NaturalBlocks`). Place anywhere free.
 - Unknown tool names are denied with `denied:unknown_tool`.
@@ -186,11 +191,16 @@ Config (`Config.java`). A file that holds a key stays out of version control.
 | `prefetch_at` | `4` | Waiting actions in a batch that trigger the results message |
 | `max_steps` | `8` | Tool rounds per order |
 | `max_calls_per_minute` | `12` | Call rate cap |
-| `session_token_cap` | `200000` | Placeholder; F sets |
+| `session_token_cap` | `200000` | Weighted tokens per rolling hour |
 | `hostile_range` | `16` | Threat radius |
 | `escape_distance` | `8` | Safe distance from threats |
 | `escape_max_steps` | `12` | Max retreat path length |
-| `effort` | `low` | `output_config.effort`; empty uses the model default (added) |
+| `effort` | `low` | The API brain's `output_config.effort`; empty uses the model default (added) |
+| `claude_effort`, `claude_think_effort` | `high`, `max` | Claude Code's `--effort` on normal turns, and for a think-harder order |
+| `think_harder_phrases`, `think_harder_timeout_seconds` | `["think harder", "think hard"]`, `30` | An order with a phrase offers max effort; no answer in time runs it normally |
+| `usage_warn_at` | `[0.80, 0.90]` | Usage fractions that post a chat warning, once per window each |
+| `caveman_at`, `caveman_skill_path` | `0.80`, empty | Caveman rules from this usage on; empty path searches `~/.claude/skills` |
+| `compact_at_tokens` | `32000` | Prompt size that triggers autocompact (2000 to 1000000); with `max_steps` at 8 most orders never reach it |
 | `max_tokens` | `4096` | Per reply; thinking counts against it (added) |
 | `request_timeout_seconds` | `20` | HTTP timeout |
 | `prompt_caching` | `true` | Cache breakpoints on the system block and the newest turn |
@@ -216,7 +226,8 @@ Commands (`/cp`):
 | `/cp respawn` | Respawn after death, at home |
 | `/cp level <0-5>` | Set caution level (ops only) |
 | `/cp stop` | Halt now |
-| `/cp status` | Level, queue, calls and weighted tokens (the token cap's count) this session |
+| `/cp status` | Level, queue, calls, weighted tokens this hour, and with Claude Code the usage windows and caveman |
+| `/cp resetcap` | Clear the hourly token cap now (ops) |
 | `/cp keycheck` | One free count_tokens call to confirm the key and model work |
 | `/cp memory` | Show short- and long-term memory |
 | `/cp allow <name>`, `/cp deny <name>` | Edit the allowlist (ops) |
@@ -262,4 +273,5 @@ COMPILED means the code compiles against forge-1.20.1-47.4.28 with official mapp
 - 23 Oct 2026: the Brain chest is replaced by a text panel (F's playtest). Right-click the body for the order header (wrapped, never cut), the running action, the waiting ones with their prio, paused ones marked, and Nothing queued when idle. It refreshes about once a second while open. Merged into dev, not pushed. `./gradlew build` is green with 214 unit tests. Not checked in game yet.
 - 23 Oct 2026: playtest 2 work merged into dev and pushed (`ca91c94`): level gaze and crops on the map, farming and buckets, `see`, `fight` with auto-gear, and glance part 1 (the model side). `./gradlew build` is green with 263 unit tests. Not checked in game yet.
 - 24 Oct 2026: fix round merged into dev: the small fixes (ender chest in store and take, `lava_near_player` denied, `use_bucket` fluid, auto-eat at 16 blocks straight-line, a snapshot size pin at 3108 bytes), the chase-heard remainder and the piece 1 follow-ups, and warm-session bugs 1, 2, 4 and 5. The standalone helper landed in `helper/`. `./gradlew build` is green with 282 unit tests, the helper's build with 57. Not checked in game yet.
+- 24 Oct 2026: the cloud branch ported onto dev: Blockman, done replies, `claude_effort`, the usage ledger and warnings, caveman, think-harder, the hourly token cap with `/cp resetcap`, and autocompact. `./gradlew build` is green with 371 unit tests. Not checked in game yet.
 - Next: glance part 2 (the renderer), then F's playtest. Details in the handoff.

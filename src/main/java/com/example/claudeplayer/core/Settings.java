@@ -19,6 +19,8 @@ public record Settings(
         int shortTermCapacity, int shortTermMinutes, int longTermCapacity,
         int claudeCodeIdleMinutes, int autonomyIntervalSeconds,
         int visionCooldownSeconds, int visionWidth, int visionHeight,
+        String claudeEffort, String claudeThinkEffort, List<String> thinkHarderPhrases, int thinkHarderTimeoutSeconds,
+        List<Double> usageWarnAt, double cavemanAt, String cavemanSkillPath, int compactAtTokens,
         int tradeMaxEmeralds) {
 
     /** {@code brain}: the player's Claude Code CLI (their subscription), or the Messages API with a key. */
@@ -52,6 +54,8 @@ public record Settings(
 
     public Settings {
         ordersAllowlist = List.copyOf(ordersAllowlist);
+        thinkHarderPhrases = List.copyOf(thinkHarderPhrases);
+        usageWarnAt = List.copyOf(usageWarnAt);
     }
 
     public static Settings of(Consumer<Builder> edits) {
@@ -98,6 +102,14 @@ public record Settings(
         public int visionCooldownSeconds = 15;
         public int visionWidth = 320;
         public int visionHeight = 180;
+        public String claudeEffort = "high";
+        public String claudeThinkEffort = "max";
+        public List<String> thinkHarderPhrases = List.of("think harder", "think hard");
+        public int thinkHarderTimeoutSeconds = 30;
+        public List<Double> usageWarnAt = List.of(0.80, 0.90);
+        public double cavemanAt = 0.80;
+        public String cavemanSkillPath = "";
+        public int compactAtTokens = 32_000;
         /** Most emeralds one trade call may spend; 0 turns trading off. */
         public int tradeMaxEmeralds = 32;
 
@@ -109,7 +121,8 @@ public record Settings(
                     shortTermCapacity, shortTermMinutes, longTermCapacity,
                     claudeCodeIdleMinutes, autonomyIntervalSeconds,
                     visionCooldownSeconds, visionWidth, visionHeight,
-                    tradeMaxEmeralds);
+                    claudeEffort, claudeThinkEffort, thinkHarderPhrases, thinkHarderTimeoutSeconds,
+                    usageWarnAt, cavemanAt, cavemanSkillPath, compactAtTokens, tradeMaxEmeralds);
         }
     }
 }
