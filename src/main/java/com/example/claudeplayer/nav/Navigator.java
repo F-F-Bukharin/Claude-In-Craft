@@ -7,6 +7,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.ai.navigation.GroundPathNavigation;
 import net.minecraft.world.entity.monster.Zombie;
 import net.minecraft.world.level.pathfinder.Node;
 import net.minecraft.world.level.pathfinder.Path;
@@ -41,12 +42,31 @@ public final class Navigator {
         if (body != null) halt(body);
     }
 
-    /** A ground path from the body toward {@code target}, or null. */
+    /** A ground path from the body toward {@code target}, or null. Closed doors block it. */
     public @Nullable Path findPath(ServerPlayer body, BlockPos target, int accuracy) {
+        return findPath(body, target, accuracy, false);
+    }
+
+    /**
+     * {@link #findPath(ServerPlayer, BlockPos, int)}, optionally routing through closed wooden doors (the caller must
+     * open them on the way). Iron doors stay blocked: their path type is a different one, and closed fence gates are
+     * a fence to the planner whatever it is told. The door flag is put back as it was before this returns, so the
+     * plain call is never affected.
+     */
+    @Nullable Path findPath(ServerPlayer body, BlockPos target, int accuracy, boolean throughDoors) {
         Zombie z = planner(body.serverLevel());
         z.moveTo(body.getX(), body.getY(), body.getZ(), body.getYRot(), 0f);
         z.setOnGround(true);
-        return z.getNavigation().createPath(target, accuracy);
+        if (!throughDoors || !(z.getNavigation() instanceof GroundPathNavigation ground)) {
+            return z.getNavigation().createPath(target, accuracy);
+        }
+        boolean before = ground.canOpenDoors();
+        ground.setCanOpenDoors(true);
+        try {
+            return ground.createPath(target, accuracy);
+        } finally {
+            ground.setCanOpenDoors(before);
+        }
     }
 
     private Zombie planner(ServerLevel level) {
