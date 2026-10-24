@@ -29,6 +29,7 @@ public final class AgentData extends SavedData {
     private int level = -1; // -1: use default_level
     private boolean spawned;
     private boolean dead;
+    private boolean noTrigger; // /cp nocrequired: every allowlisted chat line is an order
     private final Map<GlobalPos, String> placed = new LinkedHashMap<>(); // position -> block id, oldest first
 
     public static AgentData get(MinecraftServer server) {
@@ -43,6 +44,7 @@ public final class AgentData extends SavedData {
         d.level = tag.contains("level") ? tag.getInt("level") : -1;
         d.spawned = tag.getBoolean("spawned");
         d.dead = tag.getBoolean("dead");
+        d.noTrigger = tag.getBoolean("no_trigger");
         for (Tag t : tag.getList("placed", Tag.TAG_COMPOUND)) {
             CompoundTag e = (CompoundTag) t;
             ResourceLocation dim = ResourceLocation.tryParse(e.getString("dim"));
@@ -58,6 +60,7 @@ public final class AgentData extends SavedData {
         tag.putInt("level", level);
         tag.putBoolean("spawned", spawned);
         tag.putBoolean("dead", dead);
+        tag.putBoolean("no_trigger", noTrigger);
         ListTag list = new ListTag();
         placed.forEach((at, block) -> {
             CompoundTag e = new CompoundTag();
@@ -81,6 +84,15 @@ public final class AgentData extends SavedData {
     public void setHome(ResourceKey<Level> dimension, BlockPos pos) {
         homeDimension = dimension;
         home = pos.immutable();
+        setDirty();
+    }
+
+    public boolean noTrigger() {
+        return noTrigger;
+    }
+
+    public void setNoTrigger(boolean on) {
+        noTrigger = on;
         setDirty();
     }
 

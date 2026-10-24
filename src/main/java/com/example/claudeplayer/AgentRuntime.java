@@ -182,7 +182,7 @@ public final class AgentRuntime {
         String name = player.getGameProfile().getName();
         List<String> allowlist = Config.allowlist();
         if (ChatIntake.allowed(name, allowlist)) conversation.add(name, raw);
-        ChatIntake.Intake intake = ChatIntake.classify(name, raw, settings.triggers(), allowlist);
+        ChatIntake.Intake intake = ChatIntake.classify(name, raw, settings.triggers(), allowlist, !data.noTrigger());
         if (intake instanceof ChatIntake.Order order) {
             chatOrder(order.player(), order.text());
         } else if (intake instanceof ChatIntake.Stop) {
@@ -361,6 +361,15 @@ public final class AgentRuntime {
 
     public Settings settings() {
         return settings;
+    }
+
+    /** /cp nocrequired: toggles (or sets) whether orders need the trigger; saved with the world. */
+    public String setNoTrigger(Boolean on) {
+        boolean value = on != null ? on : !data.noTrigger();
+        data.setNoTrigger(value);
+        return value ? "No trigger needed: everything an allowlisted player says in chat is an order for " + settings.bodyName()
+                + ". /cp nocrequired again turns the trigger back on."
+                : "The trigger is back on: orders start with \"" + settings.trigger() + "\".";
     }
 
     /** /cp resetcap: clears the hour's token count so model calls go on. */

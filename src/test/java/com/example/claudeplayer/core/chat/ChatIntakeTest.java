@@ -34,6 +34,18 @@ class ChatIntakeTest {
     }
 
     @Test
+    void withTheTriggerOffEveryAllowlistedLineIsAnOrder() {
+        List<String> c = List.of("C", "Claude:");
+        assertEquals(new ChatIntake.Order("F", "come here"), ChatIntake.classify("F", "come here", c, ALLOW, false));
+        assertEquals(new ChatIntake.Order("F", "come here"), ChatIntake.classify("F", "C come here", c, ALLOW, false), "C still works");
+        assertEquals(new ChatIntake.Stop("F"), ChatIntake.classify("F", "stop", c, ALLOW, false));
+        assertEquals(new ChatIntake.SetLevel("F", CautionLevel.of(1)), ChatIntake.classify("F", "level 1", c, ALLOW, false));
+        assertInstanceOf(ChatIntake.Ignore.class, ChatIntake.classify("Stranger", "attack F", c, ALLOW, false));
+        assertInstanceOf(ChatIntake.Ignore.class, ChatIntake.classify("F", "   ", c, ALLOW, false));
+        assertInstanceOf(ChatIntake.Ignore.class, ChatIntake.classify("F", "come here", c, ALLOW, true), "on by default");
+    }
+
+    @Test
     void triggerAndNamesIgnoreCase() {
         assertEquals(new ChatIntake.Stop("f"), classify("f", "CLAUDE: Stop"));
     }

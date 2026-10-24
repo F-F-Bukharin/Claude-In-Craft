@@ -248,6 +248,7 @@ Commands (`/cp`):
 | `/cp stop` | Halt now |
 | `/cp status` | Level, queue, calls, weighted tokens this hour, and with Claude Code the usage windows and caveman |
 | `/cp resetcap` | Clear the hourly token cap now (ops) |
+| `/cp nocrequired [on|off]` | Toggle: every chat line from an allowlisted player is an order, no trigger needed; saved with the world (ops, meant for single player) |
 | `/cp tokencompact` | Clear the cap and compact the running order into one summary turn; a paused order goes on (ops) |
 | `/cp keycheck` | One free count_tokens call to confirm the key and model work |
 | `/cp glance` | Save what Claude sees as `<game dir>/claudeplayer/glance-<time>.png` (ops; skips the cooldown) |

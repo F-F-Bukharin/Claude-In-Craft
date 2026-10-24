@@ -66,6 +66,10 @@ public final class CpCommands {
                             rt.resetTokenCap();
                             return "Token cap cleared.";
                         })))
+                .then(Commands.literal("nocrequired").requires(CpCommands::isAdmin)
+                        .executes(c -> reply(c.getSource(), rt -> rt.setNoTrigger(null)))
+                        .then(Commands.literal("on").executes(c -> reply(c.getSource(), rt -> rt.setNoTrigger(true))))
+                        .then(Commands.literal("off").executes(c -> reply(c.getSource(), rt -> rt.setNoTrigger(false)))))
                 .then(Commands.literal("tokencompact").requires(CpCommands::isAdmin)
                         .executes(c -> reply(c.getSource(), AgentRuntime::tokenCompact)))
                 .then(Commands.literal("memory").requires(CpCommands::canControl)
@@ -229,6 +233,7 @@ public final class CpCommands {
         entry(help, "/cp stop", "/cp stop", "kill switch: cancel and block model calls");
         entry(help, "/cp status", "/cp status", "body, caution level, queue, calls, weighted tokens");
         entry(help, "/cp resetcap", "/cp resetcap", "clear the hourly token cap now (ops)");
+        entry(help, "/cp nocrequired", "/cp nocrequired", "toggle: every chat line you send is an order, no C needed (ops)");
         entry(help, "/cp tokencompact", "/cp tokencompact", "clear the cap and compact the running order so it goes on (ops)");
         entry(help, "/cp memory", "/cp memory", "what " + name + " remembers");
         entry(help, "/cp keycheck", "/cp keycheck", s.usesApi() ? "test the API key (free)" : "test the Claude Code connection");

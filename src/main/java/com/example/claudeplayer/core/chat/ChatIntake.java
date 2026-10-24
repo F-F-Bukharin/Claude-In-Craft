@@ -40,6 +40,15 @@ public final class ChatIntake {
 
     /** {@code triggers}: the configured one first, then aliases such as "Claude:". The first that matches wins. */
     public static Intake classify(String sender, String message, Collection<String> triggers, Collection<String> allowlist) {
+        return classify(sender, message, triggers, allowlist, true);
+    }
+
+    /**
+     * {@code triggerRequired} false (/cp nocrequired, for single player): every line an allowlisted player sends is
+     * read as if it began with the trigger; a line that does begin with one still works.
+     */
+    public static Intake classify(String sender, String message, Collection<String> triggers, Collection<String> allowlist,
+                                  boolean triggerRequired) {
         if (message == null) return IGNORE;
         String msg = message.strip();
         int length = -1;
@@ -49,6 +58,7 @@ public final class ChatIntake {
                 break;
             }
         }
+        if (length < 0 && !triggerRequired) length = 0;
         if (length < 0 || !allowed(sender, allowlist)) return IGNORE;
         String rest = msg.substring(length).stripLeading();
         if (rest.startsWith(":") || rest.startsWith(",")) rest = rest.substring(1); // "C: stop", "C, come here"
