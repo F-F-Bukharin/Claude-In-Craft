@@ -12,8 +12,9 @@ import java.util.Set;
 
 /**
  * The text of the see tool: what a fan of rays from the eyes hit, grouped by block id, with the notable blocks
- * (ores, containers, ripe crops, ...) listed first and exactly, and the living things in sight. The game side only
- * collects the hits; everything it says here is pure.
+ * (ores, containers, ripe crops, ...) listed first and exactly, then a landmarks line (highest point, nearest tree, water,
+ * lava, village signs, each with a compass point and a ground distance), and the living things in sight. The game side
+ * only collects the hits; everything it says here is pure.
  */
 public final class Sight {
     /** The longest answer; groups, then entities, then notable entries are dropped (farthest first) to fit. */
@@ -33,6 +34,7 @@ public final class Sight {
     private static final Set<String> NOTABLE = Set.of("ancient_debris", "netherite_block", "diamond_block", "spawner",
             "chest", "trapped_chest", "barrel", "ender_chest");
     private static final Set<String> FLUIDS = Set.of("water", "lava");
+    private static final String[] COMPASS = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
     private static final int MAX_NOTABLE = 10;
     private static final int MAX_GROUPS = 12;
     private static final int MAX_ENTITIES = 8;
@@ -42,8 +44,30 @@ public final class Sight {
         return blockId.endsWith("_ore") || blockId.endsWith("shulker_box") || blockId.startsWith("ripe_") || NOTABLE.contains(blockId);
     }
 
-    /** One line: notable blocks first, then the rest grouped by id (most first, fluids last), then the entities. */
-    public static String format(String facing, List<Hit> hits, List<Seen> seen) {
+    /**
+     * The 8-point compass direction (N, NE, E, SE, S, SW, W, NW) of an offset on the ground plane: north is -z, east is +x,
+     * each point owning a 45 degree sector centred on it. An offset of (0, 0) reads as N; callers say "here" for that.
+     */
+    public static String compass(double dx, double dz) {
+        double deg = Math.toDegrees(Math.atan2(dx, -dz)); // 0 = north (-z), 90 = east (+x), clockwise
+        int sector = (int) Math.floor((deg + 22.5) / 45.0);
+        return COMPASS[Math.floorMod(sector, 8)];
+    }
+
+    /** Trees: logs, leaves and bark-wood of any wood, and the nether's crimson and warped stems and hyphae (not melon or pumpkin stems). */
+    public static boolean tree(String id) {
+        if (id.endsWith("_log") || id.endsWith("_leaves") || id.endsWith("_wood")) return true;
+        return (id.endsWith("_stem") || id.endsWith("_hyphae")) && (id.contains("crimson") || id.contains("warped"));
+    }
+
+    /**
+     * One answer: notable blocks first, then the landmarks, then the rest grouped by id (most first, fluids last), then
+     * the entities. {@code eyeX/eyeY/eyeZ} is where the viewer's eyes are: landmark directions and distances are measured
+     * from them (see {@link #landmarks}). Over {@link #MAX_CHARS}, groups go first, then entities, then notable entries;
+     * the landmarks line is at most about 110 characters and is never dropped.
+     */
+    public static String format(String facing, double eyeX, double eyeY, double eyeZ, List<Hit> hits, List<Seen> seen) {
+        String landmarks = landmarks(eyeX, eyeZ, hits, seen);
         List<Hit> notable = new ArrayList<>();
         Map<String, List<Hit>> groups = new LinkedHashMap<>();
         Set<String> positions = new HashSet<>();
@@ -61,17 +85,65 @@ public final class Sight {
         int nCount = Math.min(notable.size(), MAX_NOTABLE);
         int gCount = Math.min(ordered.size(), MAX_GROUPS);
         int eCount = Math.min(entities.size(), MAX_ENTITIES);
-        String text = compose(facing, notable, nCount, ordered, gCount, entities, eCount);
+        String text = compose(facing, landmarks, notable, nCount, ordered, gCount, entities, eCount);
         while (text.length() > MAX_CHARS && (gCount > 0 || eCount > 0 || nCount > 0)) {
             if (gCount > 0) gCount--;
             else if (eCount > 0) eCount--;
             else nCount--;
-            text = compose(facing, notable, nCount, ordered, gCount, entities, eCount);
+            text = compose(facing, landmarks, notable, nCount, ordered, gCount, entities, eCount);
         }
         return text;
     }
 
-    private static String compose(String facing, List<Hit> notable, int nCount, List<List<Hit>> groups, int gCount,
+    /**
+     * The landmarks line (empty when nothing qualifies, otherwise ending in ". "): the highest point in view (a hit that
+     * is not a fluid; its block y, ties to the nearer), the nearest tree, water and lava, and village signs (the nearest
+     * bell, the nearest villager). Each is "{@code <direction> <distance>}": the direction is {@link #compass} from the
+     * eyes to the middle of the block (or the entity's block) on the ground plane, and the distance is that same
+     * horizontal distance in whole blocks, height ignored; under half a block reads "here". Anything not in view is left out.
+     */
+    static String landmarks(double eyeX, double eyeZ, List<Hit> hits, List<Seen> seen) {
+        Hit highest = null;
+        Hit tree = null;
+        Hit water = null;
+        Hit lava = null;
+        Hit bell = null;
+        for (Hit h : hits) {
+            double d = ground(eyeX, eyeZ, h.x(), h.z());
+            if (!FLUIDS.contains(h.block()) && (highest == null || h.y() > highest.y() || h.y() == highest.y() && d < ground(eyeX, eyeZ, highest.x(), highest.z()))) highest = h;
+            if (tree(h.block()) && (tree == null || d < ground(eyeX, eyeZ, tree.x(), tree.z()))) tree = h;
+            if (h.block().equals("water") && (water == null || d < ground(eyeX, eyeZ, water.x(), water.z()))) water = h;
+            if (h.block().equals("lava") && (lava == null || d < ground(eyeX, eyeZ, lava.x(), lava.z()))) lava = h;
+            if (h.block().equals("bell") && (bell == null || d < ground(eyeX, eyeZ, bell.x(), bell.z()))) bell = h;
+        }
+        Seen villager = null;
+        for (Seen s : seen) {
+            if (s.type().equals("villager") && (villager == null || ground(eyeX, eyeZ, s.x(), s.z()) < ground(eyeX, eyeZ, villager.x(), villager.z()))) villager = s;
+        }
+        List<String> parts = new ArrayList<>();
+        if (highest != null) parts.add("highest y=" + highest.y() + " " + where(eyeX, eyeZ, highest.x(), highest.z()));
+        if (tree != null) parts.add("tree " + where(eyeX, eyeZ, tree.x(), tree.z()));
+        if (water != null) parts.add("water " + where(eyeX, eyeZ, water.x(), water.z()));
+        if (lava != null) parts.add("lava " + where(eyeX, eyeZ, lava.x(), lava.z()));
+        List<String> village = new ArrayList<>();
+        if (bell != null) village.add("bell " + where(eyeX, eyeZ, bell.x(), bell.z()));
+        if (villager != null) village.add("villager " + where(eyeX, eyeZ, villager.x(), villager.z()));
+        if (!village.isEmpty()) parts.add("village: " + String.join(", ", village));
+        return parts.isEmpty() ? "" : "landmarks: " + String.join(", ", parts) + ". ";
+    }
+
+    /** Ground-plane distance from the eyes to the middle of block column (x, z). */
+    private static double ground(double eyeX, double eyeZ, int x, int z) {
+        return Math.hypot(x + 0.5 - eyeX, z + 0.5 - eyeZ);
+    }
+
+    /** "NE 42" (compass point, whole blocks), or "here" when the block is within half a block of straight above or below. */
+    private static String where(double eyeX, double eyeZ, int x, int z) {
+        long blocks = Math.round(ground(eyeX, eyeZ, x, z));
+        return blocks == 0 ? "here" : compass(x + 0.5 - eyeX, z + 0.5 - eyeZ) + " " + blocks;
+    }
+
+    private static String compose(String facing, String landmarks, List<Hit> notable, int nCount, List<List<Hit>> groups, int gCount,
             List<Seen> entities, int eCount) {
         StringBuilder out = new StringBuilder();
         if (nCount > 0) {
@@ -83,6 +155,7 @@ public final class Sight {
             if (notable.size() > nCount) out.append(", +").append(notable.size() - nCount).append(" more");
             out.append(". ");
         }
+        out.append(landmarks);
         out.append("facing ").append(facing).append(':');
         if (groups.isEmpty()) {
             out.append(" nothing in view");
