@@ -8,7 +8,6 @@ import com.example.claudeplayer.core.safety.CautionPolicy;
 import com.example.claudeplayer.core.safety.FightRules;
 import com.example.claudeplayer.nav.Navigator;
 import net.minecraft.commands.arguments.EntityAnchorArgument;
-import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.pathfinder.Path;
@@ -103,8 +102,7 @@ final class FightHandle implements ActionRunner.Handle {
         path = null;
         body.lookAt(EntityAnchorArgument.Anchor.EYES, target.getEyePosition());
         if (FightRules.swingReady(distance, ActionExecutor.ATTACK_REACH, body.getAttackStrengthScale(0.5f))) {
-            body.attack(target);
-            body.swing(InteractionHand.MAIN_HAND, true);
+            Swing.hit(body, target); // no sweep onto bystanders
         }
     }
 

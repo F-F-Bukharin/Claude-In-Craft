@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test;
 
 class HuntRulesTest {
     private static Facts plain(String type) {
-        return new Facts(type, false, false, false, false, false, false, false);
+        return new Facts(type, false, false, false, false, false, false, false, false);
     }
 
     @Test
@@ -32,44 +32,52 @@ class HuntRulesTest {
 
     @Test
     void aPlayerIsNeverAllowed() {
-        assertEquals("player", HuntRules.refusal("cow", new Facts("player", true, false, false, false, false, false, false)));
+        assertEquals("player", HuntRules.refusal("cow", new Facts("player", true, false, false, false, false, false, false, false)));
         // even if some facts claim it is a cow
-        assertEquals("player", HuntRules.refusal("cow", new Facts("cow", true, false, false, false, false, false, false)));
+        assertEquals("player", HuntRules.refusal("cow", new Facts("cow", true, false, false, false, false, false, false, false)));
     }
 
     @Test
     void aVillagerIsNeverAllowed() {
-        assertEquals("villager", HuntRules.refusal("cow", new Facts("villager", false, true, false, false, false, false, false)));
+        assertEquals("villager", HuntRules.refusal("cow", new Facts("villager", false, true, false, false, false, false, false, false)));
     }
 
     @Test
     void aWanderingTraderIsNeverAllowed() {
-        assertEquals("villager", HuntRules.refusal("cow", new Facts("wandering_trader", false, true, false, false, false, false, false)));
+        assertEquals("villager", HuntRules.refusal("cow", new Facts("wandering_trader", false, true, false, false, false, false, false, false)));
     }
 
     @Test
     void anIronGolemIsNeverAllowed() {
-        assertEquals("iron_golem", HuntRules.refusal("cow", new Facts("iron_golem", false, false, true, false, false, false, false)));
+        assertEquals("iron_golem", HuntRules.refusal("cow", new Facts("iron_golem", false, false, true, false, false, false, false, false)));
     }
 
     @Test
     void aNamedAnimalIsNeverAllowed() {
-        assertEquals("named", HuntRules.refusal("cow", new Facts("cow", false, false, false, true, false, false, false)));
+        assertEquals("named", HuntRules.refusal("cow", new Facts("cow", false, false, false, true, false, false, false, false)));
     }
 
     @Test
     void aTamedAnimalIsNeverAllowed() {
-        assertEquals("tamed", HuntRules.refusal("cow", new Facts("cow", false, false, false, false, true, false, false)));
+        assertEquals("tamed", HuntRules.refusal("cow", new Facts("cow", false, false, false, false, true, false, false, false)));
     }
 
     @Test
     void aLeashedAnimalIsNeverAllowed() {
-        assertEquals("leashed", HuntRules.refusal("pig", new Facts("pig", false, false, false, false, false, true, false)));
+        assertEquals("leashed", HuntRules.refusal("pig", new Facts("pig", false, false, false, false, false, true, false, false)));
     }
 
     @Test
     void aBabyAnimalIsNeverAllowed() {
-        assertEquals("baby", HuntRules.refusal("sheep", new Facts("sheep", false, false, false, false, false, false, true)));
+        assertEquals("baby", HuntRules.refusal("sheep", new Facts("sheep", false, false, false, false, false, false, true, false)));
+    }
+
+    @Test
+    void aRiddenOrSaddledAnimalIsNeverAllowed() {
+        assertEquals("ridden", HuntRules.refusal("pig", new Facts("pig", false, false, false, false, false, false, false, true)));
+        assertFalse(HuntRules.allowed("chicken", new Facts("chicken", false, false, false, false, false, false, false, true)));
+        // refused like leashed: the leash is named first when both hold
+        assertEquals("leashed", HuntRules.refusal("pig", new Facts("pig", false, false, false, false, false, true, false, true)));
     }
 
     @Test
@@ -91,8 +99,8 @@ class HuntRulesTest {
     @Test
     void protectedFactsWinOverTheKind() {
         // a named, tamed baby cow is refused for its first protective reason, never allowed
-        assertEquals("named", HuntRules.refusal("cow", new Facts("cow", false, false, false, true, true, true, true)));
-        assertFalse(HuntRules.allowed("cow", new Facts("cow", false, false, false, false, true, true, true)));
+        assertEquals("named", HuntRules.refusal("cow", new Facts("cow", false, false, false, true, true, true, true, false)));
+        assertFalse(HuntRules.allowed("cow", new Facts("cow", false, false, false, false, true, true, true, false)));
     }
 
     @Test

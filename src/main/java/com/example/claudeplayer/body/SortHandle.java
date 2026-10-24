@@ -49,10 +49,11 @@ import net.minecraftforge.common.Tags;
  * and the moves, then carries the items through the body's inventory with ContainerActions' take and store, walking
  * to each container in turn. At a container it first stores what it carries for it, then takes what leaves it, then
  * stores again (so two full containers can swap). A load its target can't hold goes back where it came from.
- * Items the body uses (held, worn, offhand, and any non-stackable it carries, such as its tools) are never moved:
- * take and store work by item id, so moving the same id could swap the body's own one into a chest.
+ * Items the body uses (held, worn, offhand, any non-stackable it carries, such as its tools, and any carried stack
+ * with NBT, such as tipped arrows) are never moved: take and store work by item id, so moving the same id could swap
+ * the body's own one into a chest.
  * Every container ends with a fresh short-term note (take and store write it; untouched ones are inspected).
- * Stops on danger like gather; one result at the end.
+ * Stops on danger like gather; one result at the end: failed:danger, failed:hazard_*, failed:timeout, or ok.
  */
 final class SortHandle implements ActionRunner.Handle {
     private static final double VISIT = 5.5; // close enough to use a container (ContainerActions allows 6.0)
@@ -314,7 +315,7 @@ final class SortHandle implements ActionRunner.Handle {
             tail.add("still carrying " + carried.entrySet().stream().map(e -> e.getValue() + " " + e.getKey()).collect(Collectors.joining(", ")));
         }
         String summary = SortPlan.summary(names, plan.kinds(), moved, movesDone.size(), String.join("; ", tail));
-        if (stop.equals("danger")) return ActionResult.failed("danger", summary);
+        if (stop.equals("danger") || stop.equals("timeout") || stop.startsWith("hazard_")) return ActionResult.failed(stop, summary);
         if (stop.equals("inventory_full") && moved == 0) return ActionResult.failed("inventory_full", summary);
         return ActionResult.ok(summary);
     }
@@ -385,7 +386,11 @@ final class SortHandle implements ActionRunner.Handle {
         return SortPlan.Kind.OTHER;
     }
 
-    /** Ids the body is using: held, offhand, worn, and every non-stackable it carries (its tools and weapons). */
+    /**
+     * Ids the body is using: held, offhand, worn, every non-stackable it carries (its tools and weapons), and every
+     * stackable it carries with NBT (tipped arrows, fireworks, banners): take and store go by id, so a chest's untagged
+     * stack of the same id could otherwise trade places with the body's tagged one.
+     */
     private static Set<String> inUse(AgentPlayer p) {
         Set<String> ids = new HashSet<>();
         Inventory inv = p.getInventory();
@@ -393,7 +398,7 @@ final class SortHandle implements ActionRunner.Handle {
             ItemStack s = p.getItemBySlot(slot);
             if (!s.isEmpty()) ids.add(SnapshotBuilder.itemId(s));
         }
-        for (ItemStack s : inv.items) if (!s.isEmpty() && s.getMaxStackSize() == 1) ids.add(SnapshotBuilder.itemId(s));
+        for (ItemStack s : inv.items) if (!s.isEmpty() && (s.getMaxStackSize() == 1 || s.hasTag())) ids.add(SnapshotBuilder.itemId(s));
         return ids;
     }
 

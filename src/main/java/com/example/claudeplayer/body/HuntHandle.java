@@ -17,11 +17,11 @@ import java.util.TreeMap;
 import javax.annotation.Nullable;
 import net.minecraft.commands.arguments.EntityAnchorArgument;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.OwnableEntity;
+import net.minecraft.world.entity.Saddleable;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.animal.IronGolem;
 import net.minecraft.world.entity.npc.AbstractVillager;
@@ -136,8 +136,7 @@ final class HuntHandle implements ActionRunner.Handle {
         path = null;
         body.lookAt(EntityAnchorArgument.Anchor.EYES, t.getEyePosition());
         if (FightRules.swingReady(distance, ActionExecutor.ATTACK_REACH, body.getAttackStrengthScale(0.5f))) {
-            body.attack(t); // HuntRules was asked about t earlier in this same tick
-            body.swing(InteractionHand.MAIN_HAND, true);
+            Swing.hit(body, t); // HuntRules was asked about t earlier in this same tick; no sweep onto bystanders
             struck = true;
         }
     }
@@ -204,7 +203,7 @@ final class HuntHandle implements ActionRunner.Handle {
     private static HuntRules.Facts facts(Entity e) {
         return new HuntRules.Facts(SnapshotBuilder.typeId(e), e instanceof Player, e instanceof AbstractVillager, e instanceof IronGolem,
                 e.hasCustomName(), e instanceof OwnableEntity o && o.getOwnerUUID() != null, e instanceof Mob m && m.isLeashed(),
-                e instanceof LivingEntity l && l.isBaby());
+                e instanceof LivingEntity l && l.isBaby(), e.isVehicle() || e instanceof Saddleable s && s.isSaddled());
     }
 
     /** Items gained since the start, by id, in a stable order. */

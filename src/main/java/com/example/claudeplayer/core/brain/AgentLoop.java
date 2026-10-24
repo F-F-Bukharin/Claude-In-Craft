@@ -156,7 +156,7 @@ public final class AgentLoop implements ActionQueue.Listener {
     // For the Brain panel only; nothing here reaches the model or the transcript.
     static final int RECENT_MAX = 5;
     private String plan; // the latest non-blank plan; reset when an order, goal or reaction begins
-    private String lastReplyText; // the latest non-blank reply text; reset with plan
+    private String lastReplyText; // the reply text last said in chat (finish, endGoal); reset with plan
     private final Deque<Recent> recent = new ArrayDeque<>(); // newest first, at most RECENT_MAX
     private BooleanSupplier cavemanOn = () -> false; // usage is high enough for caveman, and the skill exists
     private Supplier<String> cavemanNote = () -> "";
@@ -343,7 +343,10 @@ public final class AgentLoop implements ActionQueue.Listener {
         return plan;
     }
 
-    /** The latest non-blank reply text of the current order (the last one after it ends); null if none. */
+    /**
+     * The reply text the current order or goal said in chat at its end (kept after it ends); null if none. Text beside
+     * tool calls never reaches chat, so it is never shown.
+     */
     public String lastReplyText() {
         return lastReplyText;
     }
@@ -448,7 +451,6 @@ public final class AgentLoop implements ActionQueue.Listener {
         }
         guardrails.recordTokens(reply.usage().weighted());
         if (reply.plan() != null && !reply.plan().isBlank()) plan = reply.plan();
-        if (reply.text() != null && !reply.text().isBlank()) lastReplyText = reply.text();
         JsonArray content = reply.content();
         if (content.isEmpty()) content = single(textBlock("(no reply)")); // the API rejects empty assistant turns
         messages.add(message("assistant", content));
@@ -765,7 +767,14 @@ public final class AgentLoop implements ActionQueue.Listener {
 
     private void finish(String text) {
         abandon();
-        if (text != null && !text.isBlank()) host.say(text);
+        say(text);
+    }
+
+    /** Says the reply text in chat, and keeps it for the Brain panel: the panel shows only what really went out. */
+    private void say(String text) {
+        if (text == null || text.isBlank()) return;
+        lastReplyText = text;
+        host.say(text);
     }
 
     private void end(String notice) {
@@ -779,7 +788,7 @@ public final class AgentLoop implements ActionQueue.Listener {
         lastGoalFailure = null;
         String text = goalText;
         abandon();
-        if (text != null && !text.isBlank()) host.say(text);
+        say(text);
     }
 
     private void recordGoal(String ending) {

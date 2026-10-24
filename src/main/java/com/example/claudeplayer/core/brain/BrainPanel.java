@@ -30,7 +30,7 @@ public final class BrainPanel {
      * @param goal          the running order is an autonomous goal
      * @param halted        the kill switch
      * @param plan          the model's latest plan line; null if none
-     * @param lastReplyText the model's latest reply text; null if none
+     * @param lastReplyText the reply text the order or goal last said in chat; null if none
      * @param inFlight      a model call is out
      * @param queue         the queue, as {@link ActionQueue#snapshot()} gives it
      * @param recent        the last action results, newest first
@@ -65,7 +65,7 @@ public final class BrainPanel {
         String plan = WorldText.clean(v.plan(), PLAN_MAX);
         lines.add(v.inFlight() ? "(waiting for Claude)" : plan.isEmpty() ? "(no plan)" : plan);
         String said = WorldText.clean(v.lastReplyText(), WorldText.TEXT_MAX);
-        if (!said.isEmpty()) lines.add("said: \"" + said + "\"");
+        if (!said.isEmpty()) lines.add("said in chat: \"" + said + "\"");
         return lines;
     }
 
@@ -100,7 +100,7 @@ public final class BrainPanel {
         lines.add("caution " + v.cautionLevel() + " (" + WorldText.clean(v.cautionTitle(), WorldText.NAME_MAX) + ")");
         lines.add(v.attacksOn() ? "attacks on" : "attacks off");
         lines.add("step " + v.step() + "/" + v.maxSteps());
-        lines.add(v.calls() + " calls, " + v.weightedTokens() + " weighted tokens");
+        lines.add(v.calls() + " calls, " + v.weightedTokens() + " weighted tokens this hour"); // Guardrails' rolling hour
         if (v.halted()) lines.add("kill switch on");
         return lines;
     }

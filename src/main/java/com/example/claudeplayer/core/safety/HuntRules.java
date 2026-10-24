@@ -9,7 +9,7 @@ import java.util.stream.Collectors;
 /**
  * The hunt routine's rules, from plain facts. CautionPolicy only allows hostiles, so hunting has its own gate: only a
  * cow, pig, sheep, chicken or rabbit, only of the kind asked, and never a player, villager, wandering trader, iron
- * golem, or an animal that is named, tamed, leashed or a baby. The routine asks before every swing, because an animal
+ * golem, or an animal that is named, tamed, leashed, ridden, saddled or a baby. The routine asks before every swing, because an animal
  * can be named, leashed or tamed while it is being chased.
  */
 public final class HuntRules {
@@ -34,13 +34,17 @@ public final class HuntRules {
     /** Health below this fraction of the maximum ends the hunt, as in gather. */
     public static final double LOW_HEALTH = GatherRule.LOW_HEALTH;
 
-    /** What the game side knows about a candidate. {@code typeId} is "cow" or "minecraft:cow". */
+    /**
+     * What the game side knows about a candidate. {@code typeId} is "cow" or "minecraft:cow". {@code ridden}: it carries
+     * a passenger, or wears a saddle.
+     */
     public record Facts(String typeId, boolean player, boolean villager, boolean ironGolem, boolean named, boolean tamed,
-                        boolean leashed, boolean baby) {}
+                        boolean leashed, boolean baby, boolean ridden) {}
 
     /**
      * Why the candidate may not be hit, or null when it may: player, villager (also the wandering trader), iron_golem,
-     * not_huntable (a type outside the five, or an asked kind outside them), wrong_kind, named, tamed, leashed, baby.
+     * not_huntable (a type outside the five, or an asked kind outside them), wrong_kind, named, tamed, leashed, ridden
+     * (a passenger or a saddle), baby.
      */
     public static String refusal(String asked, Facts f) {
         if (f.player()) return "player";
@@ -52,6 +56,7 @@ public final class HuntRules {
         if (f.named()) return "named";
         if (f.tamed()) return "tamed";
         if (f.leashed()) return "leashed";
+        if (f.ridden()) return "ridden";
         if (f.baby()) return "baby";
         return null;
     }

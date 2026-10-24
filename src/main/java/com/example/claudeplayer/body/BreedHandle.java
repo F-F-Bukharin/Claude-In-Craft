@@ -29,8 +29,9 @@ import net.minecraft.world.phys.Vec3;
 /**
  * breed: for each pair asked, walks to two ready adults of the kind (grown, off cooldown, not in love) and feeds each
  * the right food the way a player does (food in the main hand, a look, then interactOn). It ends ok when all the pairs
- * are fed, and fails with missing_food, no_pair (fewer than two adults near), not_ready (two or more adults but fewer
- * than two ready), danger (a hostile close, or low health), hazard_*, died or timeout. A failure after some pairs
+ * are fed, and fails with missing_food, no_pair (fewer than two of the kind near, babies included), not_ready (two or
+ * more near but fewer than two ready adults: babies, cooldown, in love), danger (a hostile close, or low health),
+ * hazard_*, died or timeout. A failure after some pairs
  * were bred carries how many in its detail. Animals that can't be reached in time or refuse the food are skipped.
  */
 final class BreedHandle implements ActionRunner.Handle {
@@ -107,18 +108,19 @@ final class BreedHandle implements ActionRunner.Handle {
      * first already fed, only the second is picked. Returns the failure (no_pair, not_ready) or null.
      */
     private @Nullable ActionResult plan() {
-        List<Animal> adults = adults();
+        List<Animal> candidates = candidates();
         List<Animal> ready = new ArrayList<>();
-        for (Animal a : adults) {
+        for (Animal a : candidates) {
             if (ready(a)) ready.add(a);
         }
-        int adultCount = adults.size();
+        // Babies count as candidates that aren't ready: two calves are not_ready (wait for them), not no_pair.
+        int candidateCount = candidates.size();
         int readyCount = ready.size();
         if (fed == 1) { // the one in love counts as the pair's first, wherever it has wandered
-            if (!adults.contains(first)) adultCount++;
+            if (!candidates.contains(first)) candidateCount++;
             readyCount++;
         }
-        String refusal = Breeding.check(adultCount, readyCount);
+        String refusal = Breeding.check(candidateCount, readyCount);
         if (refusal != null) return fail(refusal);
         if (fed == 0) {
             first = nearest(ready, body.position(), null);
@@ -129,10 +131,10 @@ final class BreedHandle implements ActionRunner.Handle {
         return null;
     }
 
-    /** Adults of the kind within range that haven't been given up on. */
-    private List<Animal> adults() {
+    /** Animals of the kind within range, babies included, that haven't been given up on. Only ready() ones are fed. */
+    private List<Animal> candidates() {
         List<Animal> found = body.serverLevel().getEntitiesOfClass(Animal.class, body.getBoundingBox().inflate(Breeding.SEARCH_RANGE),
-                a -> a.isAlive() && !a.isBaby() && !skipped.contains(a.getId()) && SnapshotBuilder.typeId(a).equals(kind)
+                a -> a.isAlive() && !skipped.contains(a.getId()) && SnapshotBuilder.typeId(a).equals(kind)
                         && a.distanceTo(body) <= Breeding.SEARCH_RANGE);
         return new ArrayList<>(found);
     }

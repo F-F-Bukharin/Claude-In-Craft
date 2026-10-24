@@ -16,7 +16,17 @@ class TamingTest {
     void eachAnimalHasItsFoods() {
         assertEquals(List.of("bone"), Taming.foods("wolf"));
         assertEquals(List.of("cod", "salmon"), Taming.foods("cat"));
-        assertEquals(List.of("wheat_seeds", "melon_seeds", "pumpkin_seeds", "beetroot_seeds"), Taming.foods("parrot"));
+        assertEquals(List.of("wheat_seeds", "melon_seeds", "pumpkin_seeds", "beetroot_seeds", "torchflower_seeds", "pitcher_pod"),
+                Taming.foods("parrot"));
+    }
+
+    @Test
+    void aParrotAlsoTakesTorchflowerSeedsAndPitcherPods() {
+        assertTrue(Taming.isFood("parrot", "torchflower_seeds"));
+        assertTrue(Taming.isFood("parrot", "minecraft:pitcher_pod"));
+        assertEquals("pitcher_pod", Taming.chooseFood("parrot", Map.of("pitcher_pod", 2, "cookie", 5)));
+        assertEquals("tamed parrot #3 after 2 pitcher_pods", Taming.tamed("parrot", 3, Map.of("pitcher_pod", 2)));
+        assertEquals("tamed parrot #3 after 1 pitcher_pod", Taming.tamed("parrot", 3, Map.of("pitcher_pod", 1)));
     }
 
     @Test
@@ -73,7 +83,8 @@ class TamingTest {
     void missingTextNamesWhatToBring() {
         assertEquals("wolf needs bone", Taming.missing("wolf"));
         assertEquals("cat needs cod or salmon", Taming.missing("cat"));
-        assertEquals("parrot needs wheat_seeds, melon_seeds, pumpkin_seeds or beetroot_seeds", Taming.missing("parrot"));
+        assertEquals("parrot needs wheat_seeds, melon_seeds, pumpkin_seeds, beetroot_seeds, torchflower_seeds or pitcher_pod",
+                Taming.missing("parrot"));
     }
 
     @Test

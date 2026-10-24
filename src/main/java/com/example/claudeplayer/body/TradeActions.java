@@ -16,6 +16,9 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.NbtUtils;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.stats.Stats;
+import net.minecraft.util.Mth;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.npc.AbstractVillager;
@@ -30,7 +33,9 @@ import net.minecraft.world.item.trading.MerchantOffers;
  * trade_offers and trade: both need a villager (or wandering trader) within 6 blocks. trade does the vanilla trade
  * without a menu: the costs leave the main inventory, the result goes in (or drops at the body's feet), and
  * {@code notifyTrade} records it (uses, villager XP and level-up, the XP orb, the advancement and Forge's event).
- * It never spends more than trade_max_emeralds in one call. Nothing here harms the villager. The emerald math, the
+ * A villager's prices for the body (gossip reputation, Hero of the Village) apply to both, as in a menu, and are reset
+ * afterwards. It never spends more than trade_max_emeralds in one call, counted on the discounted price. Nothing here
+ * harms the villager. The emerald math, the
  * counts and the texts are TradeRules (core, unit-tested).
  */
 final class TradeActions {
@@ -53,8 +58,16 @@ final class TradeActions {
         if (p.distanceTo(v) > TRADE_REACH) return ActionResult.failed("too_far");
         MerchantOffers offers = v.getOffers();
         if (offers.isEmpty()) return ActionResult.failed("no_offers");
+        // The prices trade would pay: the body's discounts, applied for the read and reset right after (as stopTrading
+        // does). Under another player's open menu the offers already carry that player's prices and are left alone.
+        boolean discount = !v.isTrading() && v instanceof Villager;
+        if (discount) specialPrices((Villager) v, p);
         List<TradeRules.Offer> listed = new ArrayList<>();
-        for (MerchantOffer o : offers) listed.add(rules(o));
+        try {
+            for (MerchantOffer o : offers) listed.add(rules(o));
+        } finally {
+            if (discount) for (MerchantOffer o : offers) o.resetSpecialPriceDiff();
+        }
         return ActionResult.ok(TradeRules.offersText(header(v), listed));
     }
 
@@ -67,16 +80,23 @@ final class TradeActions {
         // A player has its trading screen open: buying under them would change what they see.
         if (v.isTrading() && v.getTradingPlayer() != p) return ActionResult.failed("busy");
         MerchantOffer offer = offers.get(a.offer());
-        TradeRules.Offer seen = rules(offer);
         Inventory inv = p.getInventory();
-        TradeRules.Plan plan = TradeRules.plan(seen, a.times(), carried(inv, offer), rt.settings().tradeMaxEmeralds());
-        if (plan.times() <= 0) return ActionResult.failed(plan.stop());
 
         boolean wasTrading = v.isTrading();
-        if (!wasTrading) v.setTradingPlayer(p); // as a player's menu would: notifyTrade credits the trader
+        if (!wasTrading) {
+            // As a player's menu would: notifyTrade credits the trader, and the villager's prices for this body apply.
+            // setTradingPlayer(null) below runs Villager.stopTrading, which resets every offer's special price.
+            if (v instanceof Villager villager) specialPrices(villager, p);
+            v.setTradingPlayer(p);
+        }
         int done = 0;
-        String stop = plan.stop();
+        TradeRules.Offer seen;
+        String stop;
         try {
+            seen = rules(offer); // the discounted price: the emerald cap is planned on what is really paid
+            TradeRules.Plan plan = TradeRules.plan(seen, a.times(), carried(inv, offer), rt.settings().tradeMaxEmeralds());
+            if (plan.times() <= 0) return ActionResult.failed(plan.stop());
+            stop = plan.stop();
             for (int i = 0; i < plan.times(); i++) {
                 if (offer.isOutOfStock()) {
                     stop = "out_of_stock";
@@ -97,6 +117,25 @@ final class TradeActions {
         }
         if (done == 0) return ActionResult.failed(stop);
         return ActionResult.ok(TradeRules.boughtText(seen, done, stop));
+    }
+
+    /**
+     * Villager's private updateSpecialPrices (checked with javap), which its private startTrading runs before a menu
+     * opens: the body's gossip reputation, then the Hero of the Village discount.
+     */
+    private static void specialPrices(Villager v, AgentPlayer p) {
+        int reputation = v.getPlayerReputation(p);
+        if (reputation != 0) {
+            for (MerchantOffer o : v.getOffers()) o.addToSpecialPriceDiff(-Mth.floor(reputation * o.getPriceMultiplier()));
+        }
+        MobEffectInstance hero = p.getEffect(MobEffects.HERO_OF_THE_VILLAGE);
+        if (hero != null) {
+            double share = 0.3 + 0.0625 * hero.getAmplifier();
+            for (MerchantOffer o : v.getOffers()) {
+                int off = (int) Math.floor(share * o.getBaseCostA().getCount());
+                o.addToSpecialPriceDiff(-Math.max(off, 1));
+            }
+        }
     }
 
     private static @Nullable AbstractVillager villager(AgentPlayer p, int entityId) {
